@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { FREE_SHIPPING_THRESHOLD } from '@/lib/catalog';
 
 const POLICY_TABS = [
   { id: 'shipping', label: 'Shipping' },
@@ -12,7 +13,7 @@ const CONTENT: Record<string, { q: string; a: string }[]> = {
   shipping: [
     { q: 'Processing Time', a: 'Orders are processed within 24–48 hours of confirmation on WhatsApp. You will receive a tracking link once your order ships.' },
     { q: 'Delivery Time', a: 'Pan-India delivery takes 2–5 business days depending on your location. Remote areas may take up to 7 days.' },
-    { q: 'Shipping Charges', a: 'Free shipping on orders over ₹1,499. A flat ₹60 applies on orders below that. COD is available in select regions — confirm on WhatsApp before ordering.' },
+    { q: 'Shipping Charges', a: `Free shipping on orders over ₹${FREE_SHIPPING_THRESHOLD}. A flat ₹60 applies on orders below that. COD is available in select regions — confirm on WhatsApp before ordering.` },
     { q: 'Order Confirmation', a: 'Since checkout happens on WhatsApp, every order is personally confirmed by our team before dispatch. Nothing ships without your confirmation.' },
   ],
   returns: [
@@ -22,7 +23,7 @@ const CONTENT: Record<string, { q: string; a: string }[]> = {
     { q: 'Refunds', a: 'Refunds are issued only in cases where a replacement is not available. Refunds are processed to the original payment method within 5–7 business days.' },
   ],
   terms: [
-    { q: 'Catalog-Only Store', a: 'DSLANG is a catalog-only showcase. There is no cart, no checkout, and no payment gateway on this website. All purchases are completed through WhatsApp.' },
+    { q: 'How To Order', a: 'Browse products on the site, add items to your cart, and place your order directly through WhatsApp. There is no on-site payment gateway — all purchases are confirmed and completed via WhatsApp.' },
     { q: 'Pricing', a: 'All prices are listed in Indian Rupees (₹) and are inclusive of applicable taxes. Prices may change between drops. The price confirmed on WhatsApp at the time of order is final.' },
     { q: 'Product Representation', a: 'We do our best to represent colours and fits accurately, but fabric colours may vary slightly from screen to screen due to photography lighting and display settings.' },
     { q: 'Wholesale Enquiries', a: 'DSLANG runs a growing wholesale network across Tamil Nadu. For wholesale pricing and minimum order quantities, reach out on WhatsApp or email.' },
@@ -40,20 +41,19 @@ export function PoliciesPage() {
   const [open, setOpen] = useState<number | null>(0);
 
   return (
-    <div className="pt-28 md:pt-36 pb-20 md:pb-32">
+    <div className="pt-4 pb-12 md:pt-8 md:pb-20">
       <div className="mx-auto max-w-[1000px] px-5 md:px-8">
-        <p className="text-[11px] uppercase tracking-ultra text-crimson mb-5">The Fine Print</p>
         <h1 className="font-display text-5xl md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
           Policies
         </h1>
 
         {/* Tabs */}
-        <div className="mt-10 md:mt-12 flex flex-wrap gap-3 border-b border-line pb-5">
+        <div className="mt-6 md:mt-8 flex flex-wrap gap-3 border-b border-line pb-4">
           {POLICY_TABS.map((t) => (
             <button
               key={t.id}
               onClick={() => { setTab(t.id); setOpen(0); }}
-              className={`text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-300 ${
+              className={`text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-150 ${
                 tab === t.id
                   ? 'bg-bone text-paper border-bone'
                   : 'border-line text-bone-dim hover:border-bone-dim hover:text-bone'
@@ -90,7 +90,7 @@ export function PoliciesPage() {
           ))}
         </div>
 
-        <div className="mt-12 border-t border-line pt-8 text-sm text-grey">
+        <div className="mt-8 border-t border-line pt-6 text-sm text-grey">
           <p>Questions about any of this? Message us on WhatsApp at +91 99446 76178 — we are happy to clarify.</p>
         </div>
       </div>

@@ -81,7 +81,19 @@ export function SubscriberDashboard() {
     const unread = (announcements ?? []).filter((a) => !readIds.has(a.id));
     if (unread.length === 0) return;
     setReadIds((prev) => new Set([...prev, ...unread.map((a) => a.id)]));
-    await supabase.from('announcement_reads').insert(unread.map((a) => ({ announcement_id: a.id, subscriber_id: user!.id })));
+    // Insert one at a time to avoid UNIQUE (announcement_id, subscriber_id)
+    // violations if a row was already created by another tab/session.
+    await Promise.all(
+      unread.map((a) =>
+        supabase
+          .from('announcement_reads')
+          .insert({ announcement_id: a.id, subscriber_id: user!.id })
+          .then(({ error }) => {
+            // Ignore duplicate-key errors; surface anything else.
+            if (error && !error.message.includes('duplicate key')) throw error;
+          })
+      )
+    );
   };
 
   const togglePref = async (key: 'wants_drop_alerts' | 'wants_restock_alerts' | 'wants_general_news') => {

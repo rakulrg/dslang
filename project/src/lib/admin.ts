@@ -9,10 +9,22 @@ import type {
 } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
 
-const SIZE_ORDER: Record<string, number> = { S: 0, M: 1, L: 2, XL: 3, XXL: 4 };
+const ALLOWED_SIZES = new Set<string>(SIZE_LABELS);
+
+const SIZE_ORDER: Record<string, number> = { M: 0, L: 1, XL: 2 };
+export const PRODUCT_IMAGE_BUCKET = 'product-images';
+const PRODUCT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const MAX_PRODUCT_IMAGE_BYTES = 10 * 1024 * 1024;
+const PRODUCT_IMAGE_EXTENSIONS: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 
 function sortSizes(sizes: ProductSizeRow[]): ProductSizeRow[] {
-  return [...sizes].sort((a, b) => (SIZE_ORDER[a.size_label] ?? 99) - (SIZE_ORDER[b.size_label] ?? 99));
+  return sizes
+    .filter((s) => ALLOWED_SIZES.has(s.size_label))
+    .sort((a, b) => (SIZE_ORDER[a.size_label] ?? 99) - (SIZE_ORDER[b.size_label] ?? 99));
+}
+
+function cleanImageUrls(images: string[] | null | undefined): string[] {
+  return (images ?? []).filter((image): image is string => typeof image === 'string' && image.trim().length > 0).map((image) => image.trim());
 }
 
 export async function adminFetchProducts(): Promise<CatalogProduct[]> {
@@ -32,8 +44,12 @@ export async function adminFetchProducts(): Promise<CatalogProduct[]> {
 
   return (products as ProductRow[]).map((p) => ({
     ...p,
-    colors: (colors as ProductColorRow[] | null)?.filter((c) => c.product_id === p.id) ?? [],
-    sizes: sortSizes((sizes as ProductSizeRow[] | null)?.filter((s) => s.product_id === p.id) ?? []),
+    colors: ((colors as ProductColorRow[] | null)?.filter((c) => c.product_id === p.id) ?? []).map((color) => ({ ...color, images: cleanImageUrls(color.images) })),
+    sizes: sortSizes(((sizes as ProductSizeRow[] | null)?.filter((s) => s.product_id === p.id) ?? []).map((s) => ({
+      ...s,
+      stock: Number(s.stock ?? 0),
+      available: Number(s.stock ?? 0) > 0,
+    }))),
     size_chart: (chart as SizeChartRow[] | null)?.filter((r) => r.product_id === p.id) ?? [],
   }));
 }
@@ -61,27 +77,70 @@ export interface ProductInput {
   sort_order: number;
 }
 
+async function requireAdminImageAccess(): Promise<void> {
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) throw new Error('Sign in as the authorized administrator to upload product images.');
+
+  const { count, error } = await supabase
+    .from('admin_users')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', user.id);
+  if (error || (count ?? 0) !== 1) {
+    throw new Error('Only the authorized administrator can upload product images.');
+  }
+}
+
+export async function uploadProductImage(file: File, productId: string, colorName: string): Promise<string> {
+  if (!(file instanceof File) || file.size <= 0) {
+    throw new Error('Choose a non-empty image file before uploading.');
+  }
+  if (!PRODUCT_IMAGE_TYPES.has(file.type)) {
+    throw new Error('Only JPG, PNG, and WebP product images are supported.');
+  }
+  if (file.size > MAX_PRODUCT_IMAGE_BYTES) {
+    throw new Error('Product images must be 10 MB or smaller.');
+  }
+
+  await requireAdminImageAccess();
+
+  const fileExt = PRODUCT_IMAGE_EXTENSIONS[file.type];
+  const safeColorName = colorName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'color';
+  const uniqueId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const objectPath = `${productId}-${safeColorName}-${uniqueId}.${fileExt}`;
+
+  const { data, error } = await supabase.storage
+    .from(PRODUCT_IMAGE_BUCKET)
+    .upload(objectPath, file, {
+      cacheControl: '3600',
+      upsert: true,
+      contentType: file.type || 'application/octet-stream',
+    });
+
+  if (error) throw error;
+  const publicUrl = supabase.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(data.path).data.publicUrl;
+  if (!publicUrl) {
+    throw new Error('Failed to create the uploaded image URL.');
+  }
+
+  return publicUrl;
+}
+
 export async function adminCreateProduct(input: ProductInput): Promise<ProductRow> {
   const { data, error } = await supabase.from('products').insert(input).select().single();
   if (error) throw error;
 
   const product = data as ProductRow;
 
-  // Create default sizes (all available)
-  const sizeRows = SIZE_LABELS.map((label) => ({
-    product_id: product.id,
-    size_label: label,
-    available: true,
-  }));
-  await supabase.from('product_sizes').insert(sizeRows);
+  // Size rows are created per-color via adminAddColor, not here,
+  // because color_id is required on product_sizes.
 
   // Create default size chart
   const defaultChart: Record<string, { chest: number; length: number; shoulder: number }> = {
-    S: { chest: 48, length: 27, shoulder: 23 },
     M: { chest: 52, length: 28, shoulder: 24 },
     L: { chest: 56, length: 29, shoulder: 25 },
     XL: { chest: 60, length: 30, shoulder: 26 },
-    XXL: { chest: 64, length: 31, shoulder: 27 },
   };
   const chartRows = SIZE_LABELS.map((label, i) => ({
     product_id: product.id,
@@ -91,7 +150,8 @@ export async function adminCreateProduct(input: ProductInput): Promise<ProductRo
     shoulder: defaultChart[label].shoulder,
     sort_order: i,
   }));
-  await supabase.from('size_chart_rows').insert(chartRows);
+  const { error: chartError } = await supabase.from('size_chart_rows').insert(chartRows);
+  if (chartError) throw chartError;
 
   return product;
 }
@@ -120,7 +180,21 @@ export async function adminAddColor(
     .select()
     .single();
   if (error) throw error;
-  return data as ProductColorRow;
+
+  const color = data as ProductColorRow;
+
+  // Create default size rows for this color with stock = 0
+  const sizeRows = SIZE_LABELS.map((label) => ({
+    product_id: productId,
+    color_id: color.id,
+    size_label: label,
+    available: false,
+    stock: 0,
+  }));
+  const { error: sizesError } = await supabase.from('product_sizes').insert(sizeRows);
+  if (sizesError) throw sizesError;
+
+  return color;
 }
 
 export async function adminUpdateColor(id: string, patch: Partial<Pick<ProductColorRow, 'name' | 'hex' | 'images' | 'sort_order'>>): Promise<void> {
@@ -133,9 +207,44 @@ export async function adminDeleteColor(id: string): Promise<void> {
   if (error) throw error;
 }
 
+// Initialize default size rows for a color that has none
+export async function adminInitColorSizes(productId: string, colorId: string): Promise<void> {
+  const { data: existing, error: checkError } = await supabase
+    .from('product_sizes')
+    .select('id')
+    .eq('product_id', productId)
+    .eq('color_id', colorId)
+    .limit(1);
+  if (checkError) throw checkError;
+  if (existing && existing.length > 0) return;
+
+  const sizeRows = SIZE_LABELS.map((label) => ({
+    product_id: productId,
+    color_id: colorId,
+    size_label: label,
+    available: true,
+    stock: 0,
+  }));
+  const { error } = await supabase.from('product_sizes').insert(sizeRows);
+  if (error) throw error;
+}
+
 // Sizes
-export async function adminToggleSize(sizeId: string, available: boolean): Promise<void> {
-  const { error } = await supabase.from('product_sizes').update({ available }).eq('id', sizeId);
+export async function adminUpdateSizeStock(
+  productId: string,
+  colorId: string,
+  sizeLabel: string,
+  stock: number
+): Promise<void> {
+  const nextStock = Math.max(0, Math.floor(Number(stock) || 0));
+
+  const { error } = await supabase
+    .from('product_sizes')
+    .update({ stock: nextStock, available: nextStock > 0 })
+    .eq('product_id', productId)
+    .eq('color_id', colorId)
+    .eq('size_label', sizeLabel);
+
   if (error) throw error;
 }
 

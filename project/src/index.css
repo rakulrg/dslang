@@ -52,9 +52,6 @@
   .tracking-ultra { letter-spacing: 0.35em; }
   .tracking-wide-2 { letter-spacing: 0.18em; }
 
-  .text-shadow-hero {
-    text-shadow: 0 2px 40px rgba(255,255,255,0.25);
-  }
   .text-shadow-dark {
     text-shadow: 0 2px 30px rgba(0,0,0,0.5);
   }
@@ -63,22 +60,27 @@
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
   .animate-marquee {
-    animation: marquee 28s linear infinite;
+    animation: marquee 25s linear infinite;
+    will-change: transform;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-marquee { animation: none; }
+    .animate-pulse-wholesale { animation: none; }
   }
   .animate-fade-up {
-    animation: fadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: fadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
   .animate-fade-in {
-    animation: fadeIn 0.6s ease-out both;
+    animation: fadeIn 0.25s ease-out both;
   }
   .animate-scale-in {
-    animation: scaleIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: scaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
   .animate-slide-down {
-    animation: slideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: slideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
-  .animate-slide-in-right {
-    animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  .animate-pulse-wholesale {
+    animation: pulseGlow 2.5s ease-in-out infinite;
   }
 }
 
@@ -105,4 +107,8 @@
 @keyframes slideInRight {
   from { opacity: 0; transform: translateX(20px); }
   to { opacity: 1; transform: translateX(0); }
+}
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(193, 18, 31, 0.25); }
+  50% { box-shadow: 0 0 0 8px rgba(193, 18, 31, 0); }
 }

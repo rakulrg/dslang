@@ -5,7 +5,6 @@ import { fetchProducts, type CatalogProduct } from '@/lib/catalog';
 const FILTERS = [
   { label: 'All', value: 'all' },
   { label: 'Tees', value: 'tee' },
-  { label: 'Drop 01', value: 'drop01' },
 ];
 
 export function ShopPage() {
@@ -22,31 +21,29 @@ export function ShopPage() {
   const filtered = (products ?? []).filter((p) => {
     if (filter === 'all') return true;
     if (filter === 'tee') return p.category === 'tee';
-    if (filter === 'drop01') return p.drop_label === 'Drop 01';
     return true;
   });
 
   return (
-    <div className="pt-28 md:pt-36 pb-20 md:pb-32">
-      <div className="mx-auto max-w-[1400px] px-5 md:px-8">
+    <div className="pb-12 md:pb-20 pt-3">
+      <div className="mx-auto px-6 md:px-12 lg:px-20 xl:px-28">
         {/* Header */}
-        <div className="border-b border-line pb-10 md:pb-14">
-          <p className="text-[11px] uppercase tracking-ultra text-crimson mb-4 font-medium">Drop 01 — Limited Run</p>
-          <h1 className="font-display text-5xl md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
+        <div className="border-b border-line pb-4 md:pb-8">
+          <h1 className="font-display text-[1.75rem] md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
             Shop All
           </h1>
-          <p className="mt-5 text-bone-dim max-w-xl leading-relaxed">
+          <p className="mt-2 text-bone-dim max-w-xl leading-relaxed">
             Once a drop sells out, it is gone.
           </p>
         </div>
 
         {/* Filters */}
-        <div className="flex items-center gap-3 mt-8 mb-10">
+        <div className="flex items-center gap-3 mt-3 mb-5">
           {FILTERS.map((f) => (
             <button
               key={f.value}
               onClick={() => setFilter(f.value)}
-              className={`text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-300 ${
+              className={`text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-150 ${
                 filter === f.value
                   ? 'bg-bone text-white border-bone'
                   : 'border-line text-bone-dim hover:border-bone-dim hover:text-bone'
@@ -61,26 +58,26 @@ export function ShopPage() {
         </div>
 
         {error ? (
-          <div className="py-24 text-center">
+          <div className="py-16 text-center">
             <p className="font-condensed text-3xl uppercase tracking-wide-2 text-grey">Something went wrong</p>
-            <p className="mt-3 text-sm text-grey">Could not load products. Please try again.</p>
+            <p className="mt-2 text-sm text-grey">Could not load products. Please try again.</p>
           </div>
         ) : products === null ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-5 md:gap-8">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="aspect-[3/4] bg-paper-3 border border-line animate-pulse" />
             ))}
           </div>
         ) : filtered.length > 0 ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-5 md:gap-8">
             {filtered.map((p, i) => (
               <ProductCard key={p.id} product={p} index={i} />
             ))}
           </div>
         ) : (
-          <div className="py-24 text-center">
+          <div className="py-16 text-center">
             <p className="font-condensed text-3xl uppercase tracking-wide-2 text-grey">Sold Out</p>
-            <p className="mt-3 text-sm text-grey">Next drop loading. Stay close.</p>
+            <p className="mt-2 text-sm text-grey">Next drop loading. Stay close.</p>
           </div>
         )}
       </div>

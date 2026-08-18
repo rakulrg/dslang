@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   LayoutGrid,
   Image as ImageIcon,
@@ -25,17 +25,48 @@ import {
   adminAddColor,
   adminUpdateColor,
   adminDeleteColor,
-  adminToggleSize,
+  adminUpdateSizeStock,
+  adminInitColorSizes,
   adminUpdateSizeChartRow,
   adminCreateHero,
   adminUpdateHero,
   adminDeleteHero,
+  uploadProductImage,
   type ProductInput,
 } from '@/lib/admin';
 import type { CatalogProduct, HeroSlideRow, ProductColorRow, ProductSizeRow, SizeChartRow } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
 
 type Tab = 'products' | 'hero';
+
+const EXPECTED_RATIO = 4 / 5;
+const RATIO_TOLERANCE = 0.03;
+
+function checkImageAspectRatios(files: File[]): Promise<string[]> {
+  return Promise.all(
+    files.map(
+      (file) =>
+        new Promise<string | null>((resolve) => {
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            const ratio = img.naturalWidth / img.naturalHeight;
+            if (Math.abs(ratio - EXPECTED_RATIO) / EXPECTED_RATIO > RATIO_TOLERANCE) {
+              resolve(file.name);
+            } else {
+              resolve(null);
+            }
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve(null);
+          };
+          img.src = url;
+        }),
+    ),
+  ).then((results) => results.filter(Boolean) as string[]);
+}
 
 export function AdminDashboard() {
   const { user } = useAuth();
@@ -79,9 +110,51 @@ export function AdminDashboard() {
   const editingProduct = products?.find((p) => p.id === editingId) ?? null;
 
   return (
-    <div className="min-h-screen bg-paper-2 flex">
-      {/* Sidebar */}
-      <aside className="w-60 shrink-0 border-r border-line bg-white flex flex-col sticky top-0 h-screen">
+    <div className="min-h-screen bg-paper-2 flex flex-col lg:flex-row">
+      {/* Mobile header */}
+      <div className="lg:hidden w-full shrink-0 bg-white border-b border-line">
+        <div className="flex items-center justify-between px-4 py-3">
+          <a href={linkHref('/')} className="font-display text-xl tracking-wide-2 text-bone leading-none">
+            DSLANG<span className="text-crimson">.</span>
+          </a>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] uppercase tracking-wide-2 text-grey px-2 hidden sm:inline">{user?.email}</span>
+            <a
+              href={linkHref('/')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wide-2 font-medium text-bone-dim hover:text-crimson rounded transition-colors"
+            >
+              <ExternalLink size={12} /> Site
+            </a>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wide-2 font-medium text-bone-dim hover:text-crimson rounded transition-colors"
+            >
+              <LogOut size={12} /> Out
+            </button>
+          </div>
+        </div>
+        <div className="flex gap-1 px-3 pb-2">
+          <button
+            onClick={() => { setTab('products'); setEditingId(null); setCreating(false); }}
+            className={`flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
+              tab === 'products' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+            }`}
+          >
+            <LayoutGrid size={13} strokeWidth={1.8} /> Products
+          </button>
+          <button
+            onClick={() => { setTab('hero'); setEditingId(null); setCreating(false); }}
+            className={`flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
+              tab === 'hero' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+            }`}
+          >
+            <ImageIcon size={13} strokeWidth={1.8} /> Hero Slides
+          </button>
+        </div>
+      </div>
+
+      {/* Desktop sidebar */}
+      <aside className="hidden lg:flex w-60 shrink-0 border-r border-line bg-white flex-col sticky top-0 h-screen">
         <div className="px-5 py-6 border-b border-line">
           <a href={linkHref('/')} className="font-display text-2xl tracking-wide-2 text-bone leading-none">
             DSLANG<span className="text-crimson">.</span>
@@ -130,29 +203,29 @@ export function AdminDashboard() {
       {/* Main */}
       <div className="flex-1 min-w-0">
         {/* Top bar */}
-        <header className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-line px-6 md:px-8 h-16 flex items-center justify-between">
-          <h1 className="font-display text-2xl tracking-wide-2 text-bone uppercase">
+        <header className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-line px-4 sm:px-6 h-12 sm:h-14 flex items-center justify-between gap-3">
+          <h1 className="font-display text-lg sm:text-2xl tracking-wide-2 text-bone uppercase">
             {tab === 'products' ? 'Products' : 'Hero Slides'}
           </h1>
           {tab === 'products' && !creating && !editingProduct && (
             <button
               onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-crimson-dark transition-colors rounded"
+              className="inline-flex items-center gap-1.5 sm:gap-2 bg-crimson text-white text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-crimson-dark transition-colors rounded"
             >
-              <Plus size={15} strokeWidth={2} /> New Product
+              <Plus size={14} strokeWidth={2} /> New Product
             </button>
           )}
           {tab === 'hero' && !creating && (
             <button
               onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-crimson-dark transition-colors rounded"
+              className="inline-flex items-center gap-1.5 sm:gap-2 bg-crimson text-white text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-crimson-dark transition-colors rounded"
             >
-              <Plus size={15} strokeWidth={2} /> New Slide
+              <Plus size={14} strokeWidth={2} /> New Slide
             </button>
           )}
         </header>
 
-        <div className="p-6 md:p-8">
+        <div className="p-3 sm:p-5 md:p-6">
           {loadError && (
             <div className="mb-6 bg-crimson/5 border border-crimson/20 text-crimson text-sm px-4 py-3 rounded">
               {loadError}
@@ -231,54 +304,53 @@ function ProductList({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5 sm:space-y-3">
       {products.map((p) => {
         const primary = p.colors[0];
         return (
           <div
             key={p.id}
-            className="flex items-center gap-4 bg-white border border-line rounded p-4 hover:border-line-2 transition-colors"
+            className="bg-white border border-line rounded hover:border-line-2 transition-colors overflow-hidden"
           >
-            <div className="w-14 h-16 shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
-              {primary && primary.images[0] && (
-                <img src={primary.images[0]} alt={p.name} className="w-full h-full object-cover" />
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="text-sm font-semibold text-bone truncate">{p.name}</h3>
-              <p className="text-[11px] uppercase tracking-wide-2 text-grey mt-0.5">{p.code}</p>
-              <div className="mt-1 flex items-center gap-3 text-xs text-bone-soft">
-                <span>{formatPrice(p.price)}</span>
-                {p.mrp && <span className="line-through text-grey">{formatPrice(p.mrp)}</span>}
-                <span className="text-grey">·</span>
-                <span>{p.colors.length} colors</span>
-                {p.badge && (
-                  <>
-                    <span className="text-grey">·</span>
-                    <span className="text-crimson font-medium">{p.badge}</span>
-                  </>
-                )}
-                {p.featured && (
-                  <>
-                    <span className="text-grey">·</span>
-                    <span className="text-crimson font-medium">Featured</span>
-                  </>
+            <div className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4">
+              <div className="w-12 sm:w-14 aspect-[4/5] shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
+                {primary && primary.images[0] && (
+                  <img src={primary.images[0]} alt={p.name} className="w-full h-full object-cover" />
                 )}
               </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-semibold text-bone truncate">{p.name}</h3>
+                <p className="text-[11px] uppercase tracking-wide-2 text-grey mt-0.5">{p.code}</p>
+                <div className="mt-1 flex items-center gap-2 text-xs text-bone-soft flex-wrap">
+                  <span className="font-medium">{formatPrice(p.price)}</span>
+                  {p.mrp && <span className="line-through text-grey">{formatPrice(p.mrp)}</span>}
+                  <span className="text-grey">·</span>
+                  <span>{p.colors.length} colors</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => onEdit(p.id)}
+                  className="text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson transition-colors px-2.5 sm:px-3 py-1.5 sm:py-2 border border-line rounded hover:border-crimson"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => { if (confirm(`Delete "${p.name}"? This cannot be undone.`)) onDelete(p.id); }}
+                  className="text-grey hover:text-crimson transition-colors p-1.5 sm:p-2"
+                  aria-label="Delete product"
+                >
+                  <Trash2 size={15} strokeWidth={1.8} />
+                </button>
+              </div>
             </div>
-            <button
-              onClick={() => onEdit(p.id)}
-              className="text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson transition-colors px-3 py-2 border border-line rounded hover:border-crimson"
-            >
-              Edit
-            </button>
-            <button
-              onClick={() => { if (confirm(`Delete "${p.name}"? This cannot be undone.`)) onDelete(p.id); }}
-              className="text-grey hover:text-crimson transition-colors p-2"
-              aria-label="Delete product"
-            >
-              <Trash2 size={16} strokeWidth={1.8} />
-            </button>
+            {(p.featured) && (
+              <div className="flex flex-wrap gap-1.5 px-3 sm:px-4 pb-3 sm:pb-4 pt-0">
+                {p.featured && (
+                  <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-crimson/10 text-crimson px-2 py-0.5 rounded">Featured</span>
+                )}
+              </div>
+            )}
           </div>
         );
       })}
@@ -299,7 +371,7 @@ function ProductForm({
     slug: '',
     name: '',
     code: '',
-    drop_label: 'Drop 01',
+    drop_label: '',
     price: 0,
     mrp: null,
     fabric: 'Premium Combed Cotton',
@@ -332,9 +404,9 @@ function ProductForm({
   };
 
   return (
-    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-white border border-line rounded p-6">
+    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-white border border-line rounded p-4 sm:p-6">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-2xl tracking-wide-2 text-bone uppercase">New Product</h2>
+        <h2 className="font-display text-xl sm:text-2xl tracking-wide-2 text-bone uppercase">New Product</h2>
         <button type="button" onClick={onCancel} className="text-grey hover:text-bone transition-colors">
           <X size={20} />
         </button>
@@ -349,15 +421,15 @@ function ProductForm({
       <Field label="Code">
         <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="DSL-FH-01" className={inputCls} />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <Field label="Price (₹)">
-          <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} className={inputCls} />
+          <NumInput value={form.price} onChange={(n) => setForm({ ...form, price: n ?? 0 })} className={inputCls} />
         </Field>
         <Field label="MRP (₹)" hint="Optional — for discount display">
-          <input type="number" value={form.mrp ?? ''} onChange={(e) => setForm({ ...form, mrp: e.target.value ? Number(e.target.value) : null })} className={inputCls} />
+          <NumInput value={form.mrp} onChange={(n) => setForm({ ...form, mrp: n })} className={inputCls} placeholder="—" />
         </Field>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <Field label="Category">
           <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls}>
             <option value="tee">Tee</option>
@@ -367,14 +439,8 @@ function ProductForm({
             <option value="drop">Drop</option>
           </select>
         </Field>
-        <Field label="Drop Label">
-          <input value={form.drop_label} onChange={(e) => setForm({ ...form, drop_label: e.target.value })} className={inputCls} />
-        </Field>
       </div>
-      <Field label="Badge" hint="Optional — e.g. Best Seller, New, Limited Run">
-        <input value={form.badge ?? ''} onChange={(e) => setForm({ ...form, badge: e.target.value || null })} placeholder="Best Seller" className={inputCls} />
-      </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <Field label="Fabric">
           <input value={form.fabric} onChange={(e) => setForm({ ...form, fabric: e.target.value })} className={inputCls} />
         </Field>
@@ -388,9 +454,9 @@ function ProductForm({
       <Field label="Description">
         <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className={inputCls} />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <Field label="Sort Order">
-          <input type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} className={inputCls} />
+          <NumInput value={form.sort_order} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
         </Field>
         <label className="flex items-end gap-2 pb-3">
           <input type="checkbox" checked={form.featured} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
@@ -409,7 +475,7 @@ function ProductForm({
         </button>
       </div>
       <p className="text-xs text-grey pt-2 border-t border-line">
-        Default sizes (S–XXL) and a size chart will be created automatically. You can edit them after creating the product.
+        Default sizes (M–XL) and a size chart will be created automatically. You can edit them after creating the product.
       </p>
     </form>
   );
@@ -466,9 +532,9 @@ function ProductEditor({
 
   return (
     <div className="space-y-6">
-      <form onSubmit={submit} className="max-w-2xl space-y-5 bg-white border border-line rounded p-6">
+      <form onSubmit={submit} className="max-w-2xl space-y-5 bg-white border border-line rounded p-4 sm:p-6">
         <div className="flex items-center justify-between">
-          <h2 className="font-display text-2xl tracking-wide-2 text-bone uppercase">Edit Product</h2>
+          <h2 className="font-display text-xl sm:text-2xl tracking-wide-2 text-bone uppercase">Edit Product</h2>
           <button type="button" onClick={onCancel} className="text-grey hover:text-bone transition-colors">
             <X size={20} />
           </button>
@@ -483,15 +549,15 @@ function ProductEditor({
         <Field label="Code">
           <input value={form.code ?? ''} onChange={(e) => setForm({ ...form, code: e.target.value })} className={inputCls} />
         </Field>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <Field label="Price (₹)">
-            <input type="number" value={form.price ?? 0} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} className={inputCls} />
+            <NumInput value={form.price ?? 0} onChange={(n) => setForm({ ...form, price: n ?? 0 })} className={inputCls} />
           </Field>
           <Field label="MRP (₹)">
-            <input type="number" value={form.mrp ?? ''} onChange={(e) => setForm({ ...form, mrp: e.target.value ? Number(e.target.value) : null })} className={inputCls} />
+            <NumInput value={form.mrp ?? null} onChange={(n) => setForm({ ...form, mrp: n })} className={inputCls} placeholder="—" />
           </Field>
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <Field label="Category">
             <select value={form.category ?? 'tee'} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls}>
               <option value="tee">Tee</option>
@@ -501,14 +567,8 @@ function ProductEditor({
               <option value="drop">Drop</option>
             </select>
           </Field>
-          <Field label="Drop Label">
-            <input value={form.drop_label ?? ''} onChange={(e) => setForm({ ...form, drop_label: e.target.value })} className={inputCls} />
-          </Field>
         </div>
-        <Field label="Badge">
-          <input value={form.badge ?? ''} onChange={(e) => setForm({ ...form, badge: e.target.value || null })} placeholder="Best Seller" className={inputCls} />
-        </Field>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <Field label="Fabric">
             <input value={form.fabric ?? ''} onChange={(e) => setForm({ ...form, fabric: e.target.value })} className={inputCls} />
           </Field>
@@ -522,9 +582,9 @@ function ProductEditor({
         <Field label="Description">
           <textarea value={form.description ?? ''} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className={inputCls} />
         </Field>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <Field label="Sort Order">
-            <input type="number" value={form.sort_order ?? 0} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} className={inputCls} />
+            <NumInput value={form.sort_order ?? 0} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
           </Field>
           <label className="flex items-end gap-2 pb-3">
             <input type="checkbox" checked={form.featured ?? false} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
@@ -560,25 +620,50 @@ function ProductEditor({
 /* ---- Color Manager ---- */
 
 function ColorManager({ product, onChanged }: { product: CatalogProduct; onChanged: () => Promise<void> }) {
-  const [colors, setColors] = useState<ProductColorRow[]>(product.colors);
+  const colors = product.colors;
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newHex, setNewHex] = useState('#000000');
   const [newImages, setNewImages] = useState('');
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [ratioWarning, setRatioWarning] = useState('');
 
-  const refresh = async () => {
-    await onChanged();
+  const handleImagePick = async (files: FileList | null) => {
+    const picked = Array.from(files ?? []);
+    if (picked.length === 0) return;
+    setRatioWarning('');
+    const bad = await checkImageAspectRatios(picked);
+    if (bad.length > 0) {
+      setRatioWarning(`This image isn't quite 4:5 — it may not display perfectly: ${bad.join(', ')}`);
+    }
+    setUploading(true);
+    setUploadError('');
+    try {
+      const urls = await Promise.all(
+        picked.map((file) => uploadProductImage(file, product.id, newName || 'default'))
+      );
+      const combined = [...new Set([...newImages.split('\n').map((s) => s.trim()).filter(Boolean), ...urls])].join('\n');
+      setNewImages(combined);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleAdd = async () => {
     if (!newName.trim()) return;
     setBusy(true);
+    setUploadError('');
     try {
       const imgs = newImages.split('\n').map((s) => s.trim()).filter(Boolean);
       await adminAddColor(product.id, newName.trim(), newHex, imgs);
       setNewName(''); setNewHex('#000000'); setNewImages(''); setAdding(false);
-      await refresh();
+      await onChanged();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Could not add this color.');
     } finally {
       setBusy(false);
     }
@@ -587,19 +672,18 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
   const handleDeleteColor = async (id: string) => {
     if (!confirm('Delete this color and all its images?')) return;
     await adminDeleteColor(id);
-    await refresh();
+    await onChanged();
   };
 
-  const handleSaveColor = async (c: ProductColorRow, images: string) => {
-    const imgs = images.split('\n').map((s) => s.trim()).filter(Boolean);
-    await adminUpdateColor(c.id, { name: c.name, hex: c.hex, images: imgs });
-    await refresh();
+  const handleSaveColor = async (id: string, name: string, hex: string, images: string[]) => {
+    await adminUpdateColor(id, { name, hex, images });
+    await onChanged();
   };
 
   return (
-    <div className="max-w-2xl bg-white border border-line rounded p-6">
+    <div className="max-w-2xl bg-white border border-line rounded p-4 sm:p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-display text-xl tracking-wide-2 text-bone uppercase">Colors & Images</h3>
+        <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase">Colors & Images</h3>
         <button
           onClick={() => setAdding(!adding)}
           className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide-2 font-semibold text-crimson hover:text-crimson-dark transition-colors"
@@ -609,27 +693,33 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
       </div>
 
       {adding && (
-        <div className="mb-4 border border-line rounded p-4 bg-paper-2 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+        <div className="mb-4 border border-line rounded p-3 sm:p-4 bg-paper-2 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Color name (e.g. Black)" className={inputCls} />
             <div className="flex items-center gap-2">
-              <input type="color" value={newHex} onChange={(e) => setNewHex(e.target.value)} className="w-12 h-10 border border-line rounded cursor-pointer" />
+              <input type="color" value={newHex} onChange={(e) => setNewHex(e.target.value)} className="w-12 h-10 border border-line rounded cursor-pointer shrink-0" />
               <input value={newHex} onChange={(e) => setNewHex(e.target.value)} className={inputCls} />
             </div>
           </div>
           <textarea value={newImages} onChange={(e) => setNewImages(e.target.value)} placeholder="Image URLs (one per line)" rows={3} className={inputCls} />
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <label className="inline-flex items-center justify-center gap-2 border border-line text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded text-bone-dim hover:border-bone-dim hover:text-bone transition-colors cursor-pointer">
+              <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => handleImagePick(e.target.files)} />
+              {uploading ? 'Uploading…' : 'Upload Image'}
+            </label>
             <button onClick={handleAdd} disabled={busy || !newName.trim()} className="bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-crimson-dark disabled:opacity-50">
               {busy ? 'Adding…' : 'Add'}
             </button>
             <button onClick={() => setAdding(false)} className="text-[11px] uppercase tracking-wide-2 text-bone-dim px-4 py-2">Cancel</button>
           </div>
+          {uploadError && <p className="text-sm text-crimson">{uploadError}</p>}
+          {ratioWarning && <p className="text-sm text-amber-600">{ratioWarning}</p>}
         </div>
       )}
 
       <div className="space-y-4">
         {colors.map((c) => (
-          <ColorRow key={c.id} color={c} onDelete={() => handleDeleteColor(c.id)} onSave={(images) => handleSaveColor(c, images)} />
+          <ColorRow key={c.id} color={c} onDelete={() => handleDeleteColor(c.id)} onSave={(name, hex, images) => handleSaveColor(c.id, name, hex, images)} />
         ))}
         {colors.length === 0 && <p className="text-sm text-grey">No colors yet. Add one with images.</p>}
       </div>
@@ -637,11 +727,78 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
   );
 }
 
-function ColorRow({ color, onDelete, onSave }: { color: ProductColorRow; onDelete: () => void; onSave: (images: string) => void }) {
+function ColorRow({ color, onDelete, onSave }: { color: ProductColorRow; onDelete: () => void; onSave: (name: string, hex: string, images: string[]) => Promise<void> }) {
   const [name, setName] = useState(color.name);
   const [hex, setHex] = useState(color.hex);
-  const [images, setImages] = useState(color.images.join('\n'));
+  const [images, setImages] = useState<string[]>(color.images);
+  const [imageUrl, setImageUrl] = useState('');
+  const [selectedImage, setSelectedImage] = useState<string | null>(color.images[0] ?? null);
+  const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [ratioWarning, setRatioWarning] = useState('');
+
+  const moveImage = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= images.length) return;
+    setImages((current) => {
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const removeImage = (image: string) => {
+    setImages((current) => current.filter((item) => item !== image));
+    if (selectedImage === image) setSelectedImage(images.find((item) => item !== image) ?? null);
+  };
+
+  const addImageUrl = () => {
+    const nextUrl = imageUrl.trim();
+    if (!nextUrl || images.includes(nextUrl)) return;
+    setImages((current) => [...current, nextUrl]);
+    setImageUrl('');
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setUploadError('');
+    try {
+      await onSave(name, hex, images);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Could not save image changes.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePick = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) return;
+    setRatioWarning('');
+    const bad = await checkImageAspectRatios(files);
+    if (bad.length > 0) {
+      setRatioWarning(`This image isn't quite 4:5 — it may not display perfectly: ${bad.join(', ')}`);
+    }
+    setUploading(true);
+    setUploadError('');
+    try {
+      const uploadedUrls = await Promise.all(
+        files.map((file) => uploadProductImage(file, color.product_id, name || 'color'))
+      );
+      setImages((current) => [...new Set([...current, ...uploadedUrls])]);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+      event.target.value = '';
+    }
+  };
 
   return (
     <div className="border border-line rounded">
@@ -657,67 +814,216 @@ function ColorRow({ color, onDelete, onSave }: { color: ProductColorRow; onDelet
         </button>
       </div>
       {expanded && (
-        <div className="border-t border-line p-4 space-y-3 bg-paper-2">
-          <div className="grid grid-cols-2 gap-3">
+        <div className="border-t border-line p-3 sm:p-4 space-y-3 bg-paper-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
             <div className="flex items-center gap-2">
-              <input type="color" value={hex} onChange={(e) => setHex(e.target.value)} className="w-10 h-9 border border-line rounded cursor-pointer" />
+              <input type="color" value={hex} onChange={(e) => setHex(e.target.value)} className="w-10 h-9 border border-line rounded cursor-pointer shrink-0" />
               <input value={hex} onChange={(e) => setHex(e.target.value)} className={inputCls} />
             </div>
           </div>
-          <textarea value={images} onChange={(e) => setImages(e.target.value)} placeholder="Image URLs (one per line)" rows={4} className={inputCls} />
-          <div className="flex flex-wrap gap-2">
-            {color.images.map((img, i) => (
-              <div key={i} className="w-16 h-20 overflow-hidden border border-line rounded bg-paper-3">
-                <img src={img} alt={`${name} ${i + 1}`} className="w-full h-full object-cover" />
-              </div>
-            ))}
+          <div className="flex gap-2">
+            <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addImageUrl(); } }} placeholder="Paste an image URL" className={inputCls} />
+            <button type="button" onClick={addImageUrl} className="shrink-0 border border-line px-3 text-[11px] font-semibold uppercase tracking-wide-2 text-bone-dim hover:border-bone-dim">Add URL</button>
           </div>
-          <button
-            onClick={() => { adminUpdateColor(color.id, { name, hex }); onSave(images); }}
-            className="inline-flex items-center gap-1.5 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-ink transition-colors"
-          >
-            <Save size={14} /> Save Color
-          </button>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <label className="inline-flex items-center justify-center gap-2 border border-line text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded text-bone-dim hover:border-bone-dim hover:text-bone transition-colors cursor-pointer">
+              <input type="file" accept="image/*" multiple className="hidden" onChange={handlePick} />
+              {uploading ? 'Uploading…' : 'Upload Image'}
+            </label>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-ink transition-colors disabled:opacity-50"
+            >
+              <Save size={14} /> {saving ? 'Saving…' : 'Save Color'}
+            </button>
+            {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+          </div>
+          {uploadError && <p className="text-sm text-crimson">{uploadError}</p>}
+          {ratioWarning && <p className="text-sm text-amber-600">{ratioWarning}</p>}
+          {images.length > 0 ? (
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+              {images.map((img, index) => (
+                <div key={img} className={`relative aspect-[4/5] overflow-hidden border bg-paper-3 ${selectedImage === img ? 'border-crimson ring-1 ring-crimson' : 'border-line'}`}>
+                  <button type="button" onClick={() => { setSelectedImage(img); setIsImageViewerOpen(true); }} className="absolute inset-0 cursor-zoom-in" aria-label={`Zoom image ${index + 1}`}>
+                    <img src={img} alt={`${name} ${index + 1}`} className="h-full w-full object-cover" />
+                  </button>
+                  {index === 0 && <span className="absolute left-1 top-1 bg-crimson px-1.5 py-1 text-[8px] font-semibold uppercase tracking-wide-2 text-white">Primary</span>}
+                  <div className="absolute inset-x-0 bottom-0 flex justify-between bg-bone/85 p-1 text-white">
+                    <button type="button" disabled={index === 0} onClick={() => moveImage(index, -1)} className="px-1.5 text-xs disabled:opacity-30" aria-label="Move image earlier">←</button>
+                    <button type="button" onClick={() => removeImage(img)} className="px-1.5 text-xs hover:text-crimson" aria-label="Remove image"><Trash2 size={13} /></button>
+                    <button type="button" disabled={index === images.length - 1} onClick={() => moveImage(index, 1)} className="px-1.5 text-xs disabled:opacity-30" aria-label="Move image later">→</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : <p className="text-xs text-grey">Upload or add an image URL. The first image becomes the primary product image.</p>}
+          {selectedImage && (
+            <div className="rounded border border-line bg-white p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Selected image preview</p>
+                <button type="button" onClick={() => setIsImageViewerOpen(true)} className="text-[10px] font-semibold uppercase tracking-wide-2 text-crimson hover:text-crimson-dark">Open full size</button>
+              </div>
+              <img src={selectedImage} alt={`${name} selected`} className="max-h-80 w-full object-contain" />
+            </div>
+          )}
+          {isImageViewerOpen && selectedImage && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setIsImageViewerOpen(false)} role="dialog" aria-modal="true" aria-label="Enlarged product image">
+              <button type="button" onClick={() => setIsImageViewerOpen(false)} className="absolute right-4 top-4 rounded-full bg-white/15 p-3 text-white hover:bg-white/25" aria-label="Close image viewer"><X size={18} /></button>
+              <img src={selectedImage} alt={`${name} enlarged`} className="max-h-full max-w-full object-contain" onClick={(event) => event.stopPropagation()} />
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-/* ---- Size Manager ---- */
+/* ---- Size Manager (color-wise stock) ---- */
 
 function SizeManager({ product, onChanged }: { product: CatalogProduct; onChanged: () => Promise<void> }) {
-  const [sizes, setSizes] = useState<ProductSizeRow[]>(product.sizes);
+  const colors = product.colors;
+  const [selectedColorIdx, setSelectedColorIdx] = useState(0);
+  const [stockValues, setStockValues] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
 
-  const toggle = async (s: ProductSizeRow) => {
-    const updated = !s.available;
-    setSizes((prev) => prev.map((x) => x.id === s.id ? { ...x, available: updated } : x));
-    await adminToggleSize(s.id, updated);
-    await onChanged();
+  const selectedColor = colors[selectedColorIdx] ?? colors[0];
+  const colorSizes = selectedColor
+    ? product.sizes
+        .filter((s) => s.color_id === selectedColor.id)
+        .sort((a, b) => (SIZE_LABELS.indexOf(a.size_label as typeof SIZE_LABELS[number]) ?? 99) - (SIZE_LABELS.indexOf(b.size_label as typeof SIZE_LABELS[number]) ?? 99))
+    : [];
+
+  useEffect(() => {
+    setStockValues(Object.fromEntries(colorSizes.map((s) => [s.size_label, String(Number(s.stock ?? 0))])));
+  }, [selectedColor?.id, product.sizes]);
+
+  const saveAll = async () => {
+    if (!selectedColor) return;
+    setBusy(true);
+    setError('');
+    setSaved(false);
+    try {
+      for (const s of colorSizes) {
+        const nextStock = Math.max(0, Math.floor(Number(stockValues[s.size_label]) || 0));
+        if (nextStock !== Number(s.stock ?? 0)) {
+          await adminUpdateSizeStock(product.id, selectedColor.id, s.size_label, nextStock);
+        }
+      }
+      await onChanged();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      console.error('Stock save failed:', err);
+      setError(err instanceof Error ? err.message : 'Could not save stock.');
+    } finally {
+      setBusy(false);
+    }
   };
 
+  const autoInitSizes = async () => {
+    if (!selectedColor || colorSizes.length > 0) return;
+    try {
+      await adminInitColorSizes(product.id, selectedColor.id);
+      await onChanged();
+    } catch (err) {
+      console.error('Auto-init sizes failed:', err);
+    }
+  };
+
+  useEffect(() => {
+    autoInitSizes();
+  }, [selectedColor?.id, colorSizes.length]);
+
   return (
-    <div className="max-w-2xl bg-white border border-line rounded p-6">
-      <h3 className="font-display text-xl tracking-wide-2 text-bone uppercase mb-4">Sizes & Availability</h3>
-      <div className="flex flex-wrap gap-3">
-        {sizes.map((s) => (
+    <div className="max-w-2xl bg-white border border-line rounded p-4 sm:p-6">
+      <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase mb-4">Sizes &amp; Availability</h3>
+
+      {/* Color selector */}
+      {colors.length > 0 && (
+        <div className="mb-5">
+          <p className="text-[11px] uppercase tracking-wide-2 text-grey mb-2">Select Color</p>
+          <div className="flex flex-wrap gap-2">
+            {colors.map((c, i) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setSelectedColorIdx(i)}
+                className={`flex items-center gap-2 px-3 py-2 border rounded text-sm font-medium transition-colors ${
+                  i === selectedColorIdx
+                    ? 'bg-bone text-white border-bone'
+                    : 'bg-paper-2 text-bone-dim border-line hover:border-bone-dim'
+                }`}
+              >
+                <span className="w-4 h-4 rounded border border-line shrink-0" style={{ backgroundColor: c.hex }} />
+                {c.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {selectedColor && (
+        <p className="text-xs uppercase tracking-wide-2 text-grey mb-3">Selected: {selectedColor.name}</p>
+      )}
+
+      {/* Size stock table */}
+      {colorSizes.length > 0 ? (
+        <div className="mb-4">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wide-2 text-grey border-b border-line">
+                <th className="text-left py-2 pr-4 font-medium">Size</th>
+                <th className="text-right py-2 pl-4 font-medium">Stock</th>
+              </tr>
+            </thead>
+            <tbody>
+              {colorSizes.map((s) => (
+                <tr key={s.id} className="border-b border-line last:border-0">
+                  <td className="py-2.5 pr-4 text-bone font-medium">{s.size_label}</td>
+                  <td className="py-2.5 pl-4 text-right">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={stockValues[s.size_label] ?? ''}
+                      onChange={(e) => setStockValues((current) => ({ ...current, [s.size_label]: e.target.value }))}
+                      onWheel={(e) => e.currentTarget.blur()}
+                      disabled={busy}
+                      placeholder="0"
+                      className="w-20 text-right rounded border border-line bg-white px-2 py-1.5 text-sm text-bone outline-none disabled:opacity-50"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : colors.length === 0 ? (
+        <p className="text-sm text-grey py-4">Add a color first, then configure sizes.</p>
+      ) : (
+        <p className="text-sm text-grey py-4">Loading sizes…</p>
+      )}
+
+      {/* Actions */}
+      {colorSizes.length > 0 && (
+        <div className="flex items-center gap-3 pt-1">
           <button
-            key={s.id}
-            onClick={() => toggle(s)}
-            className={`flex items-center gap-2 px-4 py-3 border rounded transition-all ${
-              s.available
-                ? 'bg-bone text-white border-bone'
-                : 'bg-paper-2 text-grey border-line line-through'
-            }`}
+            type="button"
+            onClick={saveAll}
+            disabled={busy}
+            className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50"
           >
-            {s.available && <Check size={14} />}
-            <span className="text-sm font-medium">{s.size_label}</span>
+            <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Stock'}
           </button>
-        ))}
-        {sizes.length === 0 && <p className="text-sm text-grey">No sizes configured.</p>}
-      </div>
-      <p className="mt-4 text-xs text-grey">Click a size to toggle availability. Unavailable sizes show as crossed out on the product page.</p>
+          {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+        </div>
+      )}
+
+      <p className="mt-4 text-xs text-grey">Stock is per color + size. Availability is automatic: stock above 0 opens the size; 0 marks it sold out.</p>
+      {error && <p className="mt-2 text-sm text-crimson">{error}</p>}
     </div>
   );
 }
@@ -727,7 +1033,11 @@ function SizeManager({ product, onChanged }: { product: CatalogProduct; onChange
 function SizeChartManager({ product, onChanged }: { product: CatalogProduct; onChanged: () => Promise<void> }) {
   const [chart, setChart] = useState<SizeChartRow[]>(product.size_chart);
 
-  const updateRow = async (row: SizeChartRow, field: 'chest' | 'length' | 'shoulder', value: number) => {
+  useEffect(() => {
+    setChart(product.size_chart);
+  }, [product.size_chart]);
+
+  const updateRow = (row: SizeChartRow, field: 'chest' | 'length' | 'shoulder', value: number) => {
     setChart((prev) => prev.map((r) => r.id === row.id ? { ...r, [field]: value } : r));
   };
 
@@ -737,41 +1047,43 @@ function SizeChartManager({ product, onChanged }: { product: CatalogProduct; onC
   };
 
   return (
-    <div className="max-w-2xl bg-white border border-line rounded p-6">
-      <h3 className="font-display text-xl tracking-wide-2 text-bone uppercase mb-4">Size Chart</h3>
+    <div className="max-w-2xl bg-white border border-line rounded p-4 sm:p-6">
+      <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase mb-4">Size Chart</h3>
       {chart.length > 0 ? (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-wide-2 text-grey border-b border-line">
-              <th className="text-left py-2 pr-4 font-medium">Size</th>
-              <th className="text-left py-2 pr-4 font-medium">Chest (in)</th>
-              <th className="text-left py-2 pr-4 font-medium">Length (in)</th>
-              <th className="text-left py-2 pr-4 font-medium">Shoulder (in)</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {chart.map((r) => (
-              <tr key={r.id} className="border-b border-line">
-                <td className="py-2 pr-4 font-medium text-bone">{r.size_label}</td>
-                <td className="py-2 pr-4">
-                  <input type="number" value={Number(r.chest)} onChange={(e) => updateRow(r, 'chest', Number(e.target.value))} className="w-20 px-2 py-1 border border-line rounded text-sm" />
-                </td>
-                <td className="py-2 pr-4">
-                  <input type="number" value={Number(r.length)} onChange={(e) => updateRow(r, 'length', Number(e.target.value))} className="w-20 px-2 py-1 border border-line rounded text-sm" />
-                </td>
-                <td className="py-2 pr-4">
-                  <input type="number" value={Number(r.shoulder)} onChange={(e) => updateRow(r, 'shoulder', Number(e.target.value))} className="w-20 px-2 py-1 border border-line rounded text-sm" />
-                </td>
-                <td className="py-2">
-                  <button onClick={() => saveRow(r)} className="text-crimson hover:text-crimson-dark" aria-label="Save row">
-                    <Save size={14} />
-                  </button>
-                </td>
+        <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
+          <table className="w-full text-sm min-w-[400px]">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wide-2 text-grey border-b border-line">
+                <th className="text-left py-2 pr-3 sm:pr-4 font-medium">Size</th>
+                <th className="text-left py-2 pr-3 sm:pr-4 font-medium">Chest (in)</th>
+                <th className="text-left py-2 pr-3 sm:pr-4 font-medium">Length (in)</th>
+                <th className="text-left py-2 pr-3 sm:pr-4 font-medium">Shoulder (in)</th>
+                <th></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {chart.map((r) => (
+                <tr key={r.id} className="border-b border-line">
+                  <td className="py-2 pr-3 sm:pr-4 font-medium text-bone">{r.size_label}</td>
+                  <td className="py-2 pr-3 sm:pr-4">
+                    <NumInput value={r.chest} onChange={(n) => updateRow(r, 'chest', n ?? 0)} className="w-16 sm:w-20 px-2 py-1 border border-line rounded text-sm" />
+                  </td>
+                  <td className="py-2 pr-3 sm:pr-4">
+                    <NumInput value={r.length} onChange={(n) => updateRow(r, 'length', n ?? 0)} className="w-16 sm:w-20 px-2 py-1 border border-line rounded text-sm" />
+                  </td>
+                  <td className="py-2 pr-3 sm:pr-4">
+                    <NumInput value={r.shoulder} onChange={(n) => updateRow(r, 'shoulder', n ?? 0)} className="w-16 sm:w-20 px-2 py-1 border border-line rounded text-sm" />
+                  </td>
+                  <td className="py-2">
+                    <button onClick={() => saveRow(r)} className="text-crimson hover:text-crimson-dark" aria-label="Save row">
+                      <Save size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <p className="text-sm text-grey">No size chart rows. They are created automatically when you add a product.</p>
       )}
@@ -839,29 +1151,31 @@ function HeroRow({
 
   return (
     <div className="bg-white border border-line rounded overflow-hidden">
-      <div className="flex items-center gap-4 p-4">
-        <div className="w-20 h-14 shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
-          <img src={image_url} alt={title} className="w-full h-full object-cover" />
+      <div className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4">
+        <div className="w-14 sm:w-20 h-10 sm:h-14 shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
+          {image_url && <img src={image_url} alt={title} className="w-full h-full object-cover" />}
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold text-bone truncate">{title || 'Untitled slide'}</h3>
           <p className="text-xs text-grey truncate">{eyebrow}</p>
         </div>
-        <span className={`text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-1 rounded ${
-          active ? 'bg-green-100 text-green-700' : 'bg-paper-2 text-grey'
-        }`}>
-          {active ? 'Active' : 'Hidden'}
-        </span>
-        <span className="text-xs text-grey">Order: {sort_order}</span>
-        <button onClick={() => setExpanded(!expanded)} className="text-grey hover:text-bone p-1">
-          <ChevronDown size={16} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
-        </button>
-        <button onClick={() => { if (confirm('Delete this slide?')) onDelete(); }} className="text-grey hover:text-crimson p-1">
-          <Trash2 size={15} />
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className={`text-[9px] sm:text-[10px] uppercase tracking-wide-2 font-semibold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded ${
+            active ? 'bg-green-100 text-green-700' : 'bg-paper-2 text-grey'
+          }`}>
+            {active ? 'Active' : 'Hidden'}
+          </span>
+          <span className="text-[10px] sm:text-xs text-grey hidden sm:inline">Order: {sort_order}</span>
+          <button onClick={() => setExpanded(!expanded)} className="text-grey hover:text-bone p-1">
+            <ChevronDown size={15} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </button>
+          <button onClick={() => { if (confirm('Delete this slide?')) onDelete(); }} className="text-grey hover:text-crimson p-1">
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
       {expanded && (
-        <div className="border-t border-line p-4 bg-paper-2 space-y-3">
+        <div className="border-t border-line p-3 sm:p-4 bg-paper-2 space-y-3">
           <Field label="Image URL">
             <input value={image_url} onChange={(e) => setImageUrl(e.target.value)} className={inputCls} />
           </Field>
@@ -874,9 +1188,9 @@ function HeroRow({
           <Field label="Subtitle">
             <textarea value={subtitle} onChange={(e) => setSubtitle(e.target.value)} rows={2} className={inputCls} />
           </Field>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             <Field label="Sort Order">
-              <input type="number" value={sort_order} onChange={(e) => setSortOrder(Number(e.target.value))} className={inputCls} />
+              <NumInput value={sort_order} onChange={(n) => setSortOrder(n ?? 0)} className={inputCls} />
             </Field>
             <label className="flex items-end gap-2 pb-3">
               <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="w-4 h-4 accent-crimson" />
@@ -933,9 +1247,9 @@ function HeroForm({
   };
 
   return (
-    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-white border border-line rounded p-6">
+    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-white border border-line rounded p-4 sm:p-6">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-2xl tracking-wide-2 text-bone uppercase">New Hero Slide</h2>
+        <h2 className="font-display text-xl sm:text-2xl tracking-wide-2 text-bone uppercase">New Hero Slide</h2>
         <button type="button" onClick={onCancel} className="text-grey hover:text-bone transition-colors">
           <X size={20} />
         </button>
@@ -945,7 +1259,7 @@ function HeroForm({
         <input value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://images.pexels.com/..." className={inputCls} />
       </Field>
       <Field label="Eyebrow" hint="Small text above the title">
-        <input value={form.eyebrow} onChange={(e) => setForm({ ...form, eyebrow: e.target.value })} placeholder="Drop 01 — Limited Run" className={inputCls} />
+        <input value={form.eyebrow} onChange={(e) => setForm({ ...form, eyebrow: e.target.value })} placeholder="New Arrivals" className={inputCls} />
       </Field>
       <Field label="Title" hint="Use \n for line breaks">
         <textarea value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} rows={2} placeholder="Wear The\nStruggle" className={inputCls} />
@@ -953,9 +1267,9 @@ function HeroForm({
       <Field label="Subtitle">
         <textarea value={form.subtitle} onChange={(e) => setForm({ ...form, subtitle: e.target.value })} rows={2} className={inputCls} />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <Field label="Sort Order">
-          <input type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} className={inputCls} />
+          <NumInput value={form.sort_order} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
         </Field>
         <label className="flex items-end gap-2 pb-3">
           <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 accent-crimson" />
@@ -978,6 +1292,50 @@ function HeroForm({
 }
 
 /* ---- Shared UI helpers ---- */
+
+function NumInput({ value, onChange, className, placeholder, ...rest }: {
+  value: number | null;
+  onChange: (n: number | null) => void;
+  className?: string;
+  placeholder?: string;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'inputMode'>) {
+  const [raw, setRaw] = useState(value == null ? '' : String(value));
+  const lastRef = useRef(value);
+
+  useEffect(() => {
+    if (value !== lastRef.current) {
+      lastRef.current = value;
+      setRaw(value == null ? '' : String(value));
+    }
+  }, [value]);
+
+  const commit = () => {
+    if (raw === '' || raw === '-') {
+      lastRef.current = null;
+      setRaw('');
+      onChange(null);
+    } else {
+      const n = Math.max(0, Math.floor(Number(raw)));
+      lastRef.current = n;
+      setRaw(String(n));
+      onChange(n);
+    }
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={raw}
+      onChange={(e) => setRaw(e.target.value)}
+      onBlur={commit}
+      onWheel={(e) => e.currentTarget.blur()}
+      placeholder={placeholder}
+      className={className}
+      {...rest}
+    />
+  );
+}
 
 const inputCls = 'w-full px-3 py-2.5 bg-white border border-line text-bone text-sm rounded placeholder:text-grey focus:outline-none focus:border-crimson transition-colors';
 

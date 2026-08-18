@@ -7,17 +7,27 @@ import type {
   ProductSizeRow,
   SizeChartRow,
 } from '@/lib/types';
+import { SIZE_LABELS } from '@/lib/types';
 
 export type { CatalogProduct, HeroSlideRow };
 
 export const WHATSAPP_NUMBER = '919944676178';
 export const INSTAGRAM_URL = 'https://instagram.com/dslang.in';
-export const EMAIL = 'hello@dslang.in';
+export const EMAIL = 'hello.dslang@gmail.com';
+export const FREE_SHIPPING_THRESHOLD = 999;
 
-const SIZE_ORDER: Record<string, number> = { S: 0, M: 1, L: 2, XL: 3, XXL: 4 };
+const ALLOWED_SIZES = new Set<string>(SIZE_LABELS);
+
+const SIZE_ORDER: Record<string, number> = { M: 0, L: 1, XL: 2 };
 
 function sortSizes(sizes: ProductSizeRow[]): ProductSizeRow[] {
-  return [...sizes].sort((a, b) => (SIZE_ORDER[a.size_label] ?? 99) - (SIZE_ORDER[b.size_label] ?? 99));
+  return sizes
+    .filter((s) => ALLOWED_SIZES.has(s.size_label))
+    .sort((a, b) => (SIZE_ORDER[a.size_label] ?? 99) - (SIZE_ORDER[b.size_label] ?? 99));
+}
+
+export function cleanImageUrls(images: string[] | null | undefined): string[] {
+  return (images ?? []).filter((image): image is string => typeof image === 'string' && image.trim().length > 0).map((image) => image.trim());
 }
 
 export async function fetchProducts(): Promise<CatalogProduct[]> {
@@ -39,8 +49,13 @@ export async function fetchProducts(): Promise<CatalogProduct[]> {
 
   return (products as ProductRow[]).map((p) => ({
     ...p,
-    colors: (colors as ProductColorRow[] | null)?.filter((c) => c.product_id === p.id) ?? [],
-    sizes: sortSizes((sizes as ProductSizeRow[] | null)?.filter((s) => s.product_id === p.id) ?? []),
+    colors: ((colors as ProductColorRow[] | null)?.filter((c) => c.product_id === p.id) ?? []).map((color) => ({ ...color, images: cleanImageUrls(color.images) })),
+    sizes: sortSizes(((sizes as ProductSizeRow[] | null)?.filter((s) => s.product_id === p.id) ?? []).map((s) => ({
+      ...s,
+      stock: Number(s.stock ?? 0),
+      // Stock is the source of truth: a size is purchasable whenever stock is positive.
+      available: Number(s.stock ?? 0) > 0,
+    }))),
     size_chart: (chart as SizeChartRow[] | null)?.filter((r) => r.product_id === p.id) ?? [],
   }));
 }
@@ -64,8 +79,12 @@ export async function fetchProduct(slug: string): Promise<CatalogProduct | null>
 
   return {
     ...p,
-    colors: (colors as ProductColorRow[]) ?? [],
-    sizes: sortSizes((sizes as ProductSizeRow[]) ?? []),
+    colors: ((colors as ProductColorRow[]) ?? []).map((color) => ({ ...color, images: cleanImageUrls(color.images) })),
+    sizes: sortSizes(((sizes as ProductSizeRow[]) ?? []).map((s) => ({
+      ...s,
+      stock: Number(s.stock ?? 0),
+      available: Number(s.stock ?? 0) > 0,
+    }))),
     size_chart: (chart as SizeChartRow[]) ?? [],
   };
 }
@@ -91,20 +110,39 @@ export interface WhatsAppOrder {
   size: string;
   quantity: number;
   price: number;
+  customerName?: string;
+  phone?: string;
+  city?: string;
+  address?: string;
+  notes?: string;
+  /** Optional pre-computed total. When provided, it overrides price * quantity. */
+  total?: number;
 }
 
 export function buildWhatsAppUrl(order: WhatsAppOrder): string {
-  const total = order.price * order.quantity;
-  const message = `Hi DSLANG! I'd like to order:
+  const total = order.total ?? order.price * order.quantity;
+  const customerDetails = [
+    order.customerName ? `Customer Name: ${order.customerName}` : null,
+    order.phone ? `Phone: ${order.phone}` : null,
+    order.city ? `City: ${order.city}` : null,
+    order.address ? `Address: ${order.address}` : null,
+    order.notes ? `Notes: ${order.notes}` : null,
+  ].filter(Boolean).join('\n');
 
-Product: ${order.name}
-Code: ${order.code}
-Color: ${order.color}
-Size: ${order.size}
-Qty: ${order.quantity}
-Price: ₹${order.price} x ${order.quantity} = ₹${total}
+  const message = [
+    "Hi DSLANG! I'd like to order:",
+    '',
+    `Product: ${order.name}`,
+    `Code: ${order.code}`,
+    `Color: ${order.color}`,
+    `Size: ${order.size}`,
+    `Qty: ${order.quantity}`,
+    `Price: ₹${order.price} x ${order.quantity} = ₹${total}`,
+    ...(customerDetails ? ['', 'Customer Details:', customerDetails] : []),
+    '',
+    'Please confirm availability and delivery details.',
+  ].join('\n');
 
-Please confirm availability and delivery details.`;
   return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
 }
 

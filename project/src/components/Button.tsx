@@ -20,7 +20,7 @@ export function Button({
   type?: 'button' | 'submit';
 }) {
   const base =
-    'inline-flex items-center justify-center gap-2 text-[11px] md:text-xs uppercase tracking-wide-2 font-semibold transition-all duration-300 px-6 py-4 disabled:opacity-40 disabled:cursor-not-allowed select-none';
+    'inline-flex items-center justify-center gap-2 text-[11px] md:text-xs uppercase tracking-wide-2 font-semibold transition-all duration-150 px-6 py-4 disabled:opacity-40 disabled:cursor-not-allowed select-none';
   const variants = {
     primary: 'bg-crimson text-white hover:bg-crimson-dark disabled:hover:bg-crimson',
     outline: 'border border-bone-dim text-bone hover:bg-bone hover:text-paper disabled:hover:bg-transparent disabled:hover:text-bone',
@@ -48,26 +48,5 @@ export function Button({
     >
       {children}
     </button>
-  );
-}
-
-export function SectionHeading({
-  eyebrow,
-  title,
-  align = 'left',
-}: {
-  eyebrow?: string;
-  title: string;
-  align?: 'left' | 'center';
-}) {
-  return (
-    <div className={align === 'center' ? 'text-center' : ''}>
-      {eyebrow && (
-        <p className="text-[11px] uppercase tracking-ultra text-crimson mb-3">{eyebrow}</p>
-      )}
-      <h2 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-[0.95]">
-        {title}
-      </h2>
-    </div>
   );
 }

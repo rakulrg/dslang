@@ -31,8 +31,10 @@ export interface ProductColorRow {
 export interface ProductSizeRow {
   id: string;
   product_id: string;
+  color_id: string;
   size_label: string;
   available: boolean;
+  stock: number;
 }
 
 export interface SizeChartRow {
@@ -62,12 +64,4 @@ export interface CatalogProduct extends ProductRow {
   size_chart: SizeChartRow[];
 }
 
-export const SIZE_LABELS = ['S', 'M', 'L', 'XL', 'XXL'] as const;
-export type SizeLabel = (typeof SIZE_LABELS)[number];
-
-export const COLOR_PRESETS = [
-  { name: 'Black', hex: '#0d0d0d' },
-  { name: 'Brown', hex: '#5b3a29' },
-  { name: 'Green', hex: '#2d4a2b' },
-  { name: 'Maroon', hex: '#4a1620' },
-] as const;
+export const SIZE_LABELS = ['M', 'L', 'XL'] as const;

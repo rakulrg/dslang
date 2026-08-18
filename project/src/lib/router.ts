@@ -9,7 +9,7 @@ function parseHash(): Route {
   const raw = window.location.hash.replace(/^#/, '') || '/';
   const clean = raw.split('?')[0];
   const path = clean.startsWith('/') ? clean : `/${clean}`;
-  const segments = path.split('/').filter(Boolean);
+  const segments = path.split('/').filter(Boolean).map((s) => decodeURIComponent(s));
   return { path, segments };
 }
 
