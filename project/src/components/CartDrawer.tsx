@@ -10,6 +10,14 @@ export function CartDrawer() {
   const [customer, setCustomer] = useState({ name: '', phone: '', city: '', address: '' });
   const autoCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Reset checkout state when drawer closes
+  useEffect(() => {
+    if (!isOpen) {
+      setShowForm(false);
+      setCustomer({ name: '', phone: '', city: '', address: '' });
+    }
+  }, [isOpen]);
+
   // Body scroll lock with scrollbar compensation
   useEffect(() => {
     if (isOpen) {
