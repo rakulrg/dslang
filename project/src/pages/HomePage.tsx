@@ -1,12 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
-import { ArrowRight, MessageCircle } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { ProductCard } from '@/components/ProductCard';
 import { linkHref } from '@/lib/router';
 import {
   fetchProducts,
   fetchHeroSlides,
-  buildWhatsAppGeneralUrl,
   type CatalogProduct,
   type HeroSlideRow,
 } from '@/lib/catalog';
@@ -74,7 +73,7 @@ export function HomePage() {
         <div className="relative z-10 h-full mx-auto px-6 md:px-12 lg:px-20 xl:px-28 flex flex-col justify-end pb-10 md:pb-14">
           <div key={slide} className="max-w-2xl animate-fade-up">
             {slides[slide].eyebrow && (
-              <p className="text-[10px] md:text-[11px] uppercase tracking-ultra text-white mb-2 md:mb-3 font-medium">
+              <p className="font-label text-[10px] md:text-[11px] uppercase tracking-ultra text-white mb-2 md:mb-3 font-medium">
                 {slides[slide].eyebrow}
               </p>
             )}
@@ -84,13 +83,6 @@ export function HomePage() {
             <div className="mt-5 md:mt-7 flex flex-wrap items-center gap-3">
               <Button href={linkHref('/shop')} variant="primary">
                 Shop The Drop <ArrowRight size={15} strokeWidth={2} />
-              </Button>
-              <Button
-                href={buildWhatsAppGeneralUrl('Hi DSLANG! I want to join the drop list. Please add me.')}
-                external
-                variant="outline-light"
-              >
-                Join Drop List
               </Button>
             </div>
           </div>
@@ -115,37 +107,14 @@ export function HomePage() {
 
       {/* ALL PRODUCTS */}
       {products.length > 0 && (
-        <section className="pt-4 md:pt-8 pb-8 md:pb-12 mx-auto px-6 md:px-12 lg:px-20 xl:px-28">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-5 md:gap-8">
+        <section className="pt-4 md:pt-8 pb-8 md:pb-12 mx-auto px-2 md:px-12 lg:px-20 xl:px-28">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8">
             {products.map((p, i) => (
               <ProductCard key={p.id} product={p} index={i} />
             ))}
           </div>
         </section>
       )}
-
-      {/* WHATSAPP COMMUNITY BLOCK */}
-      <section className="border-t border-line bg-paper-2">
-        <div className="mx-auto px-6 md:px-12 lg:px-20 xl:px-28 py-10 md:py-14 text-center">
-          <MessageCircle size={28} className="text-crimson mx-auto mb-3" strokeWidth={1.6} />
-          <p className="text-[11px] uppercase tracking-ultra text-crimson mb-3 font-medium">Join The List</p>
-          <h2 className="font-display text-4xl md:text-7xl uppercase tracking-wide-2 text-bone leading-[0.95]">
-            Never Miss A Drop
-          </h2>
-          <p className="mt-4 text-sm md:text-base text-bone-dim max-w-lg mx-auto leading-relaxed">
-            Get first access to every drop and restock alerts.
-          </p>
-          <div className="mt-6">
-            <Button
-              href={buildWhatsAppGeneralUrl('Hi DSLANG! I want to join the drop list. Please add me.')}
-              external
-              variant="primary"
-            >
-              <MessageCircle size={16} strokeWidth={2} /> Join WhatsApp Drop List
-            </Button>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }

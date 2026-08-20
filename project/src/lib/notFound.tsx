@@ -4,7 +4,7 @@ export function notFound(): import('react').ReactElement {
       <p className="font-display text-7xl md:text-9xl uppercase tracking-wide-2 text-bone leading-none">
         404
       </p>
-      <p className="mt-5 text-sm uppercase tracking-wide-2 text-grey">
+      <p className="font-label mt-5 text-sm uppercase tracking-wide-2 text-grey">
         This page sold out.
       </p>
       <a

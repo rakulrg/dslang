@@ -18,7 +18,7 @@ export function ProductCard({ product, index = 0 }: { product: CatalogProduct; i
     >
       <div className="relative aspect-[4/5] overflow-hidden bg-paper-3 border border-line">
         {discount && (
-          <span className="absolute top-2.5 right-2.5 z-10 bg-crimson text-white text-[9px] uppercase tracking-wide-2 font-semibold px-2 py-0.5 rounded-sm">
+          <span className="font-label absolute top-2.5 right-2.5 z-10 bg-crimson text-white text-[9px] uppercase tracking-wide-2 font-semibold px-2 py-0.5 rounded-sm">
             -{discount}%
           </span>
         )}
@@ -48,15 +48,15 @@ export function ProductCard({ product, index = 0 }: { product: CatalogProduct; i
       </div>
 
       {/* Info */}
-      <div className="pt-4 flex flex-col flex-1">
-        <h3 className="text-base font-semibold text-bone leading-tight">
+      <div className="pt-2 md:pt-4 flex flex-col flex-1">
+        <h3 className="text-[14px] font-medium text-bone leading-[1.3] line-clamp-2">
           {product.name}
         </h3>
         <div className="mt-auto pt-1.5">
           <div className="flex items-center gap-2.5">
-            <span className="text-bone font-medium">{formatPrice(product.price)}</span>
+            <span className="font-price text-[15px] text-bone">{formatPrice(product.price)}</span>
             {product.mrp && (
-              <span className="text-grey line-through text-sm">{formatPrice(product.mrp)}</span>
+              <span className="font-price text-[13px] text-grey line-through">{formatPrice(product.mrp)}</span>
             )}
           </div>
           {/* Swatches */}
@@ -70,7 +70,7 @@ export function ProductCard({ product, index = 0 }: { product: CatalogProduct; i
               />
             ))}
             {product.colors.length > 0 && (
-              <span className="text-[10px] uppercase tracking-wide-2 text-grey ml-1">
+              <span className="font-label text-[11px] font-normal uppercase tracking-wide-2 text-grey ml-1">
                 {product.colors.length} Colors
               </span>
             )}

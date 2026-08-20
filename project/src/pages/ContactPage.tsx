@@ -27,7 +27,7 @@ const CHANNELS = [
     icon: Mail,
     label: 'Email',
     value: EMAIL,
-    note: 'Wholesale & partnership enquiries.',
+    note: 'General enquiries & feedback.',
     href: `mailto:${EMAIL}`,
   },
 ];
@@ -37,12 +37,11 @@ export function ContactPage() {
     <div className="pb-12 md:pb-20">
       <div className="mx-auto px-6 md:px-12 lg:px-20 xl:px-28">
         {/* Header */}
-        <p className="text-[11px] uppercase tracking-ultra text-crimson mb-3">Get In Touch</p>
-        <h1 className="font-display text-5xl md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
+        <h1 className="mt-6 font-display text-5xl md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
           Let's Talk
         </h1>
         <p className="mt-4 text-bone-dim max-w-xl leading-relaxed">
-          Questions about a drop, a size, or a wholesale order? Reach out — we reply fast and we keep it real. No bots, no call centres.
+          Questions about a drop, a size, or your order? Reach out — we reply fast and we keep it real. No bots, no call centres.
         </p>
 
         {/* Channels */}
@@ -57,31 +56,14 @@ export function ContactPage() {
               style={{ animationDelay: `${i * 80}ms` }}
             >
               <c.icon size={24} className="text-crimson mb-3" strokeWidth={1.5} />
-              <h3 className="text-[11px] uppercase tracking-wide-2 text-grey mb-2">{c.label}</h3>
-              <p className="font-condensed text-2xl uppercase tracking-wide-2 text-bone group-hover:text-crimson transition-colors">
+              <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey mb-2">{c.label}</h3>
+              <p className="font-label text-2xl uppercase tracking-wide-2 text-bone group-hover:text-crimson transition-colors">
                 {c.value}
               </p>
               <p className="mt-3 text-sm text-bone-soft leading-relaxed">{c.note}</p>
             </a>
           ))}
         </div>
-
-        {/* Wholesale Enquiry — highlighted */}
-        <a
-          href={buildWhatsAppGeneralUrl('Hi DSLANG! I\'d like to make a wholesale enquiry. Please share bulk pricing and minimum order details.')}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="group mt-6 block border border-crimson/40 bg-crimson/[0.03] p-5 md:p-6 hover:border-crimson hover:bg-crimson/[0.06] transition-colors duration-150 animate-pulse-wholesale"
-        >
-          <MessageCircle size={24} className="text-crimson mb-3" strokeWidth={1.5} />
-          <h3 className="text-[11px] uppercase tracking-wide-2 text-crimson mb-2">Wholesale Enquiry</h3>
-          <p className="font-condensed text-2xl uppercase tracking-wide-2 text-bone group-hover:text-crimson transition-colors duration-150">
-            Bulk Orders
-          </p>
-          <p className="mt-3 text-sm text-bone-soft leading-relaxed">
-            Minimum order quantities, custom designs, and distribution enquiries.
-          </p>
-        </a>
 
         {/* WhatsApp CTA */}
         <section className="mt-10 md:mt-14 border border-line bg-paper-2 p-6 md:p-10 text-center">

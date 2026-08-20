@@ -100,7 +100,7 @@ export async function fetchHeroSlides(): Promise<HeroSlideRow[]> {
 }
 
 export function formatPrice(n: number): string {
-  return `₹${n.toLocaleString('en-IN')}`;
+  return `₹\u2009${n.toLocaleString('en-IN')}`;
 }
 
 export interface WhatsAppOrder {

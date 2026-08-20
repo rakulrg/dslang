@@ -174,9 +174,17 @@ export async function adminAddColor(
   hex: string,
   images: string[]
 ): Promise<ProductColorRow> {
+  const { data: existingColors } = await supabase
+    .from('product_colors')
+    .select('sort_order')
+    .eq('product_id', productId)
+    .order('sort_order', { ascending: false })
+    .limit(1);
+  const maxSort = (existingColors?.[0] as { sort_order?: number } | undefined)?.sort_order ?? -1;
+
   const { data, error } = await supabase
     .from('product_colors')
-    .insert({ product_id: productId, name, hex, images, sort_order: 99 })
+    .insert({ product_id: productId, name, hex, images, sort_order: maxSort + 1 })
     .select()
     .single();
   if (error) throw error;
@@ -205,6 +213,15 @@ export async function adminUpdateColor(id: string, patch: Partial<Pick<ProductCo
 export async function adminDeleteColor(id: string): Promise<void> {
   const { error } = await supabase.from('product_colors').delete().eq('id', id);
   if (error) throw error;
+}
+
+export async function adminUpdateColorSortOrders(productId: string, orderedIds: string[]): Promise<void> {
+  const updates = orderedIds.map((id, i) =>
+    supabase.from('product_colors').update({ sort_order: i }).eq('id', id).eq('product_id', productId)
+  );
+  const results = await Promise.all(updates);
+  const firstError = results.find((r) => r.error);
+  if (firstError?.error) throw firstError.error;
 }
 
 // Initialize default size rows for a color that has none
@@ -252,6 +269,42 @@ export async function adminUpdateSizeStock(
 export async function adminUpdateSizeChartRow(id: string, chest: number, length: number, shoulder: number): Promise<void> {
   const { error } = await supabase.from('size_chart_rows').update({ chest, length, shoulder }).eq('id', id);
   if (error) throw error;
+}
+
+export async function uploadHeroImage(file: File): Promise<string> {
+  if (!(file instanceof File) || file.size <= 0) {
+    throw new Error('Choose a non-empty image file before uploading.');
+  }
+  if (!PRODUCT_IMAGE_TYPES.has(file.type)) {
+    throw new Error('Only JPG, PNG, and WebP images are supported.');
+  }
+  if (file.size > MAX_PRODUCT_IMAGE_BYTES) {
+    throw new Error('Images must be 10 MB or smaller.');
+  }
+
+  await requireAdminImageAccess();
+
+  const fileExt = PRODUCT_IMAGE_EXTENSIONS[file.type];
+  const uniqueId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const objectPath = `hero/${uniqueId}.${fileExt}`;
+
+  const { data, error } = await supabase.storage
+    .from(PRODUCT_IMAGE_BUCKET)
+    .upload(objectPath, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || 'application/octet-stream',
+    });
+
+  if (error) throw error;
+  const publicUrl = supabase.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(data.path).data.publicUrl;
+  if (!publicUrl) {
+    throw new Error('Failed to create the uploaded image URL.');
+  }
+
+  return publicUrl;
 }
 
 // Hero slides

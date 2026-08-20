@@ -26,7 +26,6 @@ const CONTENT: Record<string, { q: string; a: string }[]> = {
     { q: 'How To Order', a: 'Browse products on the site, add items to your cart, and place your order directly through WhatsApp. There is no on-site payment gateway — all purchases are confirmed and completed via WhatsApp.' },
     { q: 'Pricing', a: 'All prices are listed in Indian Rupees (₹) and are inclusive of applicable taxes. Prices may change between drops. The price confirmed on WhatsApp at the time of order is final.' },
     { q: 'Product Representation', a: 'We do our best to represent colours and fits accurately, but fabric colours may vary slightly from screen to screen due to photography lighting and display settings.' },
-    { q: 'Wholesale Enquiries', a: 'DSLANG runs a growing wholesale network across Tamil Nadu. For wholesale pricing and minimum order quantities, reach out on WhatsApp or email.' },
   ],
   privacy: [
     { q: 'What We Collect', a: 'When you place an order via WhatsApp, we collect your name, contact number, and delivery address — only what is needed to ship your order.' },
@@ -53,7 +52,7 @@ export function PoliciesPage() {
             <button
               key={t.id}
               onClick={() => { setTab(t.id); setOpen(0); }}
-              className={`text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-150 ${
+              className={`font-label text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-150 ${
                 tab === t.id
                   ? 'bg-bone text-paper border-bone'
                   : 'border-line text-bone-dim hover:border-bone-dim hover:text-bone'
@@ -72,7 +71,7 @@ export function PoliciesPage() {
                 onClick={() => setOpen(open === i ? null : i)}
                 className="w-full flex items-center justify-between gap-4 py-5 text-left"
               >
-                <span className="font-condensed text-xl md:text-2xl uppercase tracking-wide-2 text-bone">
+                <span className="font-label text-xl md:text-2xl uppercase tracking-wide-2 text-bone">
                   {item.q}
                 </span>
                 <ChevronDown

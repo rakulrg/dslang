@@ -4,7 +4,6 @@ import { linkHref } from '@/lib/router';
 import { INSTAGRAM_URL, WHATSAPP_NUMBER, EMAIL } from '@/lib/catalog';
 
 const FOOTER_LINKS = [
-  { label: 'New Arrivals', to: '/shop' },
   { label: 'Sale', to: '/shop' },
   { label: 'Profile', to: '/account' },
   { label: 'Orders', to: '/account' },
@@ -21,7 +20,7 @@ export function Footer() {
       <div className="mx-auto px-6 md:px-12 lg:px-20 xl:px-28 py-8 md:py-10">
         <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr_1fr] gap-8 md:gap-10">
           <div>
-            <a href={linkHref('/')} className="font-display text-3xl tracking-wide-2 text-bone leading-none">
+            <a href={linkHref('/')} className="font-brand text-3xl tracking-[0.03em] text-bone leading-none">
               DSLANG<span className="text-crimson">.</span>
             </a>
             <p className="mt-4 max-w-sm text-sm text-bone-soft leading-relaxed">
@@ -41,7 +40,7 @@ export function Footer() {
           </div>
 
           <div>
-            <h4 className="text-[11px] uppercase tracking-wide-2 text-grey mb-4">Navigation</h4>
+            <h4 className="font-label text-[11px] uppercase tracking-wide-2 text-grey mb-4">Navigation</h4>
             <ul className="space-y-3">
               {FOOTER_LINKS.map((l) => (
                 <li key={`${l.label}-${l.to}`}>
@@ -54,7 +53,7 @@ export function Footer() {
           </div>
 
           <div>
-            <h4 className="text-[11px] uppercase tracking-wide-2 text-grey mb-4">Contact</h4>
+            <h4 className="font-label text-[11px] uppercase tracking-wide-2 text-grey mb-4">Contact</h4>
             <ul className="space-y-3 text-sm">
               <li>
                 <a href={`https://wa.me/${WHATSAPP_NUMBER}`} target="_blank" rel="noopener noreferrer" className="text-bone-dim hover:text-crimson transition-colors duration-150">

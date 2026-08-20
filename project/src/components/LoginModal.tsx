@@ -66,7 +66,7 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
             <X size={22} strokeWidth={1.8} />
           </button>
           <div className="flex items-center gap-3 mb-2">
-            <span className="font-display text-2xl tracking-wide-2 text-bone">DSLANG<span className="text-crimson">.</span></span>
+            <span className="font-brand text-2xl tracking-[0.03em] text-bone">DSLANG<span className="text-crimson">.</span></span>
           </div>
           <h2 className="font-display text-2xl uppercase tracking-wide-2 text-bone mt-4">Welcome back</h2>
           <p className="mt-2 text-sm text-bone-soft">You are signed in as {user.email}.</p>
@@ -91,7 +91,7 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
         </button>
 
         <div className="flex items-center justify-center mb-4">
-          <span className="font-display text-3xl tracking-wide-2 text-bone">DSLANG<span className="text-crimson">.</span></span>
+          <span className="font-brand text-3xl tracking-[0.03em] text-bone">DSLANG<span className="text-crimson">.</span></span>
         </div>
 
         <h2 className="font-display text-3xl md:text-4xl uppercase tracking-wide-2 text-bone text-center leading-none">
@@ -100,7 +100,7 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <label className="block">
-            <span className="mb-2 block text-[11px] uppercase tracking-wide-2 text-grey">Email</span>
+            <span className="mb-2 block font-label text-[11px] uppercase tracking-wide-2 text-grey">Email</span>
             <div className="relative">
               <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-grey" strokeWidth={1.6} />
               <input

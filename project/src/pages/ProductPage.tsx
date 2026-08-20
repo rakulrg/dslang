@@ -600,15 +600,15 @@ export function ProductPage({ slug }: { slug: string }) {
           <h1 className="text-2xl md:text-4xl lg:text-3xl xl:text-4xl font-semibold text-bone leading-tight">
             {product.name}
           </h1>
-          <p className="text-[11px] md:text-xs uppercase tracking-wide-2 text-grey mt-1 lg:mt-1.5">{product.code}</p>
+          <p className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey mt-1 lg:mt-1.5">{product.code}</p>
 
           {/* Price */}
           <div className="mt-3 md:mt-6 lg:mt-4 flex items-center gap-3">
-            <span className="text-2xl md:text-3xl lg:text-2xl xl:text-3xl font-medium text-bone">{formatPrice(product.price)}</span>
+            <span className="font-price text-crimson text-2xl md:text-3xl lg:text-2xl xl:text-3xl">{formatPrice(product.price)}</span>
             {product.mrp && (
               <>
-                <span className="text-grey line-through text-lg md:text-xl lg:text-base">{formatPrice(product.mrp)}</span>
-                <span className="text-crimson text-xs md:text-sm uppercase tracking-wide-2 font-semibold">
+                <span className="font-price text-grey line-through text-lg md:text-xl lg:text-base">{formatPrice(product.mrp)}</span>
+                <span className="font-label text-crimson text-xs md:text-sm uppercase tracking-wide-2 font-semibold">
                   Save {discount}%
                 </span>
               </>
@@ -618,8 +618,8 @@ export function ProductPage({ slug }: { slug: string }) {
           {/* Color */}
           <div className="mt-5 md:mt-8 lg:mt-5">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] md:text-xs uppercase tracking-wide-2 text-grey">Color</span>
-              <span className="text-[11px] md:text-xs uppercase tracking-wide-2 text-bone-dim">{color.name}</span>
+              <span className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey">Color</span>
+              <span className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-bone-dim">{color.name}</span>
             </div>
             <div className="flex items-center gap-2.5 md:gap-3">
               {product.colors.map((c: ProductColorRow, i: number) => (
@@ -650,7 +650,7 @@ export function ProductPage({ slug }: { slug: string }) {
           {/* Size */}
           <div className="mt-4 md:mt-7 lg:mt-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] md:text-xs uppercase tracking-wide-2 text-grey">Size</span>
+              <span className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey">Size</span>
             </div>
             <div className="flex flex-wrap gap-2.5 md:gap-3">
               {colorSizes.map((s: ProductSizeRow) => (
@@ -658,7 +658,7 @@ export function ProductPage({ slug }: { slug: string }) {
                   key={s.id}
                   onClick={() => { if (s.available) { setSize(s.size_label); setQty(1); } }}
                   disabled={!s.available}
-                  className={`min-w-[3.25rem] md:min-w-[3.5rem] lg:min-w-[3.25rem] px-3 md:px-3.5 lg:px-3 py-2 md:py-2.5 lg:py-2 text-sm md:text-sm lg:text-[13px] font-medium border transition-all duration-200 ${
+                  className={`font-label min-w-[3.25rem] md:min-w-[3.5rem] lg:min-w-[3.25rem] px-3 md:px-3.5 lg:px-3 py-2 md:py-2.5 lg:py-2 text-sm md:text-sm lg:text-[13px] font-medium border transition-all duration-200 ${
                     !s.available
                       ? 'border-line text-grey/50 line-through cursor-not-allowed bg-paper-2'
                       : size === s.size_label
@@ -674,7 +674,7 @@ export function ProductPage({ slug }: { slug: string }) {
 
           {/* Quantity */}
           <div className="mt-4 md:mt-7 lg:mt-4">
-            <span className="text-[11px] md:text-xs uppercase tracking-wide-2 text-grey block mb-2">Quantity</span>
+            <span className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey block mb-2">Quantity</span>
             <div className="inline-flex items-center border border-line">
               <button
                 onClick={() => setQty((q) => Math.max(1, q - 1))}
@@ -738,7 +738,7 @@ export function ProductPage({ slug }: { slug: string }) {
               </div>
             )}
             {!canBuy && (
-              <p className="text-[11px] uppercase tracking-wide-2 text-crimson/80">
+              <p className="font-label text-[11px] uppercase tracking-wide-2 text-crimson/80">
                 Select a size to unlock checkout
               </p>
             )}
@@ -757,15 +757,15 @@ export function ProductPage({ slug }: { slug: string }) {
           {/* Fabric / Fit / Care */}
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 border-t border-line pt-5">
             <div>
-              <dt className="text-[10px] uppercase tracking-wide-2 text-grey">Fabric</dt>
+              <dt className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Fabric</dt>
               <dd className="mt-1 text-sm text-bone-dim">{product.fabric}</dd>
             </div>
             <div>
-              <dt className="text-[10px] uppercase tracking-wide-2 text-grey">Fit</dt>
+              <dt className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Fit</dt>
               <dd className="mt-1 text-sm text-bone-dim">{product.fit}</dd>
             </div>
             <div>
-              <dt className="text-[10px] uppercase tracking-wide-2 text-grey">Care</dt>
+              <dt className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Care</dt>
               <dd className="mt-1 text-sm text-bone-dim leading-snug">{product.care}</dd>
             </div>
           </div>
@@ -779,7 +779,7 @@ export function ProductPage({ slug }: { slug: string }) {
                   onClick={() => toggleAcc(a.title)}
                   className="w-full flex items-center justify-between py-4 text-left"
                 >
-                  <span className="text-[11px] uppercase tracking-wide-2 text-bone-dim font-medium">
+                  <span className="font-label text-[11px] uppercase tracking-wide-2 text-bone-dim font-medium">
                     {a.title}
                   </span>
                   <ChevronDown
@@ -854,11 +854,11 @@ export function ProductPage({ slug }: { slug: string }) {
       {/* Related */}
       {related.length > 0 && (
         <section className="border-t border-line py-12 md:py-16">
-          <div className="mx-auto px-6 md:px-12 lg:px-16 xl:px-20">
-            <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone mb-6 md:mb-10">
+          <div className="mx-auto px-3 md:px-12 lg:px-16 xl:px-20">
+            <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone mb-4 md:mb-10">
               You May Also Like
             </h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-8">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-8">
               {related.map((p, i) => (
                 <ProductCard key={p.id} product={p} index={i} />
               ))}

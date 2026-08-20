@@ -72,7 +72,7 @@ export function Navbar({ currentPath, onLoginClick }: { currentPath: string; onL
             {/* Center — Logo */}
             <a
               href={linkHref('/')}
-              className="justify-self-center font-display text-2xl md:text-3xl tracking-wide-2 leading-none select-none transition-colors text-bone"
+              className="justify-self-center font-brand text-2xl md:text-3xl tracking-[0.18em] leading-none select-none transition-colors text-bone"
               aria-label="DSLANG home"
             >
               DSLANG<span className="text-crimson">.</span>
@@ -114,37 +114,40 @@ export function Navbar({ currentPath, onLoginClick }: { currentPath: string; onL
           }}
         >
           <div className="flex items-center justify-between h-11 px-5 border-b border-line shrink-0">
-            <span className="font-display text-2xl tracking-wide-2 text-bone">
+            <span className="font-brand text-2xl tracking-[0.03em] text-bone">
               DSLANG<span className="text-crimson">.</span>
             </span>
             <button onClick={() => setMenuOpen(false)} className="text-bone p-1" aria-label="Close menu">
               <X size={22} strokeWidth={1.6} />
             </button>
           </div>
-          <ul className="flex flex-col py-4 overflow-y-auto">
-            {NAV_LINKS.map((l) => (
-              <li key={l.to}>
-                <a
-                  href={linkHref(l.to)}
-                  onClick={() => setMenuOpen(false)}
-                  className={`block px-5 py-4 font-condensed text-3xl tracking-wide-2 uppercase transition-colors ${
-                    isActive(l.to) ? 'text-crimson' : 'text-bone-dim hover:text-bone'
-                  }`}
-                >
-                  {l.label}
-                </a>
-              </li>
-            ))}
-            <li>
+          <div className="flex flex-col flex-1 min-h-0">
+            <ul className="flex flex-col py-4">
+              {NAV_LINKS.map((l) => (
+                <li key={l.to}>
+                  <a
+                    href={linkHref(l.to)}
+                    onClick={() => setMenuOpen(false)}
+                    className={`block px-5 py-3.5 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors ${
+                      isActive(l.to) ? 'text-crimson' : 'text-bone-dim hover:text-bone'
+                    }`}
+                  >
+                    {l.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+            <div className="flex-1" />
+            <div className="px-5 pb-4">
               <button
                 onClick={() => { setMenuOpen(false); onLoginClick(); }}
-                className="flex items-center gap-2 px-5 py-4 font-condensed text-2xl tracking-wide-2 uppercase text-bone-soft hover:text-bone w-full text-left"
+                className="flex items-center gap-2 font-label text-[22px] font-bold tracking-[0.04em] uppercase text-bone-soft hover:text-bone transition-colors"
               >
-                <User size={18} strokeWidth={1.6} /> {user ? 'Account' : 'Sign in'}
+                <User size={22} strokeWidth={1.6} /> Login
               </button>
-            </li>
-          </ul>
-          <div className="mt-auto p-5 border-t border-line flex items-center gap-6 shrink-0">
+            </div>
+          </div>
+          <div className="p-5 border-t border-line flex items-center gap-6 shrink-0">
             <a
               href={INSTAGRAM_URL}
               target="_blank"

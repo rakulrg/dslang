@@ -122,7 +122,7 @@ export function SubscriberDashboard() {
       {/* Header */}
       <header className="bg-white border-b border-line sticky top-0 z-10">
         <div className="mx-auto max-w-4xl px-5 md:px-8 h-16 flex items-center justify-between">
-          <a href={linkHref('/')} className="font-display text-2xl tracking-wide-2 text-bone leading-none">
+          <a href={linkHref('/')} className="font-brand text-2xl tracking-[0.03em] text-bone leading-none">
             DSLANG<span className="text-crimson">.</span>
           </a>
           <div className="flex items-center gap-4">
@@ -153,7 +153,7 @@ export function SubscriberDashboard() {
       <div className="mx-auto max-w-4xl px-5 md:px-8 py-8 md:py-12">
         {/* Welcome */}
         <div className="mb-8">
-          <p className="text-[11px] uppercase tracking-ultra text-crimson mb-2">My Account</p>
+          <p className="font-label text-[11px] uppercase tracking-ultra text-crimson mb-2">My Account</p>
           <h1 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone leading-none">
             Drop Updates
           </h1>
@@ -223,7 +223,7 @@ export function SubscriberDashboard() {
         ) : sorted.length === 0 ? (
           <div className="text-center py-20 bg-white border border-line rounded">
             <Bell size={32} className="text-grey mx-auto mb-4" strokeWidth={1.5} />
-            <p className="font-condensed text-2xl uppercase tracking-wide-2 text-grey">No updates yet</p>
+            <p className="font-label text-2xl uppercase tracking-wide-2 text-grey">No updates yet</p>
             <p className="mt-2 text-sm text-grey">New drops and restocks will show up here first.</p>
             <a
               href={linkHref('/shop')}
@@ -251,11 +251,11 @@ export function SubscriberDashboard() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`text-[10px] uppercase tracking-wide-2 font-semibold ${meta.color}`}>
+                        <span className={`font-label text-[10px] uppercase tracking-wide-2 font-semibold ${meta.color}`}>
                           {meta.label}
                         </span>
                         {ann.is_pinned && (
-                          <span className="text-[10px] uppercase tracking-wide-2 font-semibold text-bone bg-paper-2 px-2 py-0.5 rounded">
+                          <span className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-bone bg-paper-2 px-2 py-0.5 rounded">
                             Pinned
                           </span>
                         )}
@@ -342,8 +342,8 @@ function StatCard({ label, value, icon: Icon }: { label: string; value: number; 
   return (
     <div className="bg-white border border-line rounded p-4 text-center">
       <Icon size={18} className="text-crimson mx-auto mb-2" strokeWidth={1.6} />
-      <p className="text-2xl font-semibold text-bone tabular-nums">{value}</p>
-      <p className="text-[10px] uppercase tracking-wide-2 text-grey mt-1">{label}</p>
+      <p className="font-label text-2xl font-semibold text-bone tabular-nums">{value}</p>
+      <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mt-1">{label}</p>
     </div>
   );
 }

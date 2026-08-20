@@ -15,15 +15,18 @@ export function CartDrawer() {
     if (isOpen) {
       const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
       document.body.style.overflow = 'hidden';
+      document.documentElement.style.overflow = 'hidden';
       if (scrollbarWidth > 0) {
         document.body.style.paddingRight = `${scrollbarWidth}px`;
       }
     } else {
       document.body.style.overflow = '';
+      document.documentElement.style.overflow = '';
       document.body.style.paddingRight = '';
     }
     return () => {
       document.body.style.overflow = '';
+      document.documentElement.style.overflow = '';
       document.body.style.paddingRight = '';
     };
   }, [isOpen]);
@@ -88,8 +91,10 @@ export function CartDrawer() {
         onClick={close}
       />
       <div
-        className="absolute right-0 top-8 h-[calc(100vh-2rem)] w-[85vw] max-w-lg bg-white border-l border-line flex flex-col will-change-transform"
+        className="absolute right-0 top-8 w-[85vw] max-w-lg bg-white border-l border-line flex flex-col overflow-hidden will-change-transform"
         style={{
+          height: 'calc(100dvh - 2rem)',
+          maxHeight: 'calc(100dvh - 2rem)',
           transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 250ms cubic-bezier(0.16, 1, 0.3, 1)',
         }}
@@ -112,7 +117,7 @@ export function CartDrawer() {
         {items.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
             <ShoppingBag size={48} className="text-line mb-4" strokeWidth={1} />
-            <p className="font-condensed text-2xl uppercase tracking-wide-2 text-grey">Your cart is empty.</p>
+            <p className="font-label text-2xl uppercase tracking-wide-2 text-grey">Your cart is empty.</p>
             <a
               href={linkHref('/shop')}
               onClick={close}
@@ -123,7 +128,10 @@ export function CartDrawer() {
           </div>
         ) : (
           <>
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+            <div
+              className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-5 py-4 space-y-4"
+              style={{ WebkitOverflowScrolling: 'touch' }}
+            >
               {items.map((item, i) => (
                 <div key={i} className="flex gap-3 border-b border-line pb-4">
                   <div className="w-16 h-20 shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
@@ -133,10 +141,10 @@ export function CartDrawer() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <h4 className="text-sm font-semibold text-bone truncate">{item.name}</h4>
-                    <p className="text-[10px] uppercase tracking-wide-2 text-grey mt-0.5">
+                    <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mt-0.5">
                       {item.color} · Size {item.size}
                     </p>
-                    <p className="text-sm text-bone-dim mt-1">{formatPrice(item.price)}</p>
+                    <p className="font-price text-sm text-bone-dim mt-1">{formatPrice(item.price)}</p>
                     <div className="mt-2 flex items-center justify-between">
                       <div className="inline-flex items-center border border-line">
                         <button
@@ -166,23 +174,26 @@ export function CartDrawer() {
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-semibold text-bone">{formatPrice(item.price * item.qty)}</p>
+                    <p className="font-price text-sm text-bone">{formatPrice(item.price * item.qty)}</p>
                   </div>
                 </div>
               ))}
               <button
                 onClick={clear}
-                className="text-[10px] uppercase tracking-wide-2 text-grey hover:text-crimson transition-colors"
+                className="font-label text-[10px] uppercase tracking-wide-2 text-grey hover:text-crimson transition-colors"
               >
                 Clear all
               </button>
             </div>
 
             {/* Footer */}
-            <div className="border-t border-line p-5 space-y-4 shrink-0">
+            <div
+              className="border-t border-line px-5 pt-5 pb-5 space-y-4 shrink-0"
+              style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom, 0px))' }}
+            >
               <div className="flex items-center justify-between">
-                <span className="text-[11px] uppercase tracking-wide-2 text-grey">Subtotal</span>
-                <span className="text-lg font-semibold text-bone">{formatPrice(subtotal)}</span>
+                <span className="font-label text-[11px] uppercase tracking-wide-2 text-grey">Subtotal</span>
+                <span className="font-price text-lg text-bone">{formatPrice(subtotal)}</span>
               </div>
               <p className="text-xs text-grey">Shipping is confirmed via WhatsApp. Free over ₹999.</p>
               {showForm && (

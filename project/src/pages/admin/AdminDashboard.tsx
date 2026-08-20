@@ -11,6 +11,7 @@ import {
   GripVertical,
   Check,
   ExternalLink,
+  Upload,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
@@ -28,10 +29,12 @@ import {
   adminUpdateSizeStock,
   adminInitColorSizes,
   adminUpdateSizeChartRow,
+  adminUpdateColorSortOrders,
   adminCreateHero,
   adminUpdateHero,
   adminDeleteHero,
   uploadProductImage,
+  uploadHeroImage,
   type ProductInput,
 } from '@/lib/admin';
 import type { CatalogProduct, HeroSlideRow, ProductColorRow, ProductSizeRow, SizeChartRow } from '@/lib/types';
@@ -114,7 +117,7 @@ export function AdminDashboard() {
       {/* Mobile header */}
       <div className="lg:hidden w-full shrink-0 bg-white border-b border-line">
         <div className="flex items-center justify-between px-4 py-3">
-          <a href={linkHref('/')} className="font-display text-xl tracking-wide-2 text-bone leading-none">
+          <a href={linkHref('/')} className="font-brand text-xl tracking-[0.03em] text-bone leading-none">
             DSLANG<span className="text-crimson">.</span>
           </a>
           <div className="flex items-center gap-1">
@@ -156,10 +159,10 @@ export function AdminDashboard() {
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-60 shrink-0 border-r border-line bg-white flex-col sticky top-0 h-screen">
         <div className="px-5 py-6 border-b border-line">
-          <a href={linkHref('/')} className="font-display text-2xl tracking-wide-2 text-bone leading-none">
+          <a href={linkHref('/')} className="font-brand text-2xl tracking-[0.03em] text-bone leading-none">
             DSLANG<span className="text-crimson">.</span>
           </a>
-          <p className="mt-1 text-[10px] uppercase tracking-wide-2 text-grey">Admin Panel</p>
+          <p className="mt-1 font-label text-[10px] uppercase tracking-wide-2 text-grey">Admin Panel</p>
         </div>
 
         <nav className="flex-1 p-3 space-y-1">
@@ -297,7 +300,7 @@ function ProductList({
   if (products.length === 0) {
     return (
       <div className="text-center py-24 border border-line rounded bg-white">
-        <p className="font-condensed text-3xl uppercase tracking-wide-2 text-grey">No products yet</p>
+        <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No products yet</p>
         <p className="mt-3 text-sm text-grey">Create your first product to get started.</p>
       </div>
     );
@@ -608,6 +611,9 @@ function ProductEditor({
       {/* Colors section */}
       <ColorManager product={product} onChanged={onChanged} />
 
+      {/* Color priority */}
+      <ColorPriorityManager product={product} onChanged={onChanged} />
+
       {/* Sizes section */}
       <SizeManager product={product} onChanged={onChanged} />
 
@@ -880,6 +886,182 @@ function ColorRow({ color, onDelete, onSave }: { color: ProductColorRow; onDelet
   );
 }
 
+/* ---- Color Priority Manager ---- */
+
+function ColorPriorityManager({ product, onChanged }: { product: CatalogProduct; onChanged: () => Promise<void> }) {
+  const [orderedColors, setOrderedColors] = useState<ProductColorRow[]>(() =>
+    [...product.colors].sort((a, b) => a.sort_order - b.sort_order)
+  );
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+  const dragItem = useRef<number | null>(null);
+  const dragOverItem = useRef<number | null>(null);
+  const touchStartY = useRef<number>(0);
+  const touchCurrentY = useRef<number>(0);
+  const touchDragEl = useRef<HTMLDivElement | null>(null);
+  const touchClone = useRef<HTMLDivElement | null>(null);
+  const touchStartIdx = useRef<number>(0);
+
+  useEffect(() => {
+    setOrderedColors([...product.colors].sort((a, b) => a.sort_order - b.sort_order));
+  }, [product.colors]);
+
+  const handleDragStart = (index: number) => {
+    dragItem.current = index;
+  };
+
+  const handleDragEnter = (index: number) => {
+    dragOverItem.current = index;
+  };
+
+  const handleDragEnd = () => {
+    if (dragItem.current === null || dragOverItem.current === null) return;
+    if (dragItem.current === dragOverItem.current) { dragItem.current = null; dragOverItem.current = null; return; }
+    setOrderedColors((prev) => {
+      const next = [...prev];
+      const [removed] = next.splice(dragItem.current!, 1);
+      next.splice(dragOverItem.current!, 0, removed);
+      return next;
+    });
+    dragItem.current = null;
+    dragOverItem.current = null;
+  };
+
+  const handleTouchStart = (e: React.TouchEvent, index: number) => {
+    touchStartIdx.current = index;
+    touchStartY.current = e.touches[0].clientY;
+    touchCurrentY.current = e.touches[0].clientY;
+    const target = e.currentTarget.closest('[data-color-row]') as HTMLDivElement | undefined;
+    if (target) {
+      touchDragEl.current = target;
+      const rect = target.getBoundingClientRect();
+      const clone = target.cloneNode(true) as HTMLDivElement;
+      clone.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;z-index:9999;opacity:0.85;pointer-events:none;transition:none;`;
+      clone.classList.add('touch-drag-clone');
+      document.body.appendChild(clone);
+      touchClone.current = clone;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    e.preventDefault();
+    touchCurrentY.current = e.touches[0].clientY;
+    if (touchClone.current && touchDragEl.current) {
+      const rect = touchDragEl.current.getBoundingClientRect();
+      const dy = touchCurrentY.current - touchStartY.current;
+      touchClone.current.style.top = `${rect.top + dy}px`;
+    }
+    const el = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+    if (el) {
+      const row = el.closest('[data-color-row]') as HTMLDivElement | null;
+      if (row) {
+        const overIdx = Number(row.dataset.colorIndex);
+        if (!isNaN(overIdx)) dragOverItem.current = overIdx;
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (touchClone.current) {
+      touchClone.current.remove();
+      touchClone.current = null;
+    }
+    touchDragEl.current = null;
+    if (touchStartIdx.current === dragOverItem.current || dragOverItem.current === null) {
+      dragOverItem.current = null;
+      return;
+    }
+    setOrderedColors((prev) => {
+      const next = [...prev];
+      const [removed] = next.splice(touchStartIdx.current, 1);
+      next.splice(dragOverItem.current!, 0, removed);
+      return next;
+    });
+    dragOverItem.current = null;
+  };
+
+  const moveColor = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= orderedColors.length) return;
+    setOrderedColors((prev) => {
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const saveOrder = async () => {
+    setBusy(true);
+    setError('');
+    setSaved(false);
+    try {
+      await adminUpdateColorSortOrders(product.id, orderedColors.map((c) => c.id));
+      await onChanged();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save color order.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (orderedColors.length < 2) return null;
+
+  return (
+    <div className="max-w-2xl bg-white border border-line rounded p-4 sm:p-6">
+      <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase mb-1">Color Order</h3>
+      <p className="text-xs text-grey mb-4">Drag to reorder. First color is shown as primary on product cards.</p>
+      <div className="space-y-1.5">
+        {orderedColors.map((c, i) => (
+          <div
+            key={c.id}
+            data-color-row
+            data-color-index={i}
+            draggable
+            onDragStart={() => handleDragStart(i)}
+            onDragEnter={() => handleDragEnter(i)}
+            onDragEnd={handleDragEnd}
+            onDragOver={(e) => e.preventDefault()}
+            onTouchStart={(e) => handleTouchStart(e, i)}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            className={`flex items-center gap-3 px-3 py-2.5 bg-paper-2 border border-line rounded cursor-grab active:cursor-grabbing select-none transition-colors ${
+              dragItem.current === i ? 'opacity-50' : ''
+            }`}
+          >
+            <span className="text-xs text-grey font-mono w-5 text-center shrink-0">{i + 1}</span>
+            <GripVertical size={16} className="text-grey/50 shrink-0" />
+            <div className="w-6 h-6 rounded border border-line shrink-0" style={{ backgroundColor: c.hex }} />
+            <span className="text-sm font-medium text-bone flex-1 truncate">{c.name}</span>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <button type="button" disabled={i === 0} onClick={() => moveColor(i, -1)} className="text-grey hover:text-bone p-1 disabled:opacity-25" aria-label="Move up">
+                <ChevronDown size={14} className="rotate-90" />
+              </button>
+              <button type="button" disabled={i === orderedColors.length - 1} onClick={() => moveColor(i, 1)} className="text-grey hover:text-bone p-1 disabled:opacity-25" aria-label="Move down">
+                <ChevronDown size={14} className="-rotate-90" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-3 mt-4">
+        <button
+          type="button"
+          onClick={saveOrder}
+          disabled={busy}
+          className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50"
+        >
+          <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Color Order'}
+        </button>
+        {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+        {error && <span className="text-sm text-crimson">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
 /* ---- Size Manager (color-wise stock) ---- */
 
 function SizeManager({ product, onChanged }: { product: CatalogProduct; onChanged: () => Promise<void> }) {
@@ -1110,7 +1292,7 @@ function HeroList({
   if (slides.length === 0) {
     return (
       <div className="text-center py-24 border border-line rounded bg-white">
-        <p className="font-condensed text-3xl uppercase tracking-wide-2 text-grey">No hero slides</p>
+        <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No hero slides</p>
         <p className="mt-3 text-sm text-grey">Add a slide to show on the homepage hero.</p>
       </div>
     );
@@ -1142,6 +1324,25 @@ function HeroRow({
   const [active, setActive] = useState(slide.active);
   const [expanded, setExpanded] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadError('');
+    try {
+      const url = await uploadHeroImage(file);
+      setImageUrl(url);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   const save = async () => {
     await onUpdate({ image_url, eyebrow, title, subtitle, sort_order, active });
@@ -1176,6 +1377,29 @@ function HeroRow({
       </div>
       {expanded && (
         <div className="border-t border-line p-3 sm:p-4 bg-paper-2 space-y-3">
+          <div className="flex items-start gap-4">
+            <div className="shrink-0">
+              <div className="w-28 h-20 sm:w-36 sm:h-24 border border-line rounded overflow-hidden bg-paper-3">
+                {image_url ? (
+                  <img src={image_url} alt="Preview" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-grey text-xs">No image</div>
+                )}
+              </div>
+            </div>
+            <div className="flex-1 min-w-0 space-y-2">
+              <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleUpload} />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide-2 font-semibold px-3 py-2 border border-line text-bone-dim hover:border-bone-dim hover:text-bone rounded transition-colors disabled:opacity-50"
+              >
+                <Upload size={13} strokeWidth={2} /> {uploading ? 'Uploading…' : 'Upload Image'}
+              </button>
+              {uploadError && <p className="text-xs text-crimson">{uploadError}</p>}
+            </div>
+          </div>
           <Field label="Image URL">
             <input value={image_url} onChange={(e) => setImageUrl(e.target.value)} className={inputCls} />
           </Field>
@@ -1228,6 +1452,25 @@ function HeroForm({
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadError('');
+    try {
+      const url = await uploadHeroImage(file);
+      setForm((f) => ({ ...f, image_url: url }));
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1255,6 +1498,29 @@ function HeroForm({
         </button>
       </div>
 
+      <div className="flex items-start gap-4">
+        <div className="shrink-0">
+          <div className="w-28 h-20 sm:w-36 sm:h-24 border border-line rounded overflow-hidden bg-paper-3">
+            {form.image_url ? (
+              <img src={form.image_url} alt="Preview" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-grey text-xs">No image</div>
+            )}
+          </div>
+        </div>
+        <div className="flex-1 min-w-0 space-y-2">
+          <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleUpload} />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide-2 font-semibold px-3 py-2 border border-line text-bone-dim hover:border-bone-dim hover:text-bone rounded transition-colors disabled:opacity-50"
+          >
+            <Upload size={13} strokeWidth={2} /> {uploading ? 'Uploading…' : 'Upload Image'}
+          </button>
+          {uploadError && <p className="text-xs text-crimson">{uploadError}</p>}
+        </div>
+      </div>
       <Field label="Image URL">
         <input value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://images.pexels.com/..." className={inputCls} />
       </Field>
