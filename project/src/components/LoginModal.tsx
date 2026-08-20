@@ -94,8 +94,8 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
           <span className="font-brand text-3xl tracking-[0.03em] text-bone">DSLANG<span className="text-crimson">.</span></span>
         </div>
 
-        <h2 className="font-display text-3xl md:text-4xl uppercase tracking-wide-2 text-bone text-center leading-none">
-          Sign in or create account
+        <h2 className="font-price text-[28px] md:text-[32px] uppercase tracking-[0.03em] text-bone text-center leading-[1.05]">
+          SIGN IN OR CREATE<br />ACCOUNT
         </h2>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
