@@ -80,6 +80,7 @@
 
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .overflow-wrap-anywhere { overflow-wrap: anywhere; }
 
   .animate-marquee {
     animation: marquee 25s linear infinite;

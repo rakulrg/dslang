@@ -52,12 +52,12 @@ export function ContactPage() {
               href={c.href}
               target="_blank"
               rel="noopener noreferrer"
-              className="group border border-line bg-paper-2 p-5 md:p-6 hover:border-crimson transition-colors duration-150 animate-fade-up"
+              className="group min-w-0 border border-line bg-paper-2 p-5 md:p-6 hover:border-crimson transition-colors duration-150 animate-fade-up"
               style={{ animationDelay: `${i * 80}ms` }}
             >
               <c.icon size={24} className="text-crimson mb-3" strokeWidth={1.5} />
               <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey mb-2">{c.label}</h3>
-              <p className="font-label text-2xl uppercase tracking-wide-2 text-bone group-hover:text-crimson transition-colors">
+              <p className="font-label font-bold text-lg uppercase tracking-[0.04em] text-bone group-hover:text-crimson transition-colors overflow-wrap-anywhere">
                 {c.value}
               </p>
               <p className="mt-3 text-sm text-bone-soft leading-relaxed">{c.note}</p>
