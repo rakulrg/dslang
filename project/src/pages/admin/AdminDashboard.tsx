@@ -17,6 +17,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { linkHref } from '@/lib/router';
 import { formatPrice } from '@/lib/catalog';
+import { preloadImage } from '@/lib/image';
 import {
   adminFetchProducts,
   adminFetchHero,
@@ -1335,6 +1336,10 @@ function HeroRow({
     setUploadError('');
     try {
       const url = await uploadHeroImage(file);
+      // Verify the uploaded asset is actually reachable before swapping the
+      // slide's image, so the existing image is kept on any failure and the
+      // preview never flashes while the new file streams in.
+      await preloadImage(url);
       setImageUrl(url);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
@@ -1463,6 +1468,8 @@ function HeroForm({
     setUploadError('');
     try {
       const url = await uploadHeroImage(file);
+      // Only commit the URL once the uploaded asset is confirmed reachable.
+      await preloadImage(url);
       setForm((f) => ({ ...f, image_url: url }));
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
