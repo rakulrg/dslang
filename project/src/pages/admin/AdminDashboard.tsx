@@ -17,7 +17,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { linkHref } from '@/lib/router';
-import { formatPrice, DEFAULT_MOQ } from '@/lib/catalog';
+import { formatPerUnit, getWholesaleSlabs, DEFAULT_MOQ } from '@/lib/catalog';
 import { preloadImage } from '@/lib/image';
 import {
   adminFetchProducts,
@@ -28,9 +28,6 @@ import {
   adminAddColor,
   adminUpdateColor,
   adminDeleteColor,
-  adminUpdateSizeStock,
-  adminInitColorSizes,
-  adminUpdateSizeChartRow,
   adminUpdateColorSortOrders,
   adminCreateHero,
   adminUpdateHero,
@@ -38,7 +35,9 @@ import {
   uploadProductImage,
   uploadHeroImage,
   hasWholesaleColumns,
+  hasRebuildColumns,
   hasHeroCtaColumns,
+  hasOrderMinColumns,
   adminFetchSiteSettings,
   adminSaveSiteSettings,
   type ProductInput,
@@ -46,7 +45,7 @@ import {
 import { hasPublishColumns } from '@/lib/catalog';
 import type { SiteSettings } from '@/lib/settings';
 import { setCachedSettings, fetchSiteSettings } from '@/lib/settings';
-import type { CatalogProduct, HeroSlideRow, ProductColorRow, ProductSizeRow, SizeChartRow } from '@/lib/types';
+import type { CatalogProduct, HeroSlideRow, ProductColorRow } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
 
 type Tab = 'products' | 'hero' | 'settings';
@@ -89,8 +88,10 @@ export function AdminDashboard() {
   const [creating, setCreating] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [wholesaleReady, setWholesaleReady] = useState(false);
+  const [rebuildReady, setRebuildReady] = useState(false);
   const [publishReady, setPublishReady] = useState(false);
   const [heroCtaReady, setHeroCtaReady] = useState(false);
+  const [orderMinReady, setOrderMinReady] = useState(false);
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [settingsError, setSettingsError] = useState('');
 
@@ -132,8 +133,10 @@ export function AdminDashboard() {
   useEffect(() => {
     let cancelled = false;
     hasWholesaleColumns().then((ok) => { if (!cancelled) setWholesaleReady(ok); });
+    hasRebuildColumns().then((ok) => { if (!cancelled) setRebuildReady(ok); });
     hasPublishColumns().then((ok) => { if (!cancelled) setPublishReady(ok); });
     hasHeroCtaColumns().then((ok) => { if (!cancelled) setHeroCtaReady(ok); });
+    hasOrderMinColumns().then((ok) => { if (!cancelled) setOrderMinReady(ok); });
     return () => { cancelled = true; };
   }, []);
 
@@ -299,6 +302,7 @@ export function AdminDashboard() {
             creating ? (
               <ProductForm
                 wholesaleReady={wholesaleReady}
+                rebuildReady={rebuildReady}
                 publishReady={publishReady}
                 onSave={async (input) => { await adminCreateProduct(input); await loadProducts(); setCreating(false); }}
                 onCancel={() => setCreating(false)}
@@ -307,6 +311,7 @@ export function AdminDashboard() {
               <ProductEditor
                 product={editingProduct}
                 wholesaleReady={wholesaleReady}
+                rebuildReady={rebuildReady}
                 publishReady={publishReady}
                 onSave={async (id, input) => { await adminUpdateProduct(id, input); await loadProducts(); setEditingId(null); }}
                 onCancel={() => setEditingId(null)}
@@ -343,6 +348,7 @@ export function AdminDashboard() {
             <SettingsForm
               settings={settings}
               error={settingsError}
+              orderMinReady={orderMinReady}
               onLoad={loadSettings}
               onSave={async (s) => { await adminSaveSiteSettings(s); setSettings(s); await loadSiteSettingsCache(); }}
             />
@@ -433,8 +439,13 @@ function ProductList({
                 <h3 className="text-sm font-semibold text-bone truncate">{p.name}</h3>
                 <p className="text-[11px] uppercase tracking-wide-2 text-grey mt-0.5">{p.code}</p>
                 <div className="mt-1 flex items-center gap-2 text-xs text-bone-soft flex-wrap">
-                  <span className="font-medium">{formatPrice(p.price)}</span>
-                  {p.mrp && <span className="line-through text-grey">{formatPrice(p.mrp)}</span>}
+                  <span className="font-medium">{formatPerUnit(getWholesaleSlabs(p).price50)}</span>
+                  {getWholesaleSlabs(p).price100 > 0 && (
+                    <>
+                      <span className="text-grey">·</span>
+                      <span>{formatPerUnit(getWholesaleSlabs(p).price100)}</span>
+                    </>
+                  )}
                   <span className="text-grey">·</span>
                   <span>{p.colors.length} colors</span>
                 </div>
@@ -491,11 +502,13 @@ function ProductForm({
   onSave,
   onCancel,
   wholesaleReady,
+  rebuildReady,
   publishReady,
 }: {
   onSave: (input: ProductInput) => Promise<void>;
   onCancel: () => void;
   wholesaleReady: boolean;
+  rebuildReady: boolean;
   publishReady: boolean;
 }) {
   const [form, setForm] = useState<ProductInput>({
@@ -503,32 +516,30 @@ function ProductForm({
     name: '',
     code: '',
     drop_label: '',
-    price: 0,
-    mrp: null,
-    fabric: 'Premium Combed Cotton',
-    fit: 'Boxy Fit',
-    care: 'Cold wash inside out. Do not bleach. Iron print inside out. Hang dry.',
     description: '',
+    details: '',
     category: 'tee',
     badge: null,
     featured: true,
     published: true,
     new_drop: false,
     sort_order: 99,
-    gsm: null,
-    wash: 'Optic Wash',
-    print_type: null,
     moq: null,
     price50: null,
     price100: null,
+    available_sizes: [...SIZE_LABELS],
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.slug || !form.name || !form.code || form.price <= 0) {
-      setError('Slug, name, code, and price are required.');
+    if (!form.slug || !form.name || !form.code) {
+      setError('Slug, name, and code are required.');
+      return;
+    }
+    if (wholesaleReady && !(form.price50 && form.price50 > 0)) {
+      setError('Set the wholesale price (50 PCS+ tier) to make this product orderable.');
       return;
     }
     setBusy(true);
@@ -561,14 +572,6 @@ function ProductForm({
         <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="DSL-FH-01" className={inputCls} />
       </Field>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-        <Field label="Price (₹)">
-          <NumInput value={form.price} onChange={(n) => setForm({ ...form, price: n ?? 0 })} className={inputCls} />
-        </Field>
-        <Field label="MRP (₹)" hint="Optional — for discount display">
-          <NumInput value={form.mrp} onChange={(n) => setForm({ ...form, mrp: n })} className={inputCls} placeholder="—" />
-        </Field>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <Field label="Category">
           <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls}>
             <option value="tee">Tee</option>
@@ -578,77 +581,78 @@ function ProductForm({
             <option value="drop">Drop</option>
           </select>
         </Field>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-        <Field label="Fabric">
-          <input value={form.fabric} onChange={(e) => setForm({ ...form, fabric: e.target.value })} className={inputCls} />
-        </Field>
-        <Field label="Fit">
-          <input value={form.fit} onChange={(e) => setForm({ ...form, fit: e.target.value })} className={inputCls} />
+        <Field label="Wholesale MOQ (PCS)" hint="Display only — blank uses the global default (50)">
+          <NumInput value={form.moq} onChange={(n) => setForm({ ...form, moq: n })} className={inputCls} placeholder="50" />
         </Field>
       </div>
-      <Field label="Care Instructions">
-        <textarea value={form.care} onChange={(e) => setForm({ ...form, care: e.target.value })} rows={2} className={inputCls} />
-      </Field>
       {wholesaleReady ? (
-        <>
-          <div className="border-t border-line pt-4">
-            <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Specs</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              <Field label="GSM" hint="e.g. 240">
-                <NumInput value={form.gsm} onChange={(n) => setForm({ ...form, gsm: n })} className={inputCls} placeholder="—" />
-              </Field>
-              <Field label="Wash">
-                <input value={form.wash ?? ''} onChange={(e) => setForm({ ...form, wash: e.target.value })} className={inputCls} placeholder="Optic Wash" />
-              </Field>
-              <Field label="Print Type" hint="Optional">
-                <input value={form.print_type ?? ''} onChange={(e) => setForm({ ...form, print_type: e.target.value })} className={inputCls} placeholder="e.g. Screen / DTG" />
-              </Field>
-            </div>
+        <div className="border-t border-line pt-4">
+          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Pricing (₹ per piece)</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            <Field label="Price @ 50 PCS+" hint="Applied from the order minimum (48 PCS) up to 99 PCS">
+              <NumInput value={form.price50} onChange={(n) => setForm({ ...form, price50: n })} className={inputCls} placeholder="—" />
+            </Field>
+            <Field label="Price @ 100 PCS+" hint="Optional — better per-piece tier at 100+">
+              <NumInput value={form.price100} onChange={(n) => setForm({ ...form, price100: n })} className={inputCls} placeholder="—" />
+            </Field>
           </div>
-          <div className="border-t border-line pt-4">
-            <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Pricing (₹ per piece)</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              <Field label="MOQ (PCS)" hint="Default 50">
-                <NumInput value={form.moq} onChange={(n) => setForm({ ...form, moq: n })} className={inputCls} placeholder="50" />
-              </Field>
-              <Field label="Price @ 50 PCS" hint="Wholesale price per piece — leave empty to hide the product">
-                <NumInput value={form.price50} onChange={(n) => setForm({ ...form, price50: n })} className={inputCls} placeholder="—" />
-              </Field>
-              <Field label="Price @ 100 PCS" hint="Optional — better per-piece tier at 100+">
-                <NumInput value={form.price100} onChange={(n) => setForm({ ...form, price100: n })} className={inputCls} placeholder="—" />
-              </Field>
-            </div>
-          </div>
-        </>
+        </div>
       ) : (
         <p className="text-xs text-grey border-t border-line pt-3">
-          Wholesale fields will appear after the wholesale migration is applied to the database.
+          Wholesale pricing fields will appear after the wholesale migration is applied to the database.
         </p>
       )}
       <Field label="Description">
         <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className={inputCls} />
       </Field>
+      {rebuildReady && (
+        <Field label="Details" hint="Extra product info (fabric, fit, wash, care, notes) shown on the product page">
+          <textarea value={form.details} onChange={(e) => setForm({ ...form, details: e.target.value })} rows={3} className={inputCls} />
+        </Field>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+        <div>
+          <label className="text-[11px] uppercase tracking-wide-2 text-grey block mb-2">Available Sizes</label>
+          <div className="flex flex-wrap gap-3">
+            {SIZE_LABELS.map((s) => (
+              <label key={s} className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={form.available_sizes.includes(s)}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      available_sizes: e.target.checked
+                        ? [...f.available_sizes, s]
+                        : f.available_sizes.filter((x) => x !== s),
+                    }))
+                  }
+                  className="w-4 h-4 accent-crimson"
+                />
+                <span className="text-sm text-bone-dim">{s}</span>
+              </label>
+            ))}
+          </div>
+        </div>
         <Field label="Sort Order">
           <NumInput value={form.sort_order} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
         </Field>
-        <div className="flex items-end gap-4 pb-3 flex-wrap">
-          {publishReady && (
-            <label className="flex items-end gap-2">
-              <input type="checkbox" checked={form.published} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
-              <span className="text-sm text-bone-dim">Published (visible on site)</span>
-            </label>
-          )}
+      </div>
+      <div className="flex items-end gap-4 flex-wrap">
+        {publishReady && (
           <label className="flex items-end gap-2">
-            <input type="checkbox" checked={form.featured} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
-            <span className="text-sm text-bone-dim">Featured on homepage</span>
+            <input type="checkbox" checked={form.published} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
+            <span className="text-sm text-bone-dim">Published (visible on site)</span>
           </label>
-          <label className="flex items-end gap-2">
-            <input type="checkbox" checked={form.new_drop} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-crimson" />
-            <span className="text-sm text-bone-dim">New Drop</span>
-          </label>
-        </div>
+        )}
+        <label className="flex items-end gap-2">
+          <input type="checkbox" checked={form.featured} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
+          <span className="text-sm text-bone-dim">Featured on homepage</span>
+        </label>
+        <label className="flex items-end gap-2">
+          <input type="checkbox" checked={form.new_drop} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-crimson" />
+          <span className="text-sm text-bone-dim">New Drop</span>
+        </label>
       </div>
 
       {error && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{error}</p>}
@@ -662,7 +666,7 @@ function ProductForm({
         </button>
       </div>
       <p className="text-xs text-grey pt-2 border-t border-line">
-        Default sizes (M–XL) and a size chart will be created automatically. You can edit them after creating the product.
+        After creating, add colors with images. Every included color needs the per-color minimum (6 PCS by default) and the total order must reach the global minimum (48 PCS by default).
       </p>
     </form>
   );
@@ -676,6 +680,7 @@ function ProductEditor({
   onCancel,
   onChanged,
   wholesaleReady,
+  rebuildReady,
   publishReady,
 }: {
   product: CatalogProduct;
@@ -683,31 +688,29 @@ function ProductEditor({
   onCancel: () => void;
   onChanged: () => Promise<void>;
   wholesaleReady: boolean;
+  rebuildReady: boolean;
   publishReady: boolean;
 }) {
+  const existingSizes = Array.isArray(product.available_sizes)
+    ? product.available_sizes.filter((s) => (SIZE_LABELS as readonly string[]).includes(s))
+    : [...SIZE_LABELS];
   const [form, setForm] = useState<Partial<ProductInput>>({
     slug: product.slug,
     name: product.name,
     code: product.code,
     drop_label: product.drop_label,
-    price: product.price,
-    mrp: product.mrp,
-    fabric: product.fabric,
-    fit: product.fit,
-    care: product.care,
     description: product.description,
+    details: product.details ?? '',
     category: product.category,
     badge: product.badge,
     featured: product.featured,
     published: product.published !== false,
     new_drop: product.new_drop === true,
     sort_order: product.sort_order,
-    gsm: product.gsm ?? null,
-    wash: product.wash ?? '',
-    print_type: product.print_type ?? null,
     moq: product.moq ?? null,
     price50: product.price50 ?? null,
     price100: product.price100 ?? null,
+    available_sizes: existingSizes.length > 0 ? existingSizes : [...SIZE_LABELS],
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -749,14 +752,6 @@ function ProductEditor({
           <input value={form.code ?? ''} onChange={(e) => setForm({ ...form, code: e.target.value })} className={inputCls} />
         </Field>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          <Field label="Price (₹)">
-            <NumInput value={form.price ?? 0} onChange={(n) => setForm({ ...form, price: n ?? 0 })} className={inputCls} />
-          </Field>
-          <Field label="MRP (₹)">
-            <NumInput value={form.mrp ?? null} onChange={(n) => setForm({ ...form, mrp: n })} className={inputCls} placeholder="—" />
-          </Field>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <Field label="Category">
             <select value={form.category ?? 'tee'} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls}>
               <option value="tee">Tee</option>
@@ -766,77 +761,78 @@ function ProductEditor({
               <option value="drop">Drop</option>
             </select>
           </Field>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          <Field label="Fabric">
-            <input value={form.fabric ?? ''} onChange={(e) => setForm({ ...form, fabric: e.target.value })} className={inputCls} />
-          </Field>
-          <Field label="Fit">
-            <input value={form.fit ?? ''} onChange={(e) => setForm({ ...form, fit: e.target.value })} className={inputCls} />
+          <Field label="Wholesale MOQ (PCS)" hint={`Display only — blank uses the global default (${DEFAULT_MOQ})`}>
+            <NumInput value={form.moq ?? null} onChange={(n) => setForm({ ...form, moq: n })} className={inputCls} placeholder="—" />
           </Field>
         </div>
-        <Field label="Care">
-          <textarea value={form.care ?? ''} onChange={(e) => setForm({ ...form, care: e.target.value })} rows={2} className={inputCls} />
-        </Field>
         {wholesaleReady ? (
-          <>
-            <div className="border-t border-line pt-4">
-              <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Specs</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                <Field label="GSM">
-                  <NumInput value={form.gsm ?? null} onChange={(n) => setForm({ ...form, gsm: n })} className={inputCls} placeholder="—" />
-                </Field>
-                <Field label="Wash">
-                  <input value={form.wash ?? ''} onChange={(e) => setForm({ ...form, wash: e.target.value })} className={inputCls} placeholder="Optic Wash" />
-                </Field>
-                <Field label="Print Type">
-                  <input value={form.print_type ?? ''} onChange={(e) => setForm({ ...form, print_type: e.target.value })} className={inputCls} placeholder="e.g. Screen / DTG" />
-                </Field>
-              </div>
+          <div className="border-t border-line pt-4">
+            <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Pricing (₹ per piece)</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              <Field label="Price @ 50 PCS+" hint="Applied from the order minimum (48 PCS) up to 99 PCS">
+                <NumInput value={form.price50 ?? null} onChange={(n) => setForm({ ...form, price50: n })} className={inputCls} placeholder="—" />
+              </Field>
+              <Field label="Price @ 100 PCS+" hint="Optional — better tier at 100+">
+                <NumInput value={form.price100 ?? null} onChange={(n) => setForm({ ...form, price100: n })} className={inputCls} placeholder="—" />
+              </Field>
             </div>
-            <div className="border-t border-line pt-4">
-              <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Pricing (₹ per piece)</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                <Field label="MOQ (PCS)" hint={`Blank = ${DEFAULT_MOQ}`}>
-                  <NumInput value={form.moq ?? null} onChange={(n) => setForm({ ...form, moq: n })} className={inputCls} placeholder="—" />
-                </Field>
-                <Field label="Price @ 50 PCS" hint="Wholesale price per piece">
-                  <NumInput value={form.price50 ?? null} onChange={(n) => setForm({ ...form, price50: n })} className={inputCls} placeholder="—" />
-                </Field>
-                <Field label="Price @ 100 PCS" hint="Optional — better tier at 100+">
-                  <NumInput value={form.price100 ?? null} onChange={(n) => setForm({ ...form, price100: n })} className={inputCls} placeholder="—" />
-                </Field>
-              </div>
-            </div>
-          </>
+          </div>
         ) : (
           <p className="text-xs text-grey border-t border-line pt-3">
-            Wholesale fields will appear after the wholesale migration is applied to the database.
+            Wholesale pricing fields will appear after the wholesale migration is applied to the database.
           </p>
         )}
         <Field label="Description">
           <textarea value={form.description ?? ''} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className={inputCls} />
         </Field>
+        {rebuildReady && (
+          <Field label="Details" hint="Extra product info (fabric, fit, wash, care, notes) shown on the product page">
+            <textarea value={form.details ?? ''} onChange={(e) => setForm({ ...form, details: e.target.value })} rows={3} className={inputCls} />
+          </Field>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <div>
+            <label className="text-[11px] uppercase tracking-wide-2 text-grey block mb-2">Available Sizes</label>
+            <div className="flex flex-wrap gap-3">
+              {SIZE_LABELS.map((s) => (
+                <label key={s} className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={(form.available_sizes ?? []).includes(s)}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        available_sizes: e.target.checked
+                          ? [...(f.available_sizes ?? []), s]
+                          : (f.available_sizes ?? []).filter((x) => x !== s),
+                      }))
+                    }
+                    className="w-4 h-4 accent-crimson"
+                  />
+                  <span className="text-sm text-bone-dim">{s}</span>
+                </label>
+              ))}
+            </div>
+          </div>
           <Field label="Sort Order">
             <NumInput value={form.sort_order ?? 0} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
           </Field>
-          <div className="flex items-end gap-4 pb-3 flex-wrap">
-            {publishReady && (
-              <label className="flex items-end gap-2">
-                <input type="checkbox" checked={form.published ?? true} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
-                <span className="text-sm text-bone-dim">Published (visible on site)</span>
-              </label>
-            )}
+        </div>
+        <div className="flex items-end gap-4 flex-wrap">
+          {publishReady && (
             <label className="flex items-end gap-2">
-              <input type="checkbox" checked={form.featured ?? false} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
-              <span className="text-sm text-bone-dim">Featured</span>
+              <input type="checkbox" checked={form.published ?? true} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
+              <span className="text-sm text-bone-dim">Published (visible on site)</span>
             </label>
-            <label className="flex items-end gap-2">
-              <input type="checkbox" checked={form.new_drop ?? false} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-crimson" />
-              <span className="text-sm text-bone-dim">New Drop</span>
-            </label>
-          </div>
+          )}
+          <label className="flex items-end gap-2">
+            <input type="checkbox" checked={form.featured ?? false} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
+            <span className="text-sm text-bone-dim">Featured</span>
+          </label>
+          <label className="flex items-end gap-2">
+            <input type="checkbox" checked={form.new_drop ?? false} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-crimson" />
+            <span className="text-sm text-bone-dim">New Drop</span>
+          </label>
         </div>
 
         {error && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{error}</p>}
@@ -857,12 +853,6 @@ function ProductEditor({
 
       {/* Color priority */}
       <ColorPriorityManager product={product} onChanged={onChanged} />
-
-      {/* Sizes section */}
-      <SizeManager product={product} onChanged={onChanged} />
-
-      {/* Size chart section */}
-      <SizeChartManager product={product} onChanged={onChanged} />
     </div>
   );
 }
@@ -1306,218 +1296,6 @@ function ColorPriorityManager({ product, onChanged }: { product: CatalogProduct;
   );
 }
 
-/* ---- Size Manager (color-wise stock) ---- */
-
-function SizeManager({ product, onChanged }: { product: CatalogProduct; onChanged: () => Promise<void> }) {
-  const colors = product.colors;
-  const [selectedColorIdx, setSelectedColorIdx] = useState(0);
-  const [stockValues, setStockValues] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
-
-  const selectedColor = colors[selectedColorIdx] ?? colors[0];
-  const colorSizes = selectedColor
-    ? product.sizes
-        .filter((s) => s.color_id === selectedColor.id)
-        .sort((a, b) => (SIZE_LABELS.indexOf(a.size_label as typeof SIZE_LABELS[number]) ?? 99) - (SIZE_LABELS.indexOf(b.size_label as typeof SIZE_LABELS[number]) ?? 99))
-    : [];
-
-  useEffect(() => {
-    setStockValues(Object.fromEntries(colorSizes.map((s) => [s.size_label, String(Number(s.stock ?? 0))])));
-  }, [selectedColor?.id, product.sizes]);
-
-  const saveAll = async () => {
-    if (!selectedColor) return;
-    setBusy(true);
-    setError('');
-    setSaved(false);
-    try {
-      for (const s of colorSizes) {
-        const nextStock = Math.max(0, Math.floor(Number(stockValues[s.size_label]) || 0));
-        if (nextStock !== Number(s.stock ?? 0)) {
-          await adminUpdateSizeStock(product.id, selectedColor.id, s.size_label, nextStock);
-        }
-      }
-      await onChanged();
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    } catch (err) {
-      console.error('Stock save failed:', err);
-      setError(err instanceof Error ? err.message : 'Could not save stock.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const autoInitSizes = async () => {
-    if (!selectedColor || colorSizes.length > 0) return;
-    try {
-      await adminInitColorSizes(product.id, selectedColor.id);
-      await onChanged();
-    } catch (err) {
-      console.error('Auto-init sizes failed:', err);
-    }
-  };
-
-  useEffect(() => {
-    autoInitSizes();
-  }, [selectedColor?.id, colorSizes.length]);
-
-  return (
-    <div className="max-w-2xl bg-white border border-line rounded p-4 sm:p-6">
-      <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase mb-4">Sizes &amp; Availability</h3>
-
-      {/* Color selector */}
-      {colors.length > 0 && (
-        <div className="mb-5">
-          <p className="text-[11px] uppercase tracking-wide-2 text-grey mb-2">Select Color</p>
-          <div className="flex flex-wrap gap-2">
-            {colors.map((c, i) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => setSelectedColorIdx(i)}
-                className={`flex items-center gap-2 px-3 py-2 border rounded text-sm font-medium transition-colors ${
-                  i === selectedColorIdx
-                    ? 'bg-bone text-white border-bone'
-                    : 'bg-paper-2 text-bone-dim border-line hover:border-bone-dim'
-                }`}
-              >
-                <span className="w-4 h-4 rounded border border-line shrink-0" style={{ backgroundColor: c.hex }} />
-                {c.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {selectedColor && (
-        <p className="text-xs uppercase tracking-wide-2 text-grey mb-3">Selected: {selectedColor.name}</p>
-      )}
-
-      {/* Size stock table */}
-      {colorSizes.length > 0 ? (
-        <div className="mb-4">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[10px] uppercase tracking-wide-2 text-grey border-b border-line">
-                <th className="text-left py-2 pr-4 font-medium">Size</th>
-                <th className="text-right py-2 pl-4 font-medium">Stock</th>
-              </tr>
-            </thead>
-            <tbody>
-              {colorSizes.map((s) => (
-                <tr key={s.id} className="border-b border-line last:border-0">
-                  <td className="py-2.5 pr-4 text-bone font-medium">{s.size_label}</td>
-                  <td className="py-2.5 pl-4 text-right">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={stockValues[s.size_label] ?? ''}
-                      onChange={(e) => setStockValues((current) => ({ ...current, [s.size_label]: e.target.value }))}
-                      onWheel={(e) => e.currentTarget.blur()}
-                      disabled={busy}
-                      placeholder="0"
-                      className="w-20 text-right rounded border border-line bg-white px-2 py-1.5 text-sm text-bone outline-none disabled:opacity-50"
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : colors.length === 0 ? (
-        <p className="text-sm text-grey py-4">Add a color first, then configure sizes.</p>
-      ) : (
-        <p className="text-sm text-grey py-4">Loading sizes…</p>
-      )}
-
-      {/* Actions */}
-      {colorSizes.length > 0 && (
-        <div className="flex items-center gap-3 pt-1">
-          <button
-            type="button"
-            onClick={saveAll}
-            disabled={busy}
-            className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50"
-          >
-            <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Stock'}
-          </button>
-          {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
-        </div>
-      )}
-
-      <p className="mt-4 text-xs text-grey">Stock is per color + size. Availability is automatic: stock above 0 opens the size; 0 marks it sold out.</p>
-      {error && <p className="mt-2 text-sm text-crimson">{error}</p>}
-    </div>
-  );
-}
-
-/* ---- Size Chart Manager ---- */
-
-function SizeChartManager({ product, onChanged }: { product: CatalogProduct; onChanged: () => Promise<void> }) {
-  const [chart, setChart] = useState<SizeChartRow[]>(product.size_chart);
-
-  useEffect(() => {
-    setChart(product.size_chart);
-  }, [product.size_chart]);
-
-  const updateRow = (row: SizeChartRow, field: 'chest' | 'length' | 'shoulder', value: number) => {
-    setChart((prev) => prev.map((r) => r.id === row.id ? { ...r, [field]: value } : r));
-  };
-
-  const saveRow = async (row: SizeChartRow) => {
-    await adminUpdateSizeChartRow(row.id, Number(row.chest), Number(row.length), Number(row.shoulder));
-    await onChanged();
-  };
-
-  return (
-    <div className="max-w-2xl bg-white border border-line rounded p-4 sm:p-6">
-      <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase mb-4">Size Chart</h3>
-      {chart.length > 0 ? (
-        <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-          <table className="w-full text-sm min-w-[400px]">
-            <thead>
-              <tr className="text-[10px] uppercase tracking-wide-2 text-grey border-b border-line">
-                <th className="text-left py-2 pr-3 sm:pr-4 font-medium">Size</th>
-                <th className="text-left py-2 pr-3 sm:pr-4 font-medium">Chest (in)</th>
-                <th className="text-left py-2 pr-3 sm:pr-4 font-medium">Length (in)</th>
-                <th className="text-left py-2 pr-3 sm:pr-4 font-medium">Shoulder (in)</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {chart.map((r) => (
-                <tr key={r.id} className="border-b border-line">
-                  <td className="py-2 pr-3 sm:pr-4 font-medium text-bone">{r.size_label}</td>
-                  <td className="py-2 pr-3 sm:pr-4">
-                    <NumInput value={r.chest} onChange={(n) => updateRow(r, 'chest', n ?? 0)} className="w-16 sm:w-20 px-2 py-1 border border-line rounded text-sm" />
-                  </td>
-                  <td className="py-2 pr-3 sm:pr-4">
-                    <NumInput value={r.length} onChange={(n) => updateRow(r, 'length', n ?? 0)} className="w-16 sm:w-20 px-2 py-1 border border-line rounded text-sm" />
-                  </td>
-                  <td className="py-2 pr-3 sm:pr-4">
-                    <NumInput value={r.shoulder} onChange={(n) => updateRow(r, 'shoulder', n ?? 0)} className="w-16 sm:w-20 px-2 py-1 border border-line rounded text-sm" />
-                  </td>
-                  <td className="py-2">
-                    <button onClick={() => saveRow(r)} className="text-crimson hover:text-crimson-dark" aria-label="Save row">
-                      <Save size={14} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="text-sm text-grey">No size chart rows. They are created automatically when you add a product.</p>
-      )}
-      <p className="mt-3 text-xs text-grey">Edit values and click the save icon to update each row.</p>
-    </div>
-  );
-}
-
 /* ---- Hero Slide List ---- */
 
 function HeroList({
@@ -1842,11 +1620,13 @@ function HeroForm({
 function SettingsForm({
   settings,
   error,
+  orderMinReady,
   onLoad,
   onSave,
 }: {
   settings: SiteSettings | null;
   error: string;
+  orderMinReady: boolean;
   onLoad: () => Promise<void>;
   onSave: (s: SiteSettings) => Promise<void>;
 }) {
@@ -1890,14 +1670,32 @@ function SettingsForm({
       return;
     }
     if (!form.default_moq || form.default_moq < 1) {
-      setLocalError('MOQ must be at least 1 PCS.');
+      setLocalError('Displayed MOQ must be at least 1 PCS.');
+      return;
+    }
+    if (!form.min_order_quantity || form.min_order_quantity < 1) {
+      setLocalError('Order minimum must be at least 1 PCS.');
+      return;
+    }
+    if (!form.per_color_minimum || form.per_color_minimum < 1) {
+      setLocalError('Per-color minimum must be at least 1 PCS.');
+      return;
+    }
+    if (form.min_order_quantity < form.per_color_minimum) {
+      setLocalError('The order minimum must not be lower than the per-color minimum.');
       return;
     }
     setBusy(true);
     setLocalError('');
     setSaved(false);
     try {
-      await onSave({ ...form, whatsapp_number: whats, default_moq: Math.floor(form.default_moq) });
+      await onSave({
+        ...form,
+        whatsapp_number: whats,
+        default_moq: Math.floor(form.default_moq),
+        min_order_quantity: Math.floor(form.min_order_quantity),
+        per_color_minimum: Math.floor(form.per_color_minimum),
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
@@ -1931,7 +1729,7 @@ function SettingsForm({
         <Field label="WhatsApp Number" hint="International format, no + or spaces">
           <input value={form.whatsapp_number} onChange={(e) => setForm({ ...form, whatsapp_number: e.target.value })} className={inputCls} placeholder="919944676178" />
         </Field>
-        <Field label="Minimum Order (MOQ, PCS)" hint="Global default used when a product has no MOQ">
+        <Field label="Displayed MOQ (PCS)" hint="Shown as the product MOQ">
           <NumInput value={form.default_moq} onChange={(n) => setForm({ ...form, default_moq: n ?? 50 })} className={inputCls} placeholder="50" />
         </Field>
         <Field label="Dispatch Note" hint="Shown across the site">
@@ -1941,6 +1739,23 @@ function SettingsForm({
           <input value={form.delivery_note} onChange={(e) => setForm({ ...form, delivery_note: e.target.value })} className={inputCls} placeholder="Pan India" />
         </Field>
       </div>
+
+      {orderMinReady && (
+        <div className="border-t border-line pt-4">
+          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Order Minimums</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            <Field label="Order Minimum (PCS)" hint="Hard acceptance floor for the total order">
+              <NumInput value={form.min_order_quantity} onChange={(n) => setForm({ ...form, min_order_quantity: n ?? 48 })} className={inputCls} placeholder="48" />
+            </Field>
+            <Field label="Per-Color Minimum (PCS)" hint="Minimum per included color (M/L/XL mix)">
+              <NumInput value={form.per_color_minimum} onChange={(n) => setForm({ ...form, per_color_minimum: n ?? 6 })} className={inputCls} placeholder="6" />
+            </Field>
+          </div>
+          <p className="mt-2 text-xs text-grey">
+            Buyers must reach the order minimum in total while keeping every included color at or above the per-color minimum.
+          </p>
+        </div>
+      )}
 
       {localError && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{localError}</p>}
 
@@ -1952,7 +1767,7 @@ function SettingsForm({
       </div>
 
       <p className="text-xs text-grey pt-2 border-t border-line">
-        Product-level MOQ overrides the global MOQ when set. The announcement bar starts from the default text until you change it here.
+        Product-level MOQ overrides the displayed MOQ when set. Buyers can place orders from the order minimum (48 PCS by default) even when the displayed MOQ is higher. Changes go live on save.
       </p>
     </form>
   );

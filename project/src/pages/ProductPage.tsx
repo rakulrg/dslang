@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef, useCallback, memo } from 'react';
-import { Minus, Plus, MessageCircle, ChevronDown, ChevronLeft, ChevronRight, ShoppingBag, CheckCircle2, X, AlertTriangle, Lock } from 'lucide-react';
+import { Minus, Plus, MessageCircle, ChevronLeft, ChevronRight, ShoppingBag, CheckCircle2, X, AlertTriangle, Lock } from 'lucide-react';
 import { ProductCard } from '@/components/ProductCard';
 import {
   fetchProducts,
   fetchProduct,
-  getProductSpecs,
+  getAvailableSizes,
   getWholesaleSlabs,
   getWholesaleTier,
   buildWholesaleWhatsAppUrl,
@@ -13,18 +13,9 @@ import {
   type CatalogProduct,
   type WholesaleSkuLine,
 } from '@/lib/catalog';
-import type { ProductColorRow, ProductSizeRow, SizeChartRow } from '@/lib/types';
 import { notFound } from '@/lib/notFound';
 import { useCart } from '@/lib/cart';
-
-const SIZE_LABELS = ['M', 'L', 'XL'] as const;
-type SizeLabel = (typeof SIZE_LABELS)[number];
-
-const ACCORDION = [
-  { title: 'Wholesale Info', body: 'wholesale' },
-  { title: 'Size Chart', body: 'sizechart' },
-  { title: 'Care Instructions', body: 'care' },
-];
+import { getSiteSettings, useSiteSettings } from '@/lib/settings';
 
 /* ---- Swipe Gallery ---- */
 
@@ -408,47 +399,32 @@ function LightboxViewer({
 function MatrixCell({
   label,
   qty,
-  stock,
   onChange,
 }: {
   label: string;
   qty: number;
-  stock: number;
   onChange: (qty: number) => void;
 }) {
-  const disabled = stock <= 0;
-  const atCap = disabled || qty >= stock;
-  const shown = String(qty);
-
   return (
-    <div className="flex items-center justify-center">
-      {disabled ? (
-        <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide-2 text-grey/60 line-through">
-          {label}-S/O
-        </span>
-      ) : (
-        <div className="inline-flex items-center border border-line bg-white">
-          <button
-            onClick={() => onChange(Math.max(0, qty - 1))}
-            disabled={qty <= 0}
-            className="w-7 h-8 md:w-8 md:h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            aria-label={`Decrease ${label}`}
-          >
-            <Minus size={13} strokeWidth={2} />
-          </button>
-          <span className="w-7 md:w-8 text-center text-sm font-semibold tabular-nums text-bone select-none">
-            {shown}
-          </span>
-          <button
-            onClick={() => onChange(qty + 1)}
-            disabled={atCap}
-            className="w-7 h-8 md:w-8 md:h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            aria-label={`Increase ${label}`}
-          >
-            <Plus size={13} strokeWidth={2} />
-          </button>
-        </div>
-      )}
+    <div className="inline-flex items-center border border-line bg-white">
+      <button
+        onClick={() => onChange(Math.max(0, qty - 1))}
+        disabled={qty <= 0}
+        className="w-7 h-8 md:w-8 md:h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        aria-label={`Decrease ${label}`}
+      >
+        <Minus size={13} strokeWidth={2} />
+      </button>
+      <span className="w-7 md:w-8 text-center text-sm font-semibold tabular-nums text-bone select-none">
+        {qty}
+      </span>
+      <button
+        onClick={() => onChange(qty + 1)}
+        className="w-7 h-8 md:w-8 md:h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors"
+        aria-label={`Increase ${label}`}
+      >
+        <Plus size={13} strokeWidth={2} />
+      </button>
     </div>
   );
 }
@@ -464,10 +440,13 @@ export function ProductPage({ slug }: { slug: string }) {
   const [matrix, setMatrix] = useState<Record<string, Record<string, number>>>({});
   const [imgIdx, setImgIdx] = useState(0);
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
-  const [openAcc, setOpenAcc] = useState<string | null>(null);
   const [addedFeedback, setAddedFeedback] = useState(false);
 
   const { addItem, open: openCart } = useCart();
+  const { settings } = useSiteSettings();
+
+  const minPerColor = settings.per_color_minimum;
+  const minOrderQty = settings.min_order_quantity;
 
   useEffect(() => {
     setProduct(undefined);
@@ -479,6 +458,19 @@ export function ProductPage({ slug }: { slug: string }) {
       .then((p) => {
         setProduct(p);
         if (p) {
+          const sizes = getAvailableSizes(p);
+          const perColor = getSiteSettings().per_color_minimum;
+          const base = sizes.length > 0 ? Math.floor(perColor / sizes.length) : 0;
+          const rem = sizes.length > 0 ? perColor % sizes.length : 0;
+          const init: Record<string, Record<string, number>> = {};
+          for (const c of p.colors) {
+            const map: Record<string, number> = {};
+            sizes.forEach((s, i) => {
+              map[s] = base + (i < rem ? 1 : 0);
+            });
+            init[c.id] = map;
+          }
+          setMatrix(init);
           const firstColor = p.colors[0];
           if (firstColor) setColorIdx(0);
           fetchProducts()
@@ -543,47 +535,49 @@ export function ProductPage({ slug }: { slug: string }) {
   const images = color.images.filter((image) => image.trim().length > 0);
   const safeImgIdx = Math.max(0, Math.min(imgIdx, images.length - 1));
 
-  const specs = getProductSpecs(product);
   const slabs = getWholesaleSlabs(product);
-  const moq = slabs.moq;
-
-  const sizes = product.sizes.filter((s) => s.color_id === color.id);
-
-  const stockFor = (colorId: string, size: string): number =>
-    product.sizes.find((s) => s.color_id === colorId && s.size_label === size)?.stock ?? 0;
+  const moqDisplay = slabs.moq;
+  const availableSizes = getAvailableSizes(product);
+  const colsCls =
+    availableSizes.length === 3
+      ? 'grid-cols-[1.3fr_repeat(3,1fr)]'
+      : availableSizes.length === 2
+        ? 'grid-cols-[1.3fr_repeat(2,1fr)]'
+        : 'grid-cols-[1.3fr_1fr]';
 
   const setCell = (colorId: string, size: string, qty: number) => {
     setMatrix((prev) => ({ ...prev, [colorId]: { ...(prev[colorId] ?? {}), [size]: qty } }));
   };
 
-  const totalQty = Object.values(matrix).reduce(
-    (sum, sizesMap) => sum + Object.values(sizesMap).reduce((a, b) => a + b, 0),
-    0
-  );
+  const colorTotals = product.colors.map((c) => ({
+    color: c,
+    total: availableSizes.reduce((sum, s) => sum + (matrix[c.id]?.[s] ?? 0), 0),
+  }));
+
+  const totalQty = colorTotals.reduce((sum, c) => sum + c.total, 0);
+  const shortColors = colorTotals.filter((c) => c.total > 0 && c.total < minPerColor);
+  const colorsSelected = colorTotals.filter((c) => c.total > 0);
+  const belowMinTotal = totalQty > 0 && totalQty < minOrderQty;
+  const canOrder = totalQty >= minOrderQty && shortColors.length === 0;
 
   const tier = getWholesaleTier(totalQty, slabs);
-  const belowMoq = totalQty > 0 && totalQty < moq;
-  const canOrder = totalQty >= moq;
 
   const buildLines = (): WholesaleSkuLine[] =>
-    Object.entries(matrix).flatMap(([colorId, sizesMap]) =>
-      product.colors
-        .filter((c) => c.id === colorId)
-        .flatMap((c) =>
-          Object.entries(sizesMap)
-            .filter(([, qty]) => qty > 0)
-            .map(([size, qty]) => ({
-              name: product.name,
-              code: product.code,
-              color: c.name,
-              size,
-              qty,
-              price50: slabs.price50,
-              price100: slabs.price100,
-              image: c.images[0] ?? '',
-              slug: product.slug,
-            }))
-        )
+    product.colors.flatMap((c) =>
+      availableSizes
+        .map((size) => ({ color: c, size, qty: matrix[c.id]?.[size] ?? 0 }))
+        .filter(({ qty }) => qty > 0)
+        .map(({ color: c2, size, qty }) => ({
+          name: product.name,
+          code: product.code,
+          color: c2.name,
+          size,
+          qty,
+          price50: slabs.price50,
+          price100: slabs.price100,
+          image: c2.images[0] ?? '',
+          slug: product.slug,
+        }))
     );
 
   const handleRequestOrder = () => {
@@ -602,7 +596,7 @@ export function ProductPage({ slug }: { slug: string }) {
           image: line.image,
           color: line.color,
           size: line.size,
-          stock: stockFor(product.colors.find((c) => c.name === line.color)?.id ?? color.id, line.size),
+          stock: 1e9,
         },
         line.qty
       );
@@ -618,10 +612,9 @@ export function ProductPage({ slug }: { slug: string }) {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  const toggleAcc = (t: string) => setOpenAcc((o) => (o === t ? null : t));
-
-  const sizeChart = product.size_chart;
   const category = (product.category || 'tee').toLowerCase();
+  const description = (product.description || '').trim();
+  const details = (product.details || '').trim();
 
   return (
     <div>
@@ -659,30 +652,36 @@ export function ProductPage({ slug }: { slug: string }) {
             </h1>
             <p className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey mt-1 lg:mt-1.5">{product.code}</p>
 
-            {/* Product info — admin-entered details only; empty values are hidden */}
+            {/* Sizes / colors summary */}
             <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-4">
-              {specs.fabric && <Spec label="Fabric" value={specs.fabric} />}
-              {specs.gsm && <Spec label="GSM" value={`${specs.gsm}`} />}
-              {specs.wash && <Spec label="Wash" value={specs.wash} />}
-              {specs.fit && <Spec label="Fit" value={specs.fit} />}
-              {specs.printType && <Spec label="Print" value={specs.printType} />}
-              <Spec label="Sizes" value={SIZE_LABELS.join(' / ')} />
+              <Spec label="Sizes" value={availableSizes.join(' / ')} />
               <Spec label="Colors" value={product.colors.map((c) => c.name).join(', ')} />
             </div>
 
             {/* Wholesale pricing */}
             <div className="mt-5 border border-line bg-paper-2 p-4 md:p-5">
-              <p className="font-label text-[10px] uppercase tracking-[0.18em] text-grey mb-3">
-                Wholesale Pricing (per piece)
-              </p>
+              <div className="flex items-center justify-between mb-3">
+                <p className="font-label text-[10px] uppercase tracking-[0.18em] text-grey">
+                  Wholesale Pricing (per piece)
+                </p>
+                <p className="font-label text-[10px] uppercase tracking-wide-2 text-bone-soft">
+                  MOQ {moqDisplay} PCS · acceptance from {minOrderQty} PCS
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-3">
-                <div className={`border p-3 text-center ${totalQty >= slabTier(moq) ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
-                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">{moq} PCS</p>
-                  <p className="font-price text-lg md:text-xl text-bone mt-1">{formatPerUnit(slabs.price50)}</p>
+                <div className={`border p-3 text-center transition-colors ${canOrder && totalQty < 100 ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
+                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">{moqDisplay} PCS</p>
+                  <p className="font-price text-lg md:text-xl text-bone mt-1">{slabs.price50 > 0 ? formatPerUnit(slabs.price50) : '—'}</p>
+                  <p className="mt-1 font-label text-[9px] uppercase tracking-wide-2 text-grey/70">
+                    {minOrderQty}–99 PCS
+                  </p>
                 </div>
-                <div className={`border p-3 text-center ${totalQty >= 100 ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
+                <div className={`border p-3 text-center transition-colors ${totalQty >= 100 ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
                   <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">100 PCS</p>
-                  <p className="font-price text-lg md:text-xl text-crimson mt-1">{formatPerUnit(slabs.price100)}</p>
+                  <p className="font-price text-lg md:text-xl text-crimson mt-1">{slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}</p>
+                  <p className="mt-1 font-label text-[9px] uppercase tracking-wide-2 text-grey/70">
+                    100+ PCS
+                  </p>
                   {totalQty >= 100 && (
                     <p className="font-label text-[9px] uppercase tracking-wide-2 text-crimson mt-1">
                       Applied
@@ -691,7 +690,7 @@ export function ProductPage({ slug }: { slug: string }) {
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-bone-soft leading-relaxed">
-                Mixed sizes &amp; colors. {moq} PCS minimum; the 100 PCS rate unlocks automatically.
+                Mixed sizes &amp; colors. Every included color needs at least {minPerColor} PCS; the 100 PCS+ rate unlocks automatically.
               </p>
             </div>
 
@@ -702,36 +701,48 @@ export function ProductPage({ slug }: { slug: string }) {
                   Wholesale Quantity
                 </span>
                 <span className="font-label text-[10px] uppercase tracking-wide-2 text-bone-soft">
-                  Add pieces per color &amp; size
+                  PCS per color &amp; size
                 </span>
               </div>
               <div className="border border-line overflow-hidden">
-                <div className="grid grid-cols-[1.3fr_repeat(3,1fr)] bg-paper-2 border-b border-line">
+                <div className={`grid ${colsCls} bg-paper-2 border-b border-line`}>
                   <span className="px-3 py-2 font-label text-[10px] uppercase tracking-wide-2 text-grey">Color</span>
-                  {SIZE_LABELS.map((s) => (
+                  {availableSizes.map((s) => (
                     <span key={s} className="px-1 py-2 text-center font-label text-[11px] uppercase tracking-wide-2 text-bone font-semibold">
                       {s}
                     </span>
                   ))}
                 </div>
-                {product.colors.map((c) => (
-                  <div key={c.id} className="grid grid-cols-[1.3fr_repeat(3,1fr)] border-b border-line last:border-0">
-                    <div className="px-3 py-2 flex items-center gap-2 min-w-0">
-                      <span className="w-3 h-3 border border-line shrink-0" style={{ backgroundColor: c.hex }} />
-                      <span className="text-[11px] md:text-xs text-bone truncate">{c.name}</span>
-                    </div>
-                    {SIZE_LABELS.map((s) => (
-                      <div key={`${c.id}-${s}`} className="px-1 py-2">
-                        <MatrixCell
-                          label={`${c.name} ${s}`}
-                          qty={matrix[c.id]?.[s] ?? 0}
-                          stock={stockFor(c.id, s)}
-                          onChange={(q) => setCell(c.id, s, q)}
-                        />
+                {product.colors.map((c, i) => {
+                  const rowTotal = colorTotals[i].total;
+                  return (
+                    <div key={c.id} className={`grid ${colsCls} border-b border-line last:border-0`}>
+                      <div className="px-3 py-2 flex items-center gap-2 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => setColorIdx(i)}
+                          className="flex items-center gap-2 min-w-0 text-left"
+                          title={`View ${c.name} images`}
+                        >
+                          <span className="w-3 h-3 border border-line shrink-0" style={{ backgroundColor: c.hex }} />
+                          <span className="text-[11px] md:text-xs text-bone truncate">{c.name}</span>
+                        </button>
+                        <span className={`shrink-0 ml-auto font-label text-[10px] tabular-nums ${rowTotal > 0 && rowTotal < minPerColor ? 'text-crimson' : 'text-grey'}`}>
+                          {rowTotal} PCS
+                        </span>
                       </div>
-                    ))}
-                  </div>
-                ))}
+                      {availableSizes.map((s) => (
+                        <div key={`${c.id}-${s}`} className="px-1 py-2">
+                          <MatrixCell
+                            label={`${c.name} ${s}`}
+                            qty={matrix[c.id]?.[s] ?? 0}
+                            onChange={(q) => setCell(c.id, s, q)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Totals + validation */}
@@ -743,40 +754,49 @@ export function ProductPage({ slug }: { slug: string }) {
                 <div className="mt-2 flex items-center justify-between">
                   <span className="font-label text-[10px] uppercase tracking-wide-2 text-white/50">Wholesale Price</span>
                   <span className="font-price text-base md:text-lg text-white/90 tabular-nums">
-                    {totalQty >= moq && slabs.price50 > 0 ? `${formatPerUnit(tier.unitPrice)} × ${totalQty}` : '—'}
+                    {canOrder && slabs.price50 > 0 ? `${formatPerUnit(tier.unitPrice)} × ${totalQty}` : '—'}
                   </span>
                 </div>
                 <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2">
                   <span className="font-label text-[11px] uppercase tracking-wide-2 text-white/70">Total</span>
                   <span className="font-price text-2xl md:text-3xl text-crimson tabular-nums">
-                    {totalQty >= moq ? formatPrice(tier.total) : formatPrice(0)}
+                    {canOrder ? formatPrice(tier.total) : formatPrice(0)}
                   </span>
                 </div>
               </div>
 
-              {/* MOQ status */}
+              {/* Order status */}
               <div className="mt-3 space-y-2">
                 {totalQty === 0 && (
                   <p className="font-label text-[11px] uppercase tracking-wide-2 text-bone-soft">
-                    Build a mix of {moq} PCS or more to place a wholesale order.
+                    Build a mix of {minOrderQty} PCS or more — each included color needs at least {minPerColor} PCS.
                   </p>
                 )}
-                {belowMoq && (
+                {totalQty > 0 && shortColors.length > 0 && (
+                  <p className="flex items-start gap-2 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3">
+                    <AlertTriangle size={16} strokeWidth={1.8} className="shrink-0 mt-0.5" />
+                    <span>
+                      Every included color needs at least {minPerColor} PCS:{' '}
+                      {shortColors.map((sc) => `${sc.color.name} (${sc.total})`).join(', ')}. Add more to those colors to continue.
+                    </span>
+                  </p>
+                )}
+                {belowMinTotal && shortColors.length === 0 && (
                   <p className="flex items-center gap-2 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3">
                     <AlertTriangle size={16} strokeWidth={1.8} className="shrink-0" />
-                    Minimum wholesale order is {moq} PCS. Add {moq - totalQty} more PCS — mix any colors and sizes.
+                    Order acceptance starts from {minOrderQty} PCS. Add {minOrderQty - totalQty} more PCS across any colors and sizes.
                   </p>
                 )}
                 {canOrder && totalQty < 100 && (
                   <p className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-3">
                     <CheckCircle2 size={16} strokeWidth={1.8} className="shrink-0" />
-                    Wholesale MOQ reached.
+                    Order ready — {minOrderQty} PCS minimum reached. Add {100 - totalQty} more PCS to unlock the 100+ PCS rate.
                   </p>
                 )}
                 {totalQty >= 100 && (
                   <p className="flex items-center gap-2 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3 font-medium">
                     <CheckCircle2 size={16} strokeWidth={1.8} className="shrink-0" />
-                    You unlocked the {formatPerUnit(slabs.price100)} wholesale price.
+                    You unlocked the 100+ PCS wholesale price ({slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}).
                   </p>
                 )}
               </div>
@@ -802,7 +822,7 @@ export function ProductPage({ slug }: { slug: string }) {
               </button>
               {!canOrder && totalQty > 0 && (
                 <p className="flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey">
-                  <Lock size={12} strokeWidth={2} /> Order unlocks at {moq} PCS.
+                  <Lock size={12} strokeWidth={2} /> Order unlocks at {minOrderQty} PCS (every included color ≥ {minPerColor} PCS).
                 </p>
               )}
               <div className="pt-3 border-t border-line">
@@ -812,69 +832,33 @@ export function ProductPage({ slug }: { slug: string }) {
               </div>
             </div>
 
-            {/* Accordion */}
+            {/* Wholesale info */}
             <div className="mt-6 border-t border-line">
-              {ACCORDION.map((a) => (
-                (a.body !== 'sizechart' || sizeChart.length > 0) && (
-                <div key={a.title} className="border-b border-line">
-                  <button
-                    onClick={() => toggleAcc(a.title)}
-                    className="w-full flex items-center justify-between py-4 text-left"
-                  >
-                    <span className="font-label text-[11px] uppercase tracking-wide-2 text-bone-dim font-medium">
-                      {a.title}
-                    </span>
-                    <ChevronDown
-                      size={16}
-                      className={`text-grey transition-transform duration-200 ${
-                        openAcc === a.title ? 'rotate-180' : ''
-                      }`}
-                      strokeWidth={1.8}
-                    />
-                  </button>
-                  {openAcc === a.title && (
-                    <div className="pb-5 text-sm text-grey leading-relaxed animate-slide-down">
-                      {a.body === 'sizechart' && (
-                        <div className="overflow-x-auto -mx-5 px-5 md:mx-0 md:px-0">
-                          <table className="w-full text-sm min-w-[320px]">
-                            <thead>
-                              <tr className="text-[10px] uppercase tracking-wide-2 text-grey border-b border-line">
-                                <th className="text-left py-2 pr-4 font-medium">Size</th>
-                                <th className="text-left py-2 pr-4 font-medium">Chest (in)</th>
-                                <th className="text-left py-2 pr-4 font-medium">Length (in)</th>
-                                <th className="text-left py-2 font-medium">Shoulder (in)</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {sizeChart.map((r: SizeChartRow) => (
-                                <tr key={r.id} className="border-b border-line last:border-0">
-                                  <td className="py-2.5 pr-4 font-medium text-bone">{r.size_label}</td>
-                                  <td className="py-2.5 pr-4 text-bone-dim">{r.chest}</td>
-                                  <td className="py-2.5 pr-4 text-bone-dim">{r.length}</td>
-                                  <td className="py-2.5 text-bone-dim">{r.shoulder}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                      {a.body === 'wholesale' && (
-                        <div className="space-y-2">
-                          <p>MOQ {moq} PCS per design — mixed sizes (M / L / XL) and colors allowed.</p>
-                          <p>Slab pricing: {moq} PCS at {formatPerUnit(slabs.price50)}; 100+ PCS at {formatPerUnit(slabs.price100)}.</p>
-                          <p>Pan-India delivery. Orders confirmed personally on WhatsApp before dispatch.</p>
-                          <p>Retailers and resellers: build your mix on this page and request the order — no account needed.</p>
-                        </div>
-                      )}
-                      {a.body === 'care' && (
-                        <p className="space-y-2">{product.care}</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-                )
-              ))}
+              <div className="pt-4 space-y-2 text-sm text-grey leading-relaxed">
+                <p>MOQ {moqDisplay} PCS per design — mixed sizes ({availableSizes.join(' / ')}) and colors allowed.</p>
+                <p>Order acceptance from {minOrderQty} PCS; each included color needs at least {minPerColor} PCS.</p>
+                <p>Slab pricing: {moqDisplay} PCS at {slabs.price50 > 0 ? formatPerUnit(slabs.price50) : '—'}; 100+ PCS at {slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}.</p>
+                <p>Pan-India delivery. Orders confirmed personally on WhatsApp before dispatch — no account needed.</p>
+              </div>
             </div>
+
+            {/* Description + Details */}
+            {(description || details) && (
+              <div className="mt-6 border-t border-line">
+                {description && (
+                  <div className="pt-4">
+                    <h2 className="font-label text-[11px] uppercase tracking-wide-2 text-bone-dim font-medium mb-2">Description</h2>
+                    <p className="text-sm text-grey leading-relaxed whitespace-pre-line">{description}</p>
+                  </div>
+                )}
+                {details && (
+                  <div className="pt-4 border-t border-line mt-4">
+                    <h2 className="font-label text-[11px] uppercase tracking-wide-2 text-bone-dim font-medium mb-2">Details</h2>
+                    <p className="text-sm text-grey leading-relaxed whitespace-pre-line">{details}</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -916,8 +900,4 @@ function Spec({ label, value }: { label: string; value: string }) {
       <dd className="mt-0.5 text-sm text-bone-dim leading-snug">{value}</dd>
     </div>
   );
-}
-
-function slabTier(moq: number): number {
-  return moq;
 }

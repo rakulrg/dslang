@@ -1,4 +1,4 @@
-import { getWholesaleSlabs, formatPerUnit, type CatalogProduct } from '@/lib/catalog';
+import { getWholesaleSlabs, getAvailableSizes, formatPerUnit, type CatalogProduct } from '@/lib/catalog';
 import type { ProductColorRow } from '@/lib/types';
 import { linkHref } from '@/lib/router';
 
@@ -7,7 +7,7 @@ export function ProductCard({ product, index = 0 }: { product: CatalogProduct; i
   const image = primary?.images[0];
   const hoverImage = primary?.images[1] ?? primary?.images[0];
   const slabs = getWholesaleSlabs(product);
-  const sizeLabels = Array.from(new Set(product.sizes.map((s) => s.size_label)));
+  const sizeLabels = getAvailableSizes(product);
 
   return (
     <a

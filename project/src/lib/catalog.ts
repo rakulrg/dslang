@@ -117,6 +117,17 @@ export async function fetchHeroSlides(): Promise<HeroSlideRow[]> {
   return (data as HeroSlideRow[]) ?? [];
 }
 
+/**
+ * Sizes offered on a product (M/L/XL). Source of truth is the product-level
+ * `available_sizes` column added in the wholesale rebuild migration; older
+ * rows fall back to the standard M/L/XL set.
+ */
+export function getAvailableSizes(product: ProductRow | CatalogProduct): string[] {
+  const raw = Array.isArray(product.available_sizes) ? product.available_sizes : [];
+  const filtered = raw.filter((s): s is (typeof SIZE_LABELS)[number] => ALLOWED_SIZES.has(s));
+  return filtered.length > 0 ? filtered : [...SIZE_LABELS];
+}
+
 export function formatPrice(n: number): string {
   return `₹\u2009${n.toLocaleString('en-IN')}`;
 }
@@ -260,10 +271,11 @@ function formatBreakdown(lines: WholesaleSkuLine[]): string {
 
 /**
  * Pre-filled WhatsApp message for a wholesale order (product page or cart).
- * Includes real product, color, size, quantity, tier and total information.
+ * Includes real product, per-color size breakdown, applicable tier, and total.
  */
 export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): string {
   const summary = summarizeWholesale(payload.lines);
+  const settings = getSiteSettings();
 
   const sellerDetails = [
     payload.businessName ? `Business: ${payload.businessName}` : null,
@@ -296,22 +308,28 @@ export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): st
     })
     .join('\n');
 
+  const rep = payload.lines.find((l) => l.qty > 0);
+  const appliedRate = rep
+    ? (summary.totalQty >= WHOLESALE_TIER_100 && rep.price100 > 0 ? rep.price100 : rep.price50)
+    : 0;
+
   const message = [
     ...(payload.businessName || payload.phone ? [`Hi DSLANG, wholesale order request:`] : ['Hi DSLANG, I am interested in a wholesale order:']),
     '',
     ...(payload.businessName || payload.phone ? [] : [`Please share the catalogue and confirm availability.`]),
     productText.trim(),
     `Total Quantity: ${summary.totalQty} PCS`,
-    summary.totalQty >= getSiteSettings().default_moq
+    summary.totalQty >= settings.min_order_quantity
       ? `Wholesale Pricing: ${summary.tiers.map((t) => t.name).join(' / ')}`
-      : `Minimum wholesale order is ${getSiteSettings().default_moq} PCS.`,
+      : `Minimum order acceptance from ${settings.min_order_quantity} PCS (MOQ ${settings.default_moq} PCS).`,
+    rep && appliedRate > 0 ? `Applicable Wholesale Price: ₹\u2009${appliedRate.toLocaleString('en-IN')}/PC` : null,
     `Order Total: ₹\u2009${summary.total.toLocaleString('en-IN')}`,
     ...(sellerDetails ? ['', 'My Details:', sellerDetails] : []),
     '',
     'Please confirm availability and order details.',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
-  return `https://wa.me/${getSiteSettings().whatsapp_number}?text=${encodeURIComponent(message)}`;
+  return `https://wa.me/${settings.whatsapp_number}?text=${encodeURIComponent(message)}`;
 }
 
 export interface WhatsAppOrder {

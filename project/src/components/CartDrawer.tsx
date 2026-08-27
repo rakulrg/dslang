@@ -17,6 +17,7 @@ export function CartDrawer() {
   const autoCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { settings } = useSiteSettings();
   const moq = settings.default_moq;
+  const minOrderQty = settings.min_order_quantity;
 
   const lines: WholesaleSkuLine[] = items.map((i) => ({
     name: i.name,
@@ -30,7 +31,7 @@ export function CartDrawer() {
     slug: i.slug,
   }));
   const summary = summarizeWholesale(lines);
-  const belowMoaq = summary.totalQty < moq;
+  const belowMoaq = summary.totalQty < minOrderQty;
 
   // Reset checkout state when drawer closes
   useEffect(() => {
@@ -145,7 +146,7 @@ export function CartDrawer() {
           <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
             <ShoppingBag size={48} className="text-line mb-4" strokeWidth={1} />
             <p className="font-label text-2xl uppercase tracking-wide-2 text-grey">No pieces selected</p>
-            <p className="mt-2 text-sm text-bone-soft">Build a wholesale mix of {moq}+ PCS across colors and sizes.</p>
+            <p className="mt-2 text-sm text-bone-soft">Build a wholesale mix of MOQ {moq} PCS — order acceptance from {minOrderQty} PCS.</p>
             <a
               href={linkHref('/collection')}
               onClick={close}
@@ -257,7 +258,7 @@ export function CartDrawer() {
                 <div className="flex items-start gap-2 rounded border border-crimson/30 bg-crimson/5 px-3 py-3">
                   <AlertTriangle size={16} className="text-crimson mt-0.5 shrink-0" strokeWidth={1.8} />
                   <p className="text-xs text-crimson leading-relaxed">
-                    Minimum wholesale order is {moq} PCS. Add {moq - summary.totalQty} more PCS using mixed sizes and colors to place your order.
+                    Order acceptance starts from {minOrderQty} PCS (MOQ {moq} PCS). Add {minOrderQty - summary.totalQty} more PCS across colors and sizes to place your order.
                   </p>
                 </div>
               )}

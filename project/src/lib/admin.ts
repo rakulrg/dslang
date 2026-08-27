@@ -5,19 +5,18 @@ import type {
   ProductColorRow,
   ProductRow,
   ProductSizeRow,
-  SizeChartRow,
 } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
 import { hasPublishColumns } from '@/lib/catalog';
 import type { SiteSettings } from '@/lib/settings';
 
-const ALLOWED_SIZES = new Set<string>(SIZE_LABELS);
-
-const SIZE_ORDER: Record<string, number> = { M: 0, L: 1, XL: 2 };
 export const PRODUCT_IMAGE_BUCKET = 'product-images';
 const PRODUCT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_PRODUCT_IMAGE_BYTES = 10 * 1024 * 1024;
 const PRODUCT_IMAGE_EXTENSIONS: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+
+const ALLOWED_SIZES = new Set<string>(SIZE_LABELS);
+const SIZE_ORDER: Record<string, number> = { M: 0, L: 1, XL: 2 };
 
 function sortSizes(sizes: ProductSizeRow[]): ProductSizeRow[] {
   return sizes
@@ -52,7 +51,7 @@ export async function adminFetchProducts(): Promise<CatalogProduct[]> {
       stock: Number(s.stock ?? 0),
       available: Number(s.stock ?? 0) > 0,
     }))),
-    size_chart: (chart as SizeChartRow[] | null)?.filter((r) => r.product_id === p.id) ?? [],
+    size_chart: ((chart as Array<{ product_id: string }> | null)?.filter((r) => r.product_id === p.id) ?? []) as never,
   }));
 }
 
@@ -67,29 +66,25 @@ export interface ProductInput {
   name: string;
   code: string;
   drop_label: string;
-  price: number;
-  mrp: number | null;
-  fabric: string;
-  fit: string;
-  care: string;
   description: string;
+  details: string;
   category: string;
   badge: string | null;
   featured: boolean;
   published: boolean;
   new_drop: boolean;
   sort_order: number;
-  gsm: number | null;
-  wash: string;
-  print_type: string | null;
   moq: number | null;
   price50: number | null;
   price100: number | null;
+  available_sizes: string[];
 }
 
-export const WHOLESALE_COLUMNS = ['gsm', 'wash', 'print_type', 'moq', 'price50', 'price100'] as const;
+export const WHOLESALE_COLUMNS = ['moq', 'price50', 'price100'] as const;
+export const REBUILD_COLUMNS = ['details', 'available_sizes'] as const;
 
 let wholesaleColumnsAvailable: boolean | null = null;
+let rebuildColumnsAvailable: boolean | null = null;
 
 /**
  * Detects whether the products table has the wholesale columns yet.
@@ -99,20 +94,34 @@ export async function hasWholesaleColumns(): Promise<boolean> {
   if (wholesaleColumnsAvailable !== null) return wholesaleColumnsAvailable;
   const { error } = await supabase
     .from('products')
-    .select('gsm, wash, print_type, moq, price50, price100')
+    .select('moq, price50, price100')
     .limit(1);
   wholesaleColumnsAvailable = !error;
   return wholesaleColumnsAvailable;
 }
 
 /**
+ * Whether the products table has the wholesale rebuild columns
+ * (details + available_sizes). Migration-gated so the admin panel works
+ * before and after the rebuild migration is applied.
+ */
+export async function hasRebuildColumns(): Promise<boolean> {
+  if (rebuildColumnsAvailable !== null) return rebuildColumnsAvailable;
+  const { error } = await supabase.from('products').select('details, available_sizes').limit(1);
+  rebuildColumnsAvailable = !error;
+  return rebuildColumnsAvailable;
+}
+
+/**
  * Builds a payload that only includes columns the schema actually has, so the
- * admin panel works before and after the site-control migration is applied.
+ * admin panel works before and after the migrations are applied.
  */
 async function sanitizeProductPayload(input: Partial<ProductInput>): Promise<Partial<ProductInput>> {
   const clean = { ...input };
   const wholesale = await hasWholesaleColumns();
   if (!wholesale) for (const col of WHOLESALE_COLUMNS) delete clean[col as keyof ProductInput];
+  const rebuild = await hasRebuildColumns();
+  if (!rebuild) for (const col of REBUILD_COLUMNS) delete clean[col as keyof ProductInput];
   const publish = await hasPublishColumns();
   if (!publish) {
     delete clean.published;
@@ -172,7 +181,17 @@ export async function uploadProductImage(file: File, productId: string, colorNam
 }
 
 export async function adminCreateProduct(input: ProductInput): Promise<ProductRow> {
-  const payload = await sanitizeProductPayload(input);
+  const clean = await sanitizeProductPayload(input);
+  // The retail price fields are no longer edited by the admin panel; they are
+  // kept only so legacy NOT NULL columns are satisfied on insert.
+  const payload: Record<string, unknown> = {
+    ...clean,
+    price: 0,
+    mrp: null,
+    fabric: '',
+    fit: '',
+    care: '',
+  };
   const { data, error } = await supabase
     .from('products')
     .insert(payload)
@@ -180,29 +199,7 @@ export async function adminCreateProduct(input: ProductInput): Promise<ProductRo
     .single();
   if (error) throw error;
 
-  const product = data as ProductRow;
-
-  // Size rows are created per-color via adminAddColor, not here,
-  // because color_id is required on product_sizes.
-
-  // Create default size chart
-  const defaultChart: Record<string, { chest: number; length: number; shoulder: number }> = {
-    M: { chest: 52, length: 28, shoulder: 24 },
-    L: { chest: 56, length: 29, shoulder: 25 },
-    XL: { chest: 60, length: 30, shoulder: 26 },
-  };
-  const chartRows = SIZE_LABELS.map((label, i) => ({
-    product_id: product.id,
-    size_label: label,
-    chest: defaultChart[label].chest,
-    length: defaultChart[label].length,
-    shoulder: defaultChart[label].shoulder,
-    sort_order: i,
-  }));
-  const { error: chartError } = await supabase.from('size_chart_rows').insert(chartRows);
-  if (chartError) throw chartError;
-
-  return product;
+  return data as ProductRow;
 }
 
 export async function adminUpdateProduct(id: string, input: Partial<ProductInput>): Promise<void> {
@@ -239,20 +236,7 @@ export async function adminAddColor(
     .single();
   if (error) throw error;
 
-  const color = data as ProductColorRow;
-
-  // Create default size rows for this color with stock = 0
-  const sizeRows = SIZE_LABELS.map((label) => ({
-    product_id: productId,
-    color_id: color.id,
-    size_label: label,
-    available: false,
-    stock: 0,
-  }));
-  const { error: sizesError } = await supabase.from('product_sizes').insert(sizeRows);
-  if (sizesError) throw sizesError;
-
-  return color;
+  return data as ProductColorRow;
 }
 
 export async function adminUpdateColor(id: string, patch: Partial<Pick<ProductColorRow, 'name' | 'hex' | 'images' | 'sort_order'>>): Promise<void> {
@@ -272,53 +256,6 @@ export async function adminUpdateColorSortOrders(productId: string, orderedIds: 
   const results = await Promise.all(updates);
   const firstError = results.find((r) => r.error);
   if (firstError?.error) throw firstError.error;
-}
-
-// Initialize default size rows for a color that has none
-export async function adminInitColorSizes(productId: string, colorId: string): Promise<void> {
-  const { data: existing, error: checkError } = await supabase
-    .from('product_sizes')
-    .select('id')
-    .eq('product_id', productId)
-    .eq('color_id', colorId)
-    .limit(1);
-  if (checkError) throw checkError;
-  if (existing && existing.length > 0) return;
-
-  const sizeRows = SIZE_LABELS.map((label) => ({
-    product_id: productId,
-    color_id: colorId,
-    size_label: label,
-    available: true,
-    stock: 0,
-  }));
-  const { error } = await supabase.from('product_sizes').insert(sizeRows);
-  if (error) throw error;
-}
-
-// Sizes
-export async function adminUpdateSizeStock(
-  productId: string,
-  colorId: string,
-  sizeLabel: string,
-  stock: number
-): Promise<void> {
-  const nextStock = Math.max(0, Math.floor(Number(stock) || 0));
-
-  const { error } = await supabase
-    .from('product_sizes')
-    .update({ stock: nextStock, available: nextStock > 0 })
-    .eq('product_id', productId)
-    .eq('color_id', colorId)
-    .eq('size_label', sizeLabel);
-
-  if (error) throw error;
-}
-
-// Size chart
-export async function adminUpdateSizeChartRow(id: string, chest: number, length: number, shoulder: number): Promise<void> {
-  const { error } = await supabase.from('size_chart_rows').update({ chest, length, shoulder }).eq('id', id);
-  if (error) throw error;
 }
 
 export async function uploadHeroImage(file: File): Promise<string> {
@@ -399,6 +336,16 @@ export async function hasHeroCtaColumns(): Promise<boolean> {
   return heroCtaAvailable;
 }
 
+let orderMinColumnsAvailable: boolean | null = null;
+
+/** Whether site_settings has the order-minimum columns yet (migration-gated). */
+export async function hasOrderMinColumns(): Promise<boolean> {
+  if (orderMinColumnsAvailable !== null) return orderMinColumnsAvailable;
+  const { error } = await supabase.from('site_settings').select('min_order_quantity, per_color_minimum').limit(1);
+  orderMinColumnsAvailable = !error;
+  return orderMinColumnsAvailable;
+}
+
 // Site settings (admin-controlled source of truth for storefront vitals)
 export async function adminFetchSiteSettings(): Promise<SiteSettings> {
   const { data, error } = await supabase
@@ -416,6 +363,8 @@ export async function adminFetchSiteSettings(): Promise<SiteSettings> {
         default_moq?: number | null;
         dispatch_note?: string | null;
         delivery_note?: string | null;
+        min_order_quantity?: number | null;
+        per_color_minimum?: number | null;
       }
     | null;
 
@@ -426,6 +375,8 @@ export async function adminFetchSiteSettings(): Promise<SiteSettings> {
     default_moq: 50,
     dispatch_note: 'Same Day Dispatch',
     delivery_note: 'Pan India',
+    min_order_quantity: 48,
+    per_color_minimum: 6,
   };
 
   if (!row) return fallback;
@@ -437,21 +388,28 @@ export async function adminFetchSiteSettings(): Promise<SiteSettings> {
     default_moq: Number(row.default_moq ?? 0) || fallback.default_moq,
     dispatch_note: row.dispatch_note ?? fallback.dispatch_note,
     delivery_note: row.delivery_note ?? fallback.delivery_note,
+    min_order_quantity: Number(row.min_order_quantity ?? 0) || fallback.min_order_quantity,
+    per_color_minimum: Number(row.per_color_minimum ?? 0) || fallback.per_color_minimum,
   };
 }
 
 export async function adminSaveSiteSettings(settings: SiteSettings): Promise<void> {
+  const patch: Record<string, unknown> = {
+    announcement_text: settings.announcement_text,
+    announcement_active: settings.announcement_active,
+    whatsapp_number: settings.whatsapp_number,
+    default_moq: settings.default_moq,
+    dispatch_note: settings.dispatch_note,
+    delivery_note: settings.delivery_note,
+    updated_at: new Date().toISOString(),
+  };
+  if (await hasOrderMinColumns()) {
+    patch.min_order_quantity = settings.min_order_quantity;
+    patch.per_color_minimum = settings.per_color_minimum;
+  }
   const { error } = await supabase
     .from('site_settings')
-    .update({
-      announcement_text: settings.announcement_text,
-      announcement_active: settings.announcement_active,
-      whatsapp_number: settings.whatsapp_number,
-      default_moq: settings.default_moq,
-      dispatch_note: settings.dispatch_note,
-      delivery_note: settings.delivery_note,
-      updated_at: new Date().toISOString(),
-    })
+    .update(patch)
     .eq('id', 1);
   if (error) throw error;
 }

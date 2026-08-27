@@ -8,6 +8,9 @@ export interface SiteSettings {
   default_moq: number;
   dispatch_note: string;
   delivery_note: string;
+  // Wholesale order minimums (admin-controlled)
+  min_order_quantity: number;
+  per_color_minimum: number;
 }
 
 export const DEFAULT_SETTINGS: SiteSettings = {
@@ -17,6 +20,8 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   default_moq: 50,
   dispatch_note: 'Same Day Dispatch',
   delivery_note: 'Pan India',
+  min_order_quantity: 48,
+  per_color_minimum: 6,
 };
 
 // Module-level cache so synchronous builders (WhatsApp URLs, MOQ gates) can
@@ -50,6 +55,8 @@ export async function fetchSiteSettings(): Promise<SiteSettings> {
         default_moq?: number | null;
         dispatch_note?: string | null;
         delivery_note?: string | null;
+        min_order_quantity?: number | null;
+        per_color_minimum?: number | null;
       }
     | null;
 
@@ -62,6 +69,8 @@ export async function fetchSiteSettings(): Promise<SiteSettings> {
     default_moq: Number(row.default_moq ?? 0) || DEFAULT_SETTINGS.default_moq,
     dispatch_note: row.dispatch_note ?? DEFAULT_SETTINGS.dispatch_note,
     delivery_note: row.delivery_note ?? DEFAULT_SETTINGS.delivery_note,
+    min_order_quantity: Number(row.min_order_quantity ?? 0) || DEFAULT_SETTINGS.min_order_quantity,
+    per_color_minimum: Number(row.per_color_minimum ?? 0) || DEFAULT_SETTINGS.per_color_minimum,
   };
 
   cachedSettings = settings;

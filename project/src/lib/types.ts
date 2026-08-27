@@ -26,6 +26,9 @@ export interface ProductRow {
   // Storefront visibility (added via migration; optional for older rows)
   published?: boolean;
   new_drop?: boolean;
+  // Wholesale rebuild (added via migration; optional for older rows)
+  details?: string | null;
+  available_sizes?: string[] | null;
 }
 
 export interface ProductColorRow {
