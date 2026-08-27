@@ -39,8 +39,8 @@ export function AboutPage() {
               premium finish that moves on a retail rack.
             </p>
             <p className="mt-4 text-bone-soft leading-relaxed text-sm md:text-base">
-              We build collections to move on a retail rack — curated colorways, retail-friendly M / L / XL
-              sizing, and a simple wholesale process: pick designs, mix colors and sizes up to your MOQ, and
+              We build collections to move on a retail rack — curated colorways, fixed M / L / XL
+              color packs, and a simple wholesale process: pick whole packs up to your MOQ, and
               order direct on WhatsApp.
             </p>
             <p className="mt-4 text-bone-soft leading-relaxed text-sm md:text-base">

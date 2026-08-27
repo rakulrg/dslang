@@ -16,14 +16,14 @@ import { preloadImage } from '@/lib/image';
 const WHY_DSLANG = [
   { title: 'Fast Dispatch', body: 'Orders confirmed on WhatsApp and dispatched fast.' },
   { title: 'Wholesale Pricing', body: 'Clean slab pricing — no haggling, no retail noise.' },
-  { title: 'Mixed Sizes & Colors', body: 'Assemble your own mix across M, L and XL.' },
+  { title: 'Color Pack System', body: 'Whole color packs only — fixed M, L and XL mix per pack.' },
   { title: 'Pan India Delivery', body: 'Built for stores and resellers everywhere in India.' },
 ];
 
 const STEPS = [
   { n: '01', t: 'Browse', d: 'Explore the wholesale collection.' },
-  { n: '02', t: 'Select', d: 'Choose designs, colors and sizes.' },
-  { n: '03', t: 'Mix', d: 'Mix sizes and colors within the MOQ.' },
+  { n: '02', t: 'Select', d: 'Pick whole color packs.' },
+  { n: '03', t: 'Mix', d: 'Mix colors within the MOQ.' },
   { n: '04', t: 'Order', d: 'Send the order on WhatsApp.' },
 ];
 

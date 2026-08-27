@@ -8,7 +8,31 @@ import type {
 } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
 import { hasPublishColumns } from '@/lib/catalog';
-import type { SiteSettings } from '@/lib/settings';
+import { DEFAULT_SETTINGS, type SiteSettings } from '@/lib/settings';
+
+export interface WholesaleOrderRow {
+  id: number;
+  ref: string;
+  lines: Array<{
+    product_id: string;
+    name: string;
+    code: string;
+    color: string;
+    color_hex: string;
+    packs: number;
+    m: number;
+    l: number;
+    xl: number;
+    qty: number;
+    price50: number;
+    price100: number;
+  }>;
+  total_qty: number;
+  total_amount: number;
+  seller: { business_name?: string; phone?: string; city?: string } | null;
+  status: string;
+  created_at: string;
+}
 
 export const PRODUCT_IMAGE_BUCKET = 'product-images';
 const PRODUCT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -336,60 +360,55 @@ export async function hasHeroCtaColumns(): Promise<boolean> {
   return heroCtaAvailable;
 }
 
-let orderMinColumnsAvailable: boolean | null = null;
+let packSettingsColumnsAvailable: boolean | null = null;
 
-/** Whether site_settings has the order-minimum columns yet (migration-gated). */
+/** Whether site_settings has the color-pack/order columns yet (migration-gated). */
 export async function hasOrderMinColumns(): Promise<boolean> {
-  if (orderMinColumnsAvailable !== null) return orderMinColumnsAvailable;
-  const { error } = await supabase.from('site_settings').select('min_order_quantity, per_color_minimum').limit(1);
-  orderMinColumnsAvailable = !error;
-  return orderMinColumnsAvailable;
+  if (packSettingsColumnsAvailable !== null) return packSettingsColumnsAvailable;
+  const { error } = await supabase
+    .from('site_settings')
+    .select('min_order_quantity, pack_size, pack_m, pack_l, pack_xl, wholesale_price_50, wholesale_price_100')
+    .limit(1);
+  packSettingsColumnsAvailable = !error;
+  return packSettingsColumnsAvailable;
 }
 
 // Site settings (admin-controlled source of truth for storefront vitals)
 export async function adminFetchSiteSettings(): Promise<SiteSettings> {
-  const { data, error } = await supabase
-    .from('site_settings')
-    .select('*')
-    .eq('id', 1)
-    .maybeSingle();
-  if (error) throw error;
+  let row: Record<string, unknown> | null = null;
+  try {
+    const { data, error } = await supabase
+      .from('site_settings')
+      .select('*')
+      .eq('id', 1)
+      .maybeSingle();
+    if (error) throw error;
+    row = (data as Record<string, unknown> | null) ?? null;
+  } catch {
+    row = null;
+  }
 
-  const row = data as
-    | {
-        announcement_text?: string | null;
-        announcement_active?: boolean | null;
-        whatsapp_number?: string | null;
-        default_moq?: number | null;
-        dispatch_note?: string | null;
-        delivery_note?: string | null;
-        min_order_quantity?: number | null;
-        per_color_minimum?: number | null;
-      }
-    | null;
+  if (!row) return { ...DEFAULT_SETTINGS };
 
-  const fallback: SiteSettings = {
-    announcement_text: 'SAME DAY DISPATCH • FOR RESELLERS & WHOLESALE ONLY • PAN INDIA DELIVERY',
-    announcement_active: true,
-    whatsapp_number: '919944676178',
-    default_moq: 50,
-    dispatch_note: 'Same Day Dispatch',
-    delivery_note: 'Pan India',
-    min_order_quantity: 48,
-    per_color_minimum: 6,
+  const pick = <T,>(key: string, fallback: T): T => {
+    const v = row[key];
+    return v === null || v === undefined || v === '' ? fallback : (v as T);
   };
 
-  if (!row) return fallback;
-
   return {
-    announcement_text: row.announcement_text ?? fallback.announcement_text,
-    announcement_active: row.announcement_active ?? fallback.announcement_active,
-    whatsapp_number: (row.whatsapp_number ?? '').trim() || fallback.whatsapp_number,
-    default_moq: Number(row.default_moq ?? 0) || fallback.default_moq,
-    dispatch_note: row.dispatch_note ?? fallback.dispatch_note,
-    delivery_note: row.delivery_note ?? fallback.delivery_note,
-    min_order_quantity: Number(row.min_order_quantity ?? 0) || fallback.min_order_quantity,
-    per_color_minimum: Number(row.per_color_minimum ?? 0) || fallback.per_color_minimum,
+    announcement_text: pick('announcement_text', DEFAULT_SETTINGS.announcement_text),
+    announcement_active: pick('announcement_active', DEFAULT_SETTINGS.announcement_active),
+    whatsapp_number: String(pick('whatsapp_number', '')).trim() || DEFAULT_SETTINGS.whatsapp_number,
+    default_moq: Number(pick('default_moq', 0)) || DEFAULT_SETTINGS.default_moq,
+    dispatch_note: pick('dispatch_note', DEFAULT_SETTINGS.dispatch_note),
+    delivery_note: pick('delivery_note', DEFAULT_SETTINGS.delivery_note),
+    min_order_quantity: Number(pick('min_order_quantity', 0)) || DEFAULT_SETTINGS.min_order_quantity,
+    pack_size: Number(pick('pack_size', 0)) || DEFAULT_SETTINGS.pack_size,
+    pack_m: Number(pick('pack_m', 0)) || DEFAULT_SETTINGS.pack_m,
+    pack_l: Number(pick('pack_l', 0)) || DEFAULT_SETTINGS.pack_l,
+    pack_xl: Number(pick('pack_xl', 0)) || DEFAULT_SETTINGS.pack_xl,
+    wholesale_price_50: Number(pick('wholesale_price_50', 0)) || 0,
+    wholesale_price_100: Number(pick('wholesale_price_100', 0)) || 0,
   };
 }
 
@@ -405,11 +424,27 @@ export async function adminSaveSiteSettings(settings: SiteSettings): Promise<voi
   };
   if (await hasOrderMinColumns()) {
     patch.min_order_quantity = settings.min_order_quantity;
-    patch.per_color_minimum = settings.per_color_minimum;
+    patch.pack_size = settings.pack_size;
+    patch.pack_m = settings.pack_m;
+    patch.pack_l = settings.pack_l;
+    patch.pack_xl = settings.pack_xl;
+    patch.wholesale_price_50 = settings.wholesale_price_50;
+    patch.wholesale_price_100 = settings.wholesale_price_100;
   }
   const { error } = await supabase
     .from('site_settings')
     .update(patch)
     .eq('id', 1);
   if (error) throw error;
+}
+
+// Wholesale orders
+export async function adminFetchOrders(): Promise<WholesaleOrderRow[]> {
+  const { data, error } = await supabase
+    .from('orders')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (error) throw error;
+  return (data as WholesaleOrderRow[]) ?? [];
 }

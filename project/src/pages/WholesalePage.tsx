@@ -60,7 +60,7 @@ export function WholesalePage() {
             </div>
             <div className="border border-line bg-paper-2 p-6 md:p-8">
               <p className="text-sm text-bone-soft leading-relaxed">
-                Skip the form and go straight to the collection. Pick designs, mix colors and sizes, and
+                Skip the form and go straight to the collection. Pick whole color packs per design, and
                 request your wholesale order — pricing shows live as you build your cart.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">

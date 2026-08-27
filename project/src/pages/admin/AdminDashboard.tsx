@@ -13,6 +13,7 @@ import {
   Check,
   ExternalLink,
   Upload,
+  ShoppingBag,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
@@ -40,7 +41,9 @@ import {
   hasOrderMinColumns,
   adminFetchSiteSettings,
   adminSaveSiteSettings,
+  adminFetchOrders,
   type ProductInput,
+  type WholesaleOrderRow,
 } from '@/lib/admin';
 import { hasPublishColumns } from '@/lib/catalog';
 import type { SiteSettings } from '@/lib/settings';
@@ -48,7 +51,7 @@ import { setCachedSettings, fetchSiteSettings } from '@/lib/settings';
 import type { CatalogProduct, HeroSlideRow, ProductColorRow } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
 
-type Tab = 'products' | 'hero' | 'settings';
+type Tab = 'products' | 'hero' | 'settings' | 'orders';
 
 const EXPECTED_RATIO = 4 / 5;
 const RATIO_TOLERANCE = 0.03;
@@ -94,6 +97,8 @@ export function AdminDashboard() {
   const [orderMinReady, setOrderMinReady] = useState(false);
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [settingsError, setSettingsError] = useState('');
+  const [orders, setOrders] = useState<WholesaleOrderRow[] | null>(null);
+  const [ordersError, setOrdersError] = useState('');
 
   const loadProducts = useCallback(async () => {
     try {
@@ -125,10 +130,24 @@ export function AdminDashboard() {
     }
   }, []);
 
+  const loadOrders = useCallback(async () => {
+    try {
+      setOrdersError('');
+      setOrders(await adminFetchOrders());
+    } catch (err) {
+      setOrders(null);
+      setOrdersError(err instanceof Error ? err.message : 'Failed to load orders');
+    }
+  }, []);
+
   useEffect(() => {
     loadProducts();
     loadHero();
   }, [loadProducts, loadHero]);
+
+  useEffect(() => {
+    if (tab === 'orders') void loadOrders();
+  }, [tab, loadOrders]);
 
   useEffect(() => {
     let cancelled = false;
@@ -202,6 +221,14 @@ export function AdminDashboard() {
             <ImageIcon size={13} strokeWidth={1.8} /> Homepage
           </button>
           <button
+            onClick={() => setTab('orders')}
+            className={`flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
+              tab === 'orders' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+            }`}
+          >
+            <ShoppingBag size={13} strokeWidth={1.8} /> Orders
+          </button>
+          <button
             onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); void loadSettings(); }}
             className={`flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
               tab === 'settings' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
@@ -239,6 +266,14 @@ export function AdminDashboard() {
             <ImageIcon size={16} strokeWidth={1.8} /> Homepage
           </button>
           <button
+            onClick={() => { setTab('orders'); setEditingId(null); setCreating(false); }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
+              tab === 'orders' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+            }`}
+          >
+            <ShoppingBag size={16} strokeWidth={1.8} /> Orders
+          </button>
+          <button
             onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); void loadSettings(); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
               tab === 'settings' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
@@ -272,7 +307,7 @@ export function AdminDashboard() {
         {/* Top bar */}
         <header className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-line px-4 sm:px-6 h-12 sm:h-14 flex items-center justify-between gap-3">
           <h1 className="font-display text-lg sm:text-2xl tracking-wide-2 text-bone uppercase">
-            {tab === 'products' ? 'Products' : tab === 'hero' ? 'Homepage' : 'Wholesale Settings'}
+            {tab === 'products' ? 'Products' : tab === 'hero' ? 'Homepage' : tab === 'orders' ? 'Wholesale Orders' : 'Wholesale Settings'}
           </h1>
           {tab === 'products' && !creating && !editingProduct && (
             <button
@@ -351,6 +386,14 @@ export function AdminDashboard() {
               orderMinReady={orderMinReady}
               onLoad={loadSettings}
               onSave={async (s) => { await adminSaveSiteSettings(s); setSettings(s); await loadSiteSettingsCache(); }}
+            />
+          )}
+
+          {tab === 'orders' && (
+            <OrdersTab
+              orders={orders}
+              error={ordersError}
+              onLoad={loadOrders}
             />
           )}
         </div>
@@ -1652,7 +1695,7 @@ function SettingsForm({
             <p className="font-label text-lg uppercase tracking-wide-2 text-grey mb-2">Wholesale settings unavailable</p>
             <p className="text-sm text-grey">{error}</p>
             <p className="mt-3 text-xs text-grey">
-              Apply the migration <code className="bg-paper-2 px-1 py-0.5 rounded">20260827010000_dslang_wholesale_site_control.sql</code> in the Supabase SQL editor first.
+              Apply the migration <code className="bg-paper-2 px-1 py-0.5 rounded">20260827030000_dslang_color_packs_orders.sql</code> in the Supabase SQL editor first.
             </p>
           </>
         ) : (
@@ -1673,16 +1716,28 @@ function SettingsForm({
       setLocalError('Displayed MOQ must be at least 1 PCS.');
       return;
     }
-    if (!form.min_order_quantity || form.min_order_quantity < 1) {
-      setLocalError('Order minimum must be at least 1 PCS.');
+    if (!form.pack_size || form.pack_size < 1) {
+      setLocalError('Pieces per pack must be at least 1 PCS.');
       return;
     }
-    if (!form.per_color_minimum || form.per_color_minimum < 1) {
-      setLocalError('Per-color minimum must be at least 1 PCS.');
+    if (Math.floor(form.pack_m) < 0 || Math.floor(form.pack_l) < 0 || Math.floor(form.pack_xl) < 0) {
+      setLocalError('Pack size breakdown cannot be negative.');
       return;
     }
-    if (form.min_order_quantity < form.per_color_minimum) {
-      setLocalError('The order minimum must not be lower than the per-color minimum.');
+    if (Math.floor(form.pack_m) + Math.floor(form.pack_l) + Math.floor(form.pack_xl) !== Math.floor(form.pack_size)) {
+      setLocalError('M + L + XL per pack must add up to the pieces per pack (e.g. 2 + 2 + 2 = 6).');
+      return;
+    }
+    if (!form.min_order_quantity || form.min_order_quantity < Math.floor(form.pack_size)) {
+      setLocalError(`Order minimum must be at least the pack size (${Math.floor(form.pack_size)} PCS).`);
+      return;
+    }
+    if (form.min_order_quantity % Math.floor(form.pack_size) !== 0) {
+      setLocalError('Order minimum must be a whole multiple of the pack size.');
+      return;
+    }
+    if (Number(form.wholesale_price_50 ?? 0) < 0 || Number(form.wholesale_price_100 ?? 0) < 0) {
+      setLocalError('Wholesale prices cannot be negative.');
       return;
     }
     setBusy(true);
@@ -1694,7 +1749,12 @@ function SettingsForm({
         whatsapp_number: whats,
         default_moq: Math.floor(form.default_moq),
         min_order_quantity: Math.floor(form.min_order_quantity),
-        per_color_minimum: Math.floor(form.per_color_minimum),
+        pack_size: Math.floor(form.pack_size),
+        pack_m: Math.floor(form.pack_m),
+        pack_l: Math.floor(form.pack_l),
+        pack_xl: Math.floor(form.pack_xl),
+        wholesale_price_50: Number(form.wholesale_price_50 ?? 0),
+        wholesale_price_100: Number(form.wholesale_price_100 ?? 0),
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -1742,17 +1802,39 @@ function SettingsForm({
 
       {orderMinReady && (
         <div className="border-t border-line pt-4">
-          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Order Minimums</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Order Minimums &amp; Color Packs</h3>
+          <p className="text-xs text-grey mb-3">
+            Buyers order in whole color packs: 1 pack = fixed mix of sizes. Sizes are never sold separately.
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
             <Field label="Order Minimum (PCS)" hint="Hard acceptance floor for the total order">
               <NumInput value={form.min_order_quantity} onChange={(n) => setForm({ ...form, min_order_quantity: n ?? 48 })} className={inputCls} placeholder="48" />
             </Field>
-            <Field label="Per-Color Minimum (PCS)" hint="Minimum per included color (M/L/XL mix)">
-              <NumInput value={form.per_color_minimum} onChange={(n) => setForm({ ...form, per_color_minimum: n ?? 6 })} className={inputCls} placeholder="6" />
+            <Field label="Pieces per Pack" hint="Total PCS in one color pack">
+              <NumInput value={form.pack_size} onChange={(n) => setForm({ ...form, pack_size: n ?? 6 })} className={inputCls} placeholder="6" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-3 gap-3 sm:gap-4 mt-3">
+            <Field label="M per pack">
+              <NumInput value={form.pack_m} onChange={(n) => setForm({ ...form, pack_m: n ?? 2 })} className={inputCls} placeholder="2" />
+            </Field>
+            <Field label="L per pack">
+              <NumInput value={form.pack_l} onChange={(n) => setForm({ ...form, pack_l: n ?? 2 })} className={inputCls} placeholder="2" />
+            </Field>
+            <Field label="XL per pack">
+              <NumInput value={form.pack_xl} onChange={(n) => setForm({ ...form, pack_xl: n ?? 2 })} className={inputCls} placeholder="2" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mt-3">
+            <Field label="Global 50+ PCS Price (₹/PC)" hint="Fallback when a product has no per-product price">
+              <NumInput value={form.wholesale_price_50} onChange={(n) => setForm({ ...form, wholesale_price_50: n ?? 0 })} className={inputCls} placeholder="0" />
+            </Field>
+            <Field label="Global 100+ PCS Price (₹/PC)" hint="Fallback when a product has no per-product price">
+              <NumInput value={form.wholesale_price_100} onChange={(n) => setForm({ ...form, wholesale_price_100: n ?? 0 })} className={inputCls} placeholder="0" />
             </Field>
           </div>
           <p className="mt-2 text-xs text-grey">
-            Buyers must reach the order minimum in total while keeping every included color at or above the per-color minimum.
+            Pack sizes must add to the pieces per pack (2 + 2 + 2 = 6). The order minimum must be a whole multiple of the pack size. Product-level 50+/100+ prices override the globals.
           </p>
         </div>
       )}
@@ -1767,9 +1849,141 @@ function SettingsForm({
       </div>
 
       <p className="text-xs text-grey pt-2 border-t border-line">
-        Product-level MOQ overrides the displayed MOQ when set. Buyers can place orders from the order minimum (48 PCS by default) even when the displayed MOQ is higher. Changes go live on save.
+        Product-level MOQ overrides the displayed MOQ when set. Buyers order in whole color packs and can place orders from the order minimum (48 PCS by default). Changes go live on save.
       </p>
     </form>
+  );
+}
+
+/* ---- Wholesale Orders ---- */
+
+function OrdersTab({
+  orders,
+  error,
+  onLoad,
+}: {
+  orders: WholesaleOrderRow[] | null;
+  error: string;
+  onLoad: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const reload = async () => {
+    setBusy(true);
+    try {
+      await onLoad();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (orders === null) {
+    return (
+      <div className="max-w-4xl bg-white border border-line rounded p-6">
+        {error ? (
+          <>
+            <p className="font-label text-lg uppercase tracking-wide-2 text-grey mb-2">Orders unavailable</p>
+            <p className="text-sm text-grey">{error}</p>
+            <p className="mt-3 text-xs text-grey">
+              Apply the migration <code className="bg-paper-2 px-1 py-0.5 rounded">20260827030000_dslang_color_packs_orders.sql</code> in the Supabase SQL editor to enable order logging.
+            </p>
+            <button
+              onClick={reload}
+              className="mt-4 inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors"
+            >
+              Retry
+            </button>
+          </>
+        ) : (
+          <div className="space-y-3">
+            <div className="h-20 bg-paper-3 rounded animate-pulse" />
+            <div className="h-20 bg-paper-3 rounded animate-pulse" />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (orders.length === 0) {
+    return (
+      <div className="max-w-4xl bg-white border border-line rounded p-6 text-center">
+        <ShoppingBag size={40} className="text-line mx-auto mb-3" strokeWidth={1} />
+        <p className="font-label text-lg uppercase tracking-wide-2 text-grey">No orders yet</p>
+        <p className="mt-1 text-sm text-grey">
+          Orders placed through the storefront appear here with their color-pack breakdown. Buyers are asked to log the order before it opens on WhatsApp.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-5xl space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-grey">{orders.length} order{orders.length !== 1 ? 's' : ''} recorded</p>
+        <button
+          onClick={reload}
+          disabled={busy}
+          className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson transition-colors disabled:opacity-50"
+        >
+          {busy ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+
+      {orders.map((order) => {
+        const created = new Date(order.created_at);
+        const seller = order.seller;
+        return (
+          <div key={order.id} className="bg-white border border-line rounded overflow-hidden">
+            <div className="flex items-center justify-between gap-3 flex-wrap px-4 sm:px-5 py-3 border-b border-line bg-paper-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="font-label text-xs uppercase tracking-wide-2 text-bone font-semibold">
+                  {order.ref}
+                </span>
+                <span className="font-label text-[10px] uppercase tracking-wide-2 text-grey">
+                  {created.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}{' '}
+                  {created.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded bg-crimson/10 text-crimson font-label text-[10px] uppercase tracking-wide-2 font-semibold">
+                  {order.status}
+                </span>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Total</p>
+                  <p className="font-price text-sm text-bone tabular-nums">{order.total_qty} PCS</p>
+                </div>
+                <div className="text-right">
+                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Amount</p>
+                  <p className="font-price text-sm text-crimson tabular-nums">₹{order.total_amount.toLocaleString('en-IN')}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-4 sm:px-5 py-3">
+              {(Array.isArray(order.lines) ? order.lines : []).map((line, li) => (
+                <div key={li} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+                  <div className="min-w-0">
+                    <p className="text-bone truncate">{line.name} <span className="text-grey">({line.code})</span></p>
+                    <p className="text-xs text-grey mt-0.5">
+                      {line.color}{line.color_hex ? ` · ${line.color_hex}` : ''} — {line.packs} pack{line.packs !== 1 ? 's' : ''} · {line.m} M / {line.l} L / {line.xl} XL · {line.qty} PCS
+                    </p>
+                  </div>
+                  <span className="font-label text-[11px] uppercase tracking-wide-2 text-bone-dim shrink-0 tabular-nums">
+                    ₹{line.qty * (line.price50 || 0)} (₹{line.price50 || 0}/PC)
+                  </span>
+                </div>
+              ))}
+
+              {seller && (seller.business_name || seller.phone || seller.city) && (
+                <p className="mt-2 pt-2 border-t border-line text-xs text-grey">
+                  Seller: {[seller.business_name, seller.phone, seller.city].filter(Boolean).join(' · ')}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

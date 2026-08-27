@@ -163,18 +163,16 @@ export interface WholesaleSlabs {
   price100: number;
 }
 
-/**
- * Wholesale slab pricing for a product. Uses the per-product DB values when
- * present; otherwise derives a sensible wholesale reference from the retail
- * price so the site always renders something useful.
+/** Wholesale slab pricing for a product. Uses the per-product DB values when
+ * present; otherwise falls back to the admin-controlled global site defaults.
+ * Never derives a price — the "—" states in the UI mean the admin hasn't set a
+ * price for this tier yet.
  */
 export function getWholesaleSlabs(product: ProductRow | CatalogProduct): WholesaleSlabs {
-  const moq = Number(product.moq ?? 0) || getSiteSettings().default_moq;
-  const base = Number(product.price50 ?? 0) || 0;
-  const price50 = base > 0 ? base : 0;
-  const price100 =
-    Number(product.price100 ?? 0) ||
-    (price50 > 0 ? Math.max(price50 - WHOLESALE_TIER_DISCOUNT_STEP, Math.round((price50 * 0.96) / 5) * 5) : 0);
+  const settings = getSiteSettings();
+  const moq = Number(product.moq ?? 0) || settings.default_moq;
+  const price50 = Number(product.price50 ?? 0) || settings.wholesale_price_50 || 0;
+  const price100 = Number(product.price100 ?? 0) || settings.wholesale_price_100 || 0;
   return { moq, price50, price100 };
 }
 
@@ -187,26 +185,66 @@ export interface WholesaleTierState {
 }
 
 export function getWholesaleTier(totalQty: number, slabs: WholesaleSlabs): WholesaleTierState {
+  const minQty = getSiteSettings().min_order_quantity;
   if (totalQty >= WHOLESALE_TIER_100 && slabs.price100 > 0) {
     return { tier: '100', unitPrice: slabs.price100, total: slabs.price100 * totalQty };
   }
-  if (totalQty >= slabs.moq) {
+  if (totalQty >= minQty && slabs.price50 > 0) {
     return { tier: '50', unitPrice: slabs.price50, total: slabs.price50 * totalQty };
   }
   return { tier: 'below-moq', unitPrice: slabs.price50, total: slabs.price50 * totalQty };
 }
 
-/** A single requested stock-keeping unit of a wholesale order. */
+/* ---- Fixed color-pack model ---- */
+
+export interface PackConfig {
+  packSize: number; // pieces in one pack of a color (6)
+  m: number; // M pieces per pack (2)
+  l: number; // L pieces per pack (2)
+  xl: number; // XL pieces per pack (2)
+}
+
+/** The admin-controlled fixed color-pack ratio (source of truth: site_settings). */
+export function getPackConfig(): PackConfig {
+  const s = getSiteSettings();
+  return {
+    packSize: Math.max(1, s.pack_size || 6),
+    m: Math.max(0, s.pack_m || 0),
+    l: Math.max(0, s.pack_l || 0),
+    xl: Math.max(0, s.pack_xl || 0),
+  };
+}
+
+export interface PackQuantities {
+  packs: number;
+  m: number;
+  l: number;
+  xl: number;
+  qty: number; // packs * packSize
+}
+
+/** Derives the fixed size quantities and total pieces from a whole pack count. */
+export function packToQuantities(packs: number, cfg: PackConfig = getPackConfig()): PackQuantities {
+  const p = Math.max(0, Math.floor(packs));
+  return { packs: p, m: p * cfg.m, l: p * cfg.l, xl: p * cfg.xl, qty: p * cfg.packSize };
+}
+
+/** A single requested color-pack line of a wholesale order. */
 export interface WholesaleSkuLine {
+  productId: string;
   name: string;
   code: string;
   color: string;
-  size: string;
-  qty: number;
-  price50: number;
-  price100: number;
+  colorHex: string;
   image: string;
   slug: string;
+  packs: number;
+  m: number;
+  l: number;
+  xl: number;
+  qty: number; // packs * packSize
+  price50: number;
+  price100: number;
 }
 
 export interface WholesaleWhatsAppPayload {
@@ -215,6 +253,7 @@ export interface WholesaleWhatsAppPayload {
   phone?: string;
   city?: string;
   note?: string;
+  orderRef?: string;
 }
 
 export interface WholesaleOrderSummary {
@@ -224,21 +263,30 @@ export interface WholesaleOrderSummary {
 }
 
 /**
- * Builds a wholesale order summary/message from a set of SKU lines.
- * The per-piece price for each product depends on that product's own quantity
- * (100+ PCS = price100 slab, otherwise the 50-PCS slab).
+ * Builds a wholesale order summary from a set of color-pack lines.
+ * The per-piece price for each product depends on that product's own total
+ * quantity (100+ PCS = price100 slab, otherwise the 50-PCS slab).
  */
 export function summarizeWholesale(lines: WholesaleSkuLine[]): WholesaleOrderSummary {
   let totalQty = 0;
   const tiers: Record<string, number> = {};
   let total = 0;
 
+  const byProduct = new Map<string, { qty: number; price50: number; price100: number }>();
   for (const line of lines) {
-    if (line.qty <= 0) continue;
+    if (line.packs <= 0) continue;
+    if (!byProduct.has(line.productId)) byProduct.set(line.productId, { qty: 0, price50: line.price50, price100: line.price100 });
+    byProduct.get(line.productId)!.qty += line.qty;
     totalQty += line.qty;
-    const unit = line.qty >= WHOLESALE_TIER_100 && line.price100 > 0 ? line.price100 : line.price50;
+  }
+
+  for (const [productId, group] of byProduct) {
+    const unit = group.qty >= WHOLESALE_TIER_100 && group.price100 > 0 ? group.price100 : group.price50;
+    if (unit <= 0) continue;
     tiers[String(unit)] = unit;
-    total += unit * line.qty;
+    for (const line of lines) {
+      if (line.productId === productId) total += unit * line.qty;
+    }
   }
 
   return {
@@ -251,27 +299,27 @@ export function summarizeWholesale(lines: WholesaleSkuLine[]): WholesaleOrderSum
   };
 }
 
+const PACK_LABELS = ['M', 'L', 'XL'] as const;
+
+function packForLine(line: WholesaleSkuLine): string {
+  const parts = PACK_LABELS.map((label) => {
+    const qty = label === 'M' ? line.m : label === 'L' ? line.l : line.xl;
+    return `${qty} ${label}`;
+  });
+  return parts.join(' · ');
+}
+
 function formatBreakdown(lines: WholesaleSkuLine[]): string {
-  const order: Record<string, Record<string, number>> = {};
-  const sizeOrder = SIZE_LABELS as readonly string[];
-  for (const line of lines) {
-    if (line.qty <= 0) continue;
-    if (!order[line.color]) order[line.color] = {};
-    order[line.color][line.size] = (order[line.color][line.size] ?? 0) + line.qty;
-  }
-  return Object.entries(order)
-    .map(([color, sizes]) => {
-      const parts = sizeOrder
-        .filter((s) => sizes[s] > 0)
-        .map((s) => `${s} — ${sizes[s]}`);
-      return `  ${color}: ${parts.join(' | ')}`;
-    })
+  return lines
+    .filter((l) => l.packs > 0)
+    .map((line) => `  ${line.color}: ${line.packs} pack${line.packs > 1 ? 's' : ''} (${packForLine(line)}) — ${line.qty} PCS`)
     .join('\n');
 }
 
 /**
  * Pre-filled WhatsApp message for a wholesale order (product page or cart).
- * Includes real product, per-color size breakdown, applicable tier, and total.
+ * Includes the stored order reference when one exists, the per-color pack
+ * breakdown, applied tier and total.
  */
 export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): string {
   const summary = summarizeWholesale(payload.lines);
@@ -286,46 +334,47 @@ export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): st
 
   const productBlocks = new Map<string, WholesaleSkuLine[]>();
   for (const line of payload.lines) {
-    if (line.qty <= 0) continue;
-    const key = line.name;
+    if (line.packs <= 0) continue;
+    const key = line.productId || line.name;
     if (!productBlocks.has(key)) productBlocks.set(key, []);
     productBlocks.get(key)!.push(line);
   }
 
   const productText = [...productBlocks.entries()]
-    .map(([name, block]) => {
-      const unit = summarizeWholesale(block).totalQty >= WHOLESALE_TIER_100 && block[0].price100 > 0
-        ? block[0].price100
-        : block[0].price50;
+    .map(([id, block]) => {
+      const blockSummary = summarizeWholesale(block);
+      const unit = blockSummary.tiers[0]?.unitPrice ?? 0;
+      const first = block[0];
       return [
-        `Product: ${name} (${block[0].code})`,
+        `Product: ${first.name} (${first.code})`,
         `Breakdown:`,
         formatBreakdown(block),
-        `Qty: ${summarizeWholesale(block).totalQty} PCS`,
-        `Rate: ₹\u2009${unit.toLocaleString('en-IN')}/PC`,
+        `Qty: ${blockSummary.totalQty} PCS`,
+        unit > 0 ? `Rate: ₹\u2009${unit.toLocaleString('en-IN')}/PC` : null,
         '',
-      ].join('\n');
+      ].filter(Boolean).join('\n');
     })
     .join('\n');
 
-  const rep = payload.lines.find((l) => l.qty > 0);
-  const appliedRate = rep
-    ? (summary.totalQty >= WHOLESALE_TIER_100 && rep.price100 > 0 ? rep.price100 : rep.price50)
-    : 0;
-
+  const rep = payload.lines.find((l) => l.packs > 0);
+  const orderable = summary.totalQty >= settings.min_order_quantity;
   const message = [
-    ...(payload.businessName || payload.phone ? [`Hi DSLANG, wholesale order request:`] : ['Hi DSLANG, I am interested in a wholesale order:']),
+    ...(payload.businessName || payload.phone
+      ? [`Hi DSLANG, wholesale order${payload.orderRef ? ` #${payload.orderRef}` : ''} request:`]
+      : [`Hi DSLANG, I am interested in a wholesale order${payload.orderRef ? ` (Ref #${payload.orderRef})` : ''}:`]),
     '',
-    ...(payload.businessName || payload.phone ? [] : [`Please share the catalogue and confirm availability.`]),
     productText.trim(),
     `Total Quantity: ${summary.totalQty} PCS`,
-    summary.totalQty >= settings.min_order_quantity
+    orderable
       ? `Wholesale Pricing: ${summary.tiers.map((t) => t.name).join(' / ')}`
       : `Minimum order acceptance from ${settings.min_order_quantity} PCS (MOQ ${settings.default_moq} PCS).`,
-    rep && appliedRate > 0 ? `Applicable Wholesale Price: ₹\u2009${appliedRate.toLocaleString('en-IN')}/PC` : null,
-    `Order Total: ₹\u2009${summary.total.toLocaleString('en-IN')}`,
+    rep && orderable ? `Applicable Wholesale Price: ₹\u2009${(rep.qty >= WHOLESALE_TIER_100 && rep.price100 > 0 ? rep.price100 : rep.price50).toLocaleString('en-IN')}/PC` : null,
+    rep && orderable ? `Order Total: ₹\u2009${summary.total.toLocaleString('en-IN')}` : null,
     ...(sellerDetails ? ['', 'My Details:', sellerDetails] : []),
     '',
+    payload.orderRef
+      ? `Order reference #${payload.orderRef} has been logged with DSLANG.`
+      : null,
     'Please confirm availability and order details.',
   ].filter(Boolean).join('\n');
 

@@ -1,4 +1,4 @@
-import { getWholesaleSlabs, getAvailableSizes, formatPerUnit, type CatalogProduct } from '@/lib/catalog';
+import { getWholesaleSlabs, getPackConfig, formatPerUnit, type CatalogProduct } from '@/lib/catalog';
 import type { ProductColorRow } from '@/lib/types';
 import { linkHref } from '@/lib/router';
 
@@ -7,7 +7,7 @@ export function ProductCard({ product, index = 0 }: { product: CatalogProduct; i
   const image = primary?.images[0];
   const hoverImage = primary?.images[1] ?? primary?.images[0];
   const slabs = getWholesaleSlabs(product);
-  const sizeLabels = getAvailableSizes(product);
+  const packCfg = getPackConfig();
 
   return (
     <a
@@ -58,7 +58,6 @@ export function ProductCard({ product, index = 0 }: { product: CatalogProduct; i
           {product.colors.length > 0 && (
             <span className="font-label text-[10px] font-normal uppercase tracking-wide-2 text-grey">
               {product.colors.length} {product.colors.length === 1 ? 'Color' : 'Colors'}
-              {sizeLabels.length > 0 ? ` · ${sizeLabels.join(' / ')}` : ''}
             </span>
           )}
         </div>
@@ -67,6 +66,9 @@ export function ProductCard({ product, index = 0 }: { product: CatalogProduct; i
           <div className="flex items-baseline gap-2">
             <span className="font-label text-[12px] uppercase tracking-wide-2 font-bold text-bone">
               MOQ {slabs.moq} PCS
+            </span>
+            <span className="font-label text-[10px] uppercase tracking-wide-2 text-grey">
+              · {packCfg.packSize} PCS / pack
             </span>
           </div>
           <div className="mt-1.5">

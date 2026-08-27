@@ -8,9 +8,16 @@ export interface SiteSettings {
   default_moq: number;
   dispatch_note: string;
   delivery_note: string;
-  // Wholesale order minimums (admin-controlled)
+  // Hard acceptance floor for the total order (48 PCS by default)
   min_order_quantity: number;
-  per_color_minimum: number;
+  // Fixed color-pack ratio: 1 color pack = pack_size pieces split across sizes
+  pack_size: number;
+  pack_m: number;
+  pack_l: number;
+  pack_xl: number;
+  // Global per-piece wholesale prices (per-product values override these)
+  wholesale_price_50: number;
+  wholesale_price_100: number;
 }
 
 export const DEFAULT_SETTINGS: SiteSettings = {
@@ -21,7 +28,12 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   dispatch_note: 'Same Day Dispatch',
   delivery_note: 'Pan India',
   min_order_quantity: 48,
-  per_color_minimum: 6,
+  pack_size: 6,
+  pack_m: 2,
+  pack_l: 2,
+  pack_xl: 2,
+  wholesale_price_50: 0,
+  wholesale_price_100: 0,
 };
 
 // Module-level cache so synchronous builders (WhatsApp URLs, MOQ gates) can
@@ -56,7 +68,12 @@ export async function fetchSiteSettings(): Promise<SiteSettings> {
         dispatch_note?: string | null;
         delivery_note?: string | null;
         min_order_quantity?: number | null;
-        per_color_minimum?: number | null;
+        pack_size?: number | null;
+        pack_m?: number | null;
+        pack_l?: number | null;
+        pack_xl?: number | null;
+        wholesale_price_50?: number | null;
+        wholesale_price_100?: number | null;
       }
     | null;
 
@@ -70,7 +87,12 @@ export async function fetchSiteSettings(): Promise<SiteSettings> {
     dispatch_note: row.dispatch_note ?? DEFAULT_SETTINGS.dispatch_note,
     delivery_note: row.delivery_note ?? DEFAULT_SETTINGS.delivery_note,
     min_order_quantity: Number(row.min_order_quantity ?? 0) || DEFAULT_SETTINGS.min_order_quantity,
-    per_color_minimum: Number(row.per_color_minimum ?? 0) || DEFAULT_SETTINGS.per_color_minimum,
+    pack_size: Number(row.pack_size ?? 0) || DEFAULT_SETTINGS.pack_size,
+    pack_m: Number(row.pack_m ?? 0) || DEFAULT_SETTINGS.pack_m,
+    pack_l: Number(row.pack_l ?? 0) || DEFAULT_SETTINGS.pack_l,
+    pack_xl: Number(row.pack_xl ?? 0) || DEFAULT_SETTINGS.pack_xl,
+    wholesale_price_50: Number(row.wholesale_price_50 ?? 0) || 0,
+    wholesale_price_100: Number(row.wholesale_price_100 ?? 0) || 0,
   };
 
   cachedSettings = settings;

@@ -1,4 +1,4 @@
-import { X, Minus, Plus, Trash2, MessageCircle, ShoppingBag, AlertTriangle } from 'lucide-react';
+import { X, Minus, Plus, Trash2, MessageCircle, ShoppingBag, AlertTriangle, Loader2 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useCart } from '@/lib/cart';
 import {
@@ -8,27 +8,34 @@ import {
   type WholesaleSkuLine,
 } from '@/lib/catalog';
 import { useSiteSettings } from '@/lib/settings';
+import { supabase } from '@/lib/supabase';
 import { linkHref } from '@/lib/router';
 
 export function CartDrawer() {
   const { items, isOpen, close, removeItem, updateQty, count, clear } = useCart();
   const [showForm, setShowForm] = useState(false);
   const [seller, setSeller] = useState({ businessName: '', phone: '', city: '' });
+  const [submitting, setSubmitting] = useState(false);
   const autoCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { settings } = useSiteSettings();
   const moq = settings.default_moq;
   const minOrderQty = settings.min_order_quantity;
 
   const lines: WholesaleSkuLine[] = items.map((i) => ({
+    productId: i.productId,
     name: i.name,
     code: i.code,
     color: i.color,
-    size: i.size,
+    colorHex: i.colorHex,
+    image: i.image,
+    slug: i.slug,
+    packs: i.packs,
+    m: i.m,
+    l: i.l,
+    xl: i.xl,
     qty: i.qty,
     price50: i.price50,
     price100: i.price100,
-    image: i.image,
-    slug: i.slug,
   }));
   const summary = summarizeWholesale(lines);
   const belowMoaq = summary.totalQty < minOrderQty;
@@ -37,6 +44,7 @@ export function CartDrawer() {
   useEffect(() => {
     if (!isOpen) {
       setShowForm(false);
+      setSubmitting(false);
       setSeller({ businessName: '', phone: '', city: '' });
     }
   }, [isOpen]);
@@ -78,20 +86,53 @@ export function CartDrawer() {
     };
   }, [isOpen, items.length, close]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (items.length === 0 || belowMoaq) return;
+    setSubmitting(true);
+    let orderRef: string | undefined;
+    try {
+      const { data, error } = await supabase.rpc('create_wholesale_order', {
+        p_lines: lines.map((l) => ({
+          product_id: l.productId,
+          name: l.name,
+          code: l.code,
+          color: l.color,
+          color_hex: l.colorHex,
+          image: l.image,
+          slug: l.slug,
+          packs: l.packs,
+          m: l.m,
+          l: l.l,
+          xl: l.xl,
+          qty: l.qty,
+          price50: l.price50,
+          price100: l.price100,
+        })),
+        p_seller:
+          seller.businessName || seller.phone || seller.city
+            ? { business_name: seller.businessName, phone: seller.phone, city: seller.city }
+            : {},
+      });
+      if (!error && data && typeof data.ref === 'string' && data.ref) {
+        orderRef = `DSLANG-W-${data.ref}`;
+      }
+    } catch {
+      // Order logging is best-effort — WhatsApp ordering still proceeds.
+    }
     const url = buildWholesaleWhatsAppUrl({
       lines,
       businessName: seller.businessName || undefined,
       phone: seller.phone || undefined,
       city: seller.city || undefined,
+      orderRef,
     });
     window.open(url, '_blank', 'noopener,noreferrer');
+    setSubmitting(false);
     setShowForm(false);
     close();
   };
 
-  // Group items per product, then per color for display. Each group records
+  // Group items per product for display, then per color. Each group records
   // the global cart index of its first line so edits map back to the real item.
   const groups: { productId: string; productItems: typeof items; startIndex: number }[] = [];
   {
@@ -182,35 +223,48 @@ export function CartDrawer() {
                         </p>
                       </div>
                     </div>
-                    {/* Per color / size breakdown */}
+                    {/* Per color pack breakdown */}
                     {productItems.map((item, itemIdx) => {
                       const globalIdx = startIndex + itemIdx;
                       return (
-                        <div key={`${item.color}-${item.size}`} className="mt-3 flex items-center justify-between gap-2">
-                          <span className="text-xs text-bone-dim truncate">
-                            {item.color} · Size {item.size}
+                        <div key={`${item.color}`} className="mt-3 flex items-center justify-between gap-2">
+                          <span className="flex items-center gap-2 min-w-0">
+                            <span className="w-2.5 h-2.5 border border-line shrink-0" style={{ backgroundColor: item.colorHex }} />
+                            <span className="text-xs text-bone-dim truncate">
+                              {item.color}
+                              {item.packs > 0 && (
+                                <span className="text-grey"> — {item.m} M · {item.l} L · {item.xl} XL</span>
+                              )}
+                            </span>
                           </span>
                           <div className="inline-flex items-center border border-line shrink-0">
                             <button
-                              onClick={() => updateQty(globalIdx, item.qty - 1)}
-                              className="w-7 h-7 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors"
-                              aria-label="Decrease quantity"
+                              onClick={() => (item.packs <= 1 ? removeItem(globalIdx) : updateQty(globalIdx, item.packs - 1))}
+                              disabled={submitting}
+                              className="w-7 h-7 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                              aria-label="Decrease packs"
                             >
                               <Minus size={12} strokeWidth={2} />
                             </button>
-                            <span className="w-8 text-center text-sm font-medium tabular-nums">{item.qty}</span>
+                            <span className="w-8 text-center text-sm font-medium tabular-nums">
+                              {item.packs}
+                            </span>
                             <button
-                              onClick={() => updateQty(globalIdx, item.qty + 1)}
-                              disabled={item.qty >= item.stock}
+                              onClick={() => updateQty(globalIdx, item.packs + 1)}
+                              disabled={submitting}
                               className="w-7 h-7 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                              aria-label="Increase quantity"
+                              aria-label="Increase packs"
                             >
                               <Plus size={12} strokeWidth={2} />
                             </button>
                           </div>
+                          <span className="w-12 text-right text-xs font-medium tabular-nums text-bone shrink-0">
+                            {item.qty} PCS
+                          </span>
                           <button
                             onClick={() => removeItem(globalIdx)}
-                            className="text-grey hover:text-crimson transition-colors p-1 shrink-0"
+                            disabled={submitting}
+                            className="text-grey hover:text-crimson transition-colors p-1 shrink-0 disabled:opacity-30"
                             aria-label="Remove line"
                           >
                             <Trash2 size={14} strokeWidth={1.6} />
@@ -258,7 +312,7 @@ export function CartDrawer() {
                 <div className="flex items-start gap-2 rounded border border-crimson/30 bg-crimson/5 px-3 py-3">
                   <AlertTriangle size={16} className="text-crimson mt-0.5 shrink-0" strokeWidth={1.8} />
                   <p className="text-xs text-crimson leading-relaxed">
-                    Order acceptance starts from {minOrderQty} PCS (MOQ {moq} PCS). Add {minOrderQty - summary.totalQty} more PCS across colors and sizes to place your order.
+                    Order acceptance starts from {minOrderQty} PCS (MOQ {moq} PCS). Add {minOrderQty - summary.totalQty} more PCS across colors to place your order.
                   </p>
                 </div>
               )}
@@ -283,10 +337,11 @@ export function CartDrawer() {
               {showForm && (
                 <button
                   onClick={handleSubmit}
-                  className="w-full inline-flex items-center justify-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 rounded hover:bg-ink transition-colors"
+                  disabled={submitting}
+                  className="w-full inline-flex items-center justify-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 rounded hover:bg-ink transition-colors disabled:opacity-60"
                 >
-                  <MessageCircle size={18} strokeWidth={2} />
-                  Confirm &amp; Send on WhatsApp
+                  {submitting ? <Loader2 size={18} strokeWidth={2} className="animate-spin" /> : <MessageCircle size={18} strokeWidth={2} />}
+                  {submitting ? 'Logging order…' : 'Confirm & Send on WhatsApp'}
                 </button>
               )}
               <a

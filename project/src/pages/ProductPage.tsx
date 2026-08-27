@@ -4,9 +4,10 @@ import { ProductCard } from '@/components/ProductCard';
 import {
   fetchProducts,
   fetchProduct,
-  getAvailableSizes,
   getWholesaleSlabs,
   getWholesaleTier,
+  getPackConfig,
+  packToQuantities,
   buildWholesaleWhatsAppUrl,
   formatPerUnit,
   formatPrice,
@@ -394,34 +395,34 @@ function LightboxViewer({
   );
 }
 
-/* ---- Wholesale Quantity Matrix ---- */
+/* ---- Wholesale Color-Pack Stepper ---- */
 
-function MatrixCell({
+function PackStepper({
   label,
-  qty,
-  onChange,
+  packs,
+  work,
 }: {
   label: string;
-  qty: number;
-  onChange: (qty: number) => void;
+  packs: number;
+  work: (next: number) => void;
 }) {
   return (
     <div className="inline-flex items-center border border-line bg-white">
       <button
-        onClick={() => onChange(Math.max(0, qty - 1))}
-        disabled={qty <= 0}
-        className="w-7 h-8 md:w-8 md:h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-        aria-label={`Decrease ${label}`}
+        onClick={() => work(Math.max(0, packs - 1))}
+        disabled={packs <= 0}
+        className="w-8 h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        aria-label={`Decrease ${label} packs`}
       >
         <Minus size={13} strokeWidth={2} />
       </button>
-      <span className="w-7 md:w-8 text-center text-sm font-semibold tabular-nums text-bone select-none">
-        {qty}
+      <span className="w-9 text-center text-sm font-semibold tabular-nums text-bone select-none">
+        {packs}
       </span>
       <button
-        onClick={() => onChange(qty + 1)}
-        className="w-7 h-8 md:w-8 md:h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors"
-        aria-label={`Increase ${label}`}
+        onClick={() => work(packs + 1)}
+        className="w-8 h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors"
+        aria-label={`Increase ${label} packs`}
       >
         <Plus size={13} strokeWidth={2} />
       </button>
@@ -437,7 +438,7 @@ export function ProductPage({ slug }: { slug: string }) {
   const [related, setRelated] = useState<CatalogProduct[]>([]);
 
   const [colorIdx, setColorIdx] = useState(0);
-  const [matrix, setMatrix] = useState<Record<string, Record<string, number>>>({});
+  const [packsByColor, setPacksByColor] = useState<Record<string, number>>({});
   const [imgIdx, setImgIdx] = useState(0);
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [addedFeedback, setAddedFeedback] = useState(false);
@@ -445,34 +446,21 @@ export function ProductPage({ slug }: { slug: string }) {
   const { addItem, open: openCart } = useCart();
   const { settings } = useSiteSettings();
 
-  const minPerColor = settings.per_color_minimum;
   const minOrderQty = settings.min_order_quantity;
 
   useEffect(() => {
     setProduct(undefined);
     setLoadError(false);
     setColorIdx(0);
-    setMatrix({});
+    setPacksByColor({});
     setImgIdx(0);
     fetchProduct(slug)
       .then((p) => {
         setProduct(p);
         if (p) {
-          const sizes = getAvailableSizes(p);
-          const perColor = getSiteSettings().per_color_minimum;
-          const base = sizes.length > 0 ? Math.floor(perColor / sizes.length) : 0;
-          const rem = sizes.length > 0 ? perColor % sizes.length : 0;
-          const init: Record<string, Record<string, number>> = {};
-          for (const c of p.colors) {
-            const map: Record<string, number> = {};
-            sizes.forEach((s, i) => {
-              map[s] = base + (i < rem ? 1 : 0);
-            });
-            init[c.id] = map;
-          }
-          setMatrix(init);
-          const firstColor = p.colors[0];
-          if (firstColor) setColorIdx(0);
+          const init: Record<string, number> = {};
+          for (const c of p.colors) init[c.id] = 0;
+          setPacksByColor(init);
           fetchProducts()
             .then((all) => setRelated(all.filter((x) => x.slug !== p.slug).slice(0, 3)))
             .catch(() => {});
@@ -537,52 +525,49 @@ export function ProductPage({ slug }: { slug: string }) {
 
   const slabs = getWholesaleSlabs(product);
   const moqDisplay = slabs.moq;
-  const availableSizes = getAvailableSizes(product);
-  const colsCls =
-    availableSizes.length === 3
-      ? 'grid-cols-[1.3fr_repeat(3,1fr)]'
-      : availableSizes.length === 2
-        ? 'grid-cols-[1.3fr_repeat(2,1fr)]'
-        : 'grid-cols-[1.3fr_1fr]';
+  const packCfg = getPackConfig();
 
-  const setCell = (colorId: string, size: string, qty: number) => {
-    setMatrix((prev) => ({ ...prev, [colorId]: { ...(prev[colorId] ?? {}), [size]: qty } }));
+  const setPacks = (colorIndex: number, packs: number) => {
+    const c = product.colors[colorIndex];
+    if (!c) return;
+    setPacksByColor((prev) => ({ ...prev, [c.id]: Math.max(0, Math.floor(packs)) }));
   };
 
-  const colorTotals = product.colors.map((c) => ({
-    color: c,
-    total: availableSizes.reduce((sum, s) => sum + (matrix[c.id]?.[s] ?? 0), 0),
-  }));
+  const colorLines = product.colors.map((c) => {
+    const packs = packsByColor[c.id] ?? 0;
+    return { color: c, ...packToQuantities(packs, packCfg) };
+  });
 
-  const totalQty = colorTotals.reduce((sum, c) => sum + c.total, 0);
-  const shortColors = colorTotals.filter((c) => c.total > 0 && c.total < minPerColor);
-  const colorsSelected = colorTotals.filter((c) => c.total > 0);
+  const totalQty = colorLines.reduce((sum, cl) => sum + cl.qty, 0);
   const belowMinTotal = totalQty > 0 && totalQty < minOrderQty;
-  const canOrder = totalQty >= minOrderQty && shortColors.length === 0;
+  const canOrder = totalQty >= minOrderQty;
 
   const tier = getWholesaleTier(totalQty, slabs);
 
   const buildLines = (): WholesaleSkuLine[] =>
-    product.colors.flatMap((c) =>
-      availableSizes
-        .map((size) => ({ color: c, size, qty: matrix[c.id]?.[size] ?? 0 }))
-        .filter(({ qty }) => qty > 0)
-        .map(({ color: c2, size, qty }) => ({
-          name: product.name,
-          code: product.code,
-          color: c2.name,
-          size,
-          qty,
-          price50: slabs.price50,
-          price100: slabs.price100,
-          image: c2.images[0] ?? '',
-          slug: product.slug,
-        }))
-    );
+    colorLines
+      .filter((cl) => cl.packs > 0)
+      .map((cl) => ({
+        productId: product.id,
+        name: product.name,
+        code: product.code,
+        color: cl.color.name,
+        colorHex: cl.color.hex,
+        image: cl.color.images[0] ?? '',
+        slug: product.slug,
+        packs: cl.packs,
+        m: cl.m,
+        l: cl.l,
+        xl: cl.xl,
+        qty: cl.qty,
+        price50: slabs.price50,
+        price100: slabs.price100,
+      }));
 
   const handleRequestOrder = () => {
     if (!canOrder) return;
     const lines = buildLines();
+    if (lines.length === 0) return;
     for (const line of lines) {
       addItem(
         {
@@ -590,15 +575,13 @@ export function ProductPage({ slug }: { slug: string }) {
           slug: product.slug,
           name: product.name,
           code: product.code,
-          price: slabs.price50,
           price50: slabs.price50,
           price100: slabs.price100,
           image: line.image,
           color: line.color,
-          size: line.size,
-          stock: 1e9,
+          colorHex: line.colorHex,
         },
-        line.qty
+        line.packs
       );
     }
     setAddedFeedback(true);
@@ -652,10 +635,39 @@ export function ProductPage({ slug }: { slug: string }) {
             </h1>
             <p className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey mt-1 lg:mt-1.5">{product.code}</p>
 
-            {/* Sizes / colors summary */}
-            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-4">
-              <Spec label="Sizes" value={availableSizes.join(' / ')} />
-              <Spec label="Colors" value={product.colors.map((c) => c.name).join(', ')} />
+            {/* Colors */}
+            <div className="mt-4 border-t border-line pt-4">
+              <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mb-2.5">
+                Colors — tap to preview
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {product.colors.map((c, i) => {
+                  const hasImages = c.images.filter((x) => x.trim()).length > 0;
+                  const selected = i === colorIdx;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      disabled={!hasImages}
+                      onClick={() => setColorIdx(i)}
+                      className={`inline-flex items-center gap-2 border px-3 py-2 text-[11px] uppercase tracking-wide-2 transition-colors ${
+                        selected
+                          ? 'border-crimson text-bone'
+                          : 'border-line text-grey hover:border-bone-dim hover:text-bone'
+                      } disabled:opacity-40 disabled:cursor-not-allowed`}
+                      title={c.name}
+                    >
+                      <span className="w-3 h-3 border border-line shrink-0" style={{ backgroundColor: c.hex }} />
+                      {c.name}
+                      {packsByColor[c.id] > 0 && (
+                        <span className="font-label text-[10px] tabular-nums">
+                          {packsByColor[c.id]} pack{packsByColor[c.id] !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Wholesale pricing */}
@@ -690,56 +702,53 @@ export function ProductPage({ slug }: { slug: string }) {
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-bone-soft leading-relaxed">
-                Mixed sizes &amp; colors. Every included color needs at least {minPerColor} PCS; the 100 PCS+ rate unlocks automatically.
+                Mixed colors allowed. Each color pack is fixed at {packCfg.packSize} PCS ({packCfg.m} M · {packCfg.l} L · {packCfg.xl} XL) — sizes are not sold separately.
               </p>
             </div>
 
-            {/* Wholesale quantity matrix */}
+            {/* Color pack selection */}
             <div className="mt-5">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
                 <span className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey">
-                  Wholesale Quantity
+                  Order in Color Packs
                 </span>
                 <span className="font-label text-[10px] uppercase tracking-wide-2 text-bone-soft">
-                  PCS per color &amp; size
+                  1 pack = {packCfg.packSize} PCS ({packCfg.m} M · {packCfg.l} L · {packCfg.xl} XL)
                 </span>
               </div>
-              <div className="border border-line overflow-hidden">
-                <div className={`grid ${colsCls} bg-paper-2 border-b border-line`}>
-                  <span className="px-3 py-2 font-label text-[10px] uppercase tracking-wide-2 text-grey">Color</span>
-                  {availableSizes.map((s) => (
-                    <span key={s} className="px-1 py-2 text-center font-label text-[11px] uppercase tracking-wide-2 text-bone font-semibold">
-                      {s}
-                    </span>
-                  ))}
-                </div>
+              <div className="border border-line divide-y divide-line">
                 {product.colors.map((c, i) => {
-                  const rowTotal = colorTotals[i].total;
+                  const line = colorLines[i];
+                  const selected = i === colorIdx;
+                  const hasImages = c.images.filter((x) => x.trim()).length > 0;
                   return (
-                    <div key={c.id} className={`grid ${colsCls} border-b border-line last:border-0`}>
-                      <div className="px-3 py-2 flex items-center gap-2 min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => setColorIdx(i)}
-                          className="flex items-center gap-2 min-w-0 text-left"
-                          title={`View ${c.name} images`}
-                        >
-                          <span className="w-3 h-3 border border-line shrink-0" style={{ backgroundColor: c.hex }} />
-                          <span className="text-[11px] md:text-xs text-bone truncate">{c.name}</span>
-                        </button>
-                        <span className={`shrink-0 ml-auto font-label text-[10px] tabular-nums ${rowTotal > 0 && rowTotal < minPerColor ? 'text-crimson' : 'text-grey'}`}>
-                          {rowTotal} PCS
+                    <div key={c.id} className="flex items-center gap-3 px-3 py-2.5 flex-wrap">
+                      <button
+                        type="button"
+                        disabled={!hasImages}
+                        onClick={() => setColorIdx(i)}
+                        className="flex items-center gap-2 min-w-0"
+                        title={hasImages ? `View ${c.name} images` : c.name}
+                      >
+                        <span
+                          className={`w-3 h-3 border shrink-0 ${selected ? 'border-crimson' : 'border-line'}`}
+                          style={{ backgroundColor: c.hex }}
+                        />
+                        <span className={`text-[11px] md:text-xs truncate ${selected ? 'text-bone font-semibold' : 'text-bone'}`}>
+                          {c.name}
                         </span>
-                      </div>
-                      {availableSizes.map((s) => (
-                        <div key={`${c.id}-${s}`} className="px-1 py-2">
-                          <MatrixCell
-                            label={`${c.name} ${s}`}
-                            qty={matrix[c.id]?.[s] ?? 0}
-                            onChange={(q) => setCell(c.id, s, q)}
-                          />
-                        </div>
-                      ))}
+                      </button>
+                      <PackStepper
+                        label={`${c.name} packs`}
+                        packs={line.packs}
+                        work={(next) => setPacks(i, next)}
+                      />
+                      <span className="font-label text-[10px] text-grey tabular-nums shrink-0">
+                        {line.packs > 0 ? `${line.m} M · ${line.l} L · ${line.xl} XL` : '—'}
+                      </span>
+                      <span className="ml-auto font-label text-[11px] tabular-nums text-bone font-semibold shrink-0">
+                        {line.qty} PCS
+                      </span>
                     </div>
                   );
                 })}
@@ -769,22 +778,16 @@ export function ProductPage({ slug }: { slug: string }) {
               <div className="mt-3 space-y-2">
                 {totalQty === 0 && (
                   <p className="font-label text-[11px] uppercase tracking-wide-2 text-bone-soft">
-                    Build a mix of {minOrderQty} PCS or more — each included color needs at least {minPerColor} PCS.
+                    Pick whole color packs to build your order — acceptance starts from {minOrderQty} PCS.
                   </p>
                 )}
-                {totalQty > 0 && shortColors.length > 0 && (
-                  <p className="flex items-start gap-2 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3">
-                    <AlertTriangle size={16} strokeWidth={1.8} className="shrink-0 mt-0.5" />
-                    <span>
-                      Every included color needs at least {minPerColor} PCS:{' '}
-                      {shortColors.map((sc) => `${sc.color.name} (${sc.total})`).join(', ')}. Add more to those colors to continue.
-                    </span>
-                  </p>
-                )}
-                {belowMinTotal && shortColors.length === 0 && (
+                {belowMinTotal && (
                   <p className="flex items-center gap-2 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3">
                     <AlertTriangle size={16} strokeWidth={1.8} className="shrink-0" />
-                    Order acceptance starts from {minOrderQty} PCS. Add {minOrderQty - totalQty} more PCS across any colors and sizes.
+                    <span>
+                      Order acceptance starts from {minOrderQty} PCS. Add {minOrderQty - totalQty} more PCS (
+                      {Math.ceil((minOrderQty - totalQty) / packCfg.packSize)} more pack{Math.ceil((minOrderQty - totalQty) / packCfg.packSize) !== 1 ? 's' : ''}) across any colors.
+                    </span>
                   </p>
                 )}
                 {canOrder && totalQty < 100 && (
@@ -822,7 +825,7 @@ export function ProductPage({ slug }: { slug: string }) {
               </button>
               {!canOrder && totalQty > 0 && (
                 <p className="flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey">
-                  <Lock size={12} strokeWidth={2} /> Order unlocks at {minOrderQty} PCS (every included color ≥ {minPerColor} PCS).
+                  <Lock size={12} strokeWidth={2} /> Order unlocks at {minOrderQty} PCS (whole color packs only).
                 </p>
               )}
               <div className="pt-3 border-t border-line">
@@ -835,8 +838,8 @@ export function ProductPage({ slug }: { slug: string }) {
             {/* Wholesale info */}
             <div className="mt-6 border-t border-line">
               <div className="pt-4 space-y-2 text-sm text-grey leading-relaxed">
-                <p>MOQ {moqDisplay} PCS per design — mixed sizes ({availableSizes.join(' / ')}) and colors allowed.</p>
-                <p>Order acceptance from {minOrderQty} PCS; each included color needs at least {minPerColor} PCS.</p>
+                <p>MOQ {moqDisplay} PCS per design — mixed colors allowed.</p>
+                <p>Color packs are fixed: each included color ships as {packCfg.m} M · {packCfg.l} L · {packCfg.xl} XL per {packCfg.packSize}-PCS pack. Sizes are not sold separately.</p>
                 <p>Slab pricing: {moqDisplay} PCS at {slabs.price50 > 0 ? formatPerUnit(slabs.price50) : '—'}; 100+ PCS at {slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}.</p>
                 <p>Pan-India delivery. Orders confirmed personally on WhatsApp before dispatch — no account needed.</p>
               </div>
@@ -889,15 +892,6 @@ export function ProductPage({ slug }: { slug: string }) {
           </div>
         </section>
       )}
-    </div>
-  );
-}
-
-function Spec({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="font-label text-[10px] uppercase tracking-wide-2 text-grey">{label}</dt>
-      <dd className="mt-0.5 text-sm text-bone-dim leading-snug">{value}</dd>
     </div>
   );
 }
