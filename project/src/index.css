@@ -82,6 +82,12 @@
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   .overflow-wrap-anywhere { overflow-wrap: anywhere; }
 
+  .bg-concrete {
+    background-color: #f7f6f3;
+    background-image: radial-gradient(circle at 1px 1px, rgba(10, 10, 10, 0.055) 1px, transparent 0);
+    background-size: 22px 22px;
+  }
+
   .animate-marquee {
     animation: marquee 25s linear infinite;
     will-change: transform;

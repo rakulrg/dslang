@@ -8,13 +8,20 @@ import type {
   SizeChartRow,
 } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
+import { getSiteSettings } from '@/lib/settings';
 
 export type { CatalogProduct, HeroSlideRow };
 
+// Legacy constants kept for internal fallbacks only. The single source of
+// truth for WhatsApp contact and default MOQ is the admin-controlled
+// site_settings row: https://wa.me/... URLs and MOQ gates below read it.
 export const WHATSAPP_NUMBER = '919944676178';
 export const INSTAGRAM_URL = 'https://instagram.com/dslang.in';
 export const EMAIL = 'hello.dslang@gmail.com';
-export const FREE_SHIPPING_THRESHOLD = 999;
+
+export const DEFAULT_MOQ = 50;
+export const WHOLESALE_TIER_100 = 100;
+export const WHOLESALE_TIER_DISCOUNT_STEP = 10;
 
 const ALLOWED_SIZES = new Set<string>(SIZE_LABELS);
 
@@ -30,11 +37,24 @@ export function cleanImageUrls(images: string[] | null | undefined): string[] {
   return (images ?? []).filter((image): image is string => typeof image === 'string' && image.trim().length > 0).map((image) => image.trim());
 }
 
+let publishColumnsAvailable: boolean | null = null;
+
+/**
+ * Whether the products table has the published/new_drop columns yet.
+ * Migration-gated: before the site-control migration the storefront reads all
+ * products; after it, only published ones are shown.
+ */
+export async function hasPublishColumns(): Promise<boolean> {
+  if (publishColumnsAvailable !== null) return publishColumnsAvailable;
+  const { error } = await supabase.from('products').select('published').limit(1);
+  publishColumnsAvailable = !error;
+  return publishColumnsAvailable;
+}
+
 export async function fetchProducts(): Promise<CatalogProduct[]> {
-  const { data: products, error } = await supabase
-    .from('products')
-    .select('*')
-    .order('sort_order', { ascending: true });
+  let query = supabase.from('products').select('*');
+  if (await hasPublishColumns()) query = query.eq('published', true);
+  const { data: products, error } = await query.order('sort_order', { ascending: true });
 
   if (error) throw error;
   if (!products || products.length === 0) return [];
@@ -61,11 +81,9 @@ export async function fetchProducts(): Promise<CatalogProduct[]> {
 }
 
 export async function fetchProduct(slug: string): Promise<CatalogProduct | null> {
-  const { data: product, error } = await supabase
-    .from('products')
-    .select('*')
-    .eq('slug', slug)
-    .maybeSingle();
+  let query = supabase.from('products').select('*');
+  if (await hasPublishColumns()) query = query.eq('published', true);
+  const { data: product, error } = await query.eq('slug', slug).maybeSingle();
 
   if (error) throw error;
   if (!product) return null;
@@ -101,6 +119,199 @@ export async function fetchHeroSlides(): Promise<HeroSlideRow[]> {
 
 export function formatPrice(n: number): string {
   return `₹\u2009${n.toLocaleString('en-IN')}`;
+}
+
+export function formatPerUnit(n: number): string {
+  return `₹\u2009${n.toLocaleString('en-IN')}/PC`;
+}
+
+export interface ProductSpecs {
+  // Raw admin-entered values only. Empty strings mean "not entered" and the
+  // storefront hides those rows rather than showing invented defaults.
+  fabric: string;
+  gsm: number | null;
+  wash: string;
+  fit: string;
+  printType: string;
+}
+
+/** Normalized wholesale-facing product specs with NO invented fallbacks. */
+export function getProductSpecs(product: ProductRow | CatalogProduct): ProductSpecs {
+  return {
+    fabric: (product.fabric || '').trim(),
+    gsm: Number(product.gsm ?? 0) || null,
+    wash: (product.wash ?? '').trim(),
+    fit: (product.fit || '').trim(),
+    printType: (product.print_type ?? '').trim(),
+  };
+}
+
+export interface WholesaleSlabs {
+  moq: number;
+  price50: number;
+  price100: number;
+}
+
+/**
+ * Wholesale slab pricing for a product. Uses the per-product DB values when
+ * present; otherwise derives a sensible wholesale reference from the retail
+ * price so the site always renders something useful.
+ */
+export function getWholesaleSlabs(product: ProductRow | CatalogProduct): WholesaleSlabs {
+  const moq = Number(product.moq ?? 0) || getSiteSettings().default_moq;
+  const base = Number(product.price50 ?? 0) || 0;
+  const price50 = base > 0 ? base : 0;
+  const price100 =
+    Number(product.price100 ?? 0) ||
+    (price50 > 0 ? Math.max(price50 - WHOLESALE_TIER_DISCOUNT_STEP, Math.round((price50 * 0.96) / 5) * 5) : 0);
+  return { moq, price50, price100 };
+}
+
+export type WholesaleTier = 'below-moq' | '100' | '50';
+
+export interface WholesaleTierState {
+  tier: WholesaleTier;
+  unitPrice: number; // per-piece price for the applied tier (price50 used as reference below MOQ)
+  total: number;
+}
+
+export function getWholesaleTier(totalQty: number, slabs: WholesaleSlabs): WholesaleTierState {
+  if (totalQty >= WHOLESALE_TIER_100 && slabs.price100 > 0) {
+    return { tier: '100', unitPrice: slabs.price100, total: slabs.price100 * totalQty };
+  }
+  if (totalQty >= slabs.moq) {
+    return { tier: '50', unitPrice: slabs.price50, total: slabs.price50 * totalQty };
+  }
+  return { tier: 'below-moq', unitPrice: slabs.price50, total: slabs.price50 * totalQty };
+}
+
+/** A single requested stock-keeping unit of a wholesale order. */
+export interface WholesaleSkuLine {
+  name: string;
+  code: string;
+  color: string;
+  size: string;
+  qty: number;
+  price50: number;
+  price100: number;
+  image: string;
+  slug: string;
+}
+
+export interface WholesaleWhatsAppPayload {
+  lines: WholesaleSkuLine[];
+  businessName?: string;
+  phone?: string;
+  city?: string;
+  note?: string;
+}
+
+export interface WholesaleOrderSummary {
+  totalQty: number;
+  tiers: { name: string; unitPrice: number }[];
+  total: number;
+}
+
+/**
+ * Builds a wholesale order summary/message from a set of SKU lines.
+ * The per-piece price for each product depends on that product's own quantity
+ * (100+ PCS = price100 slab, otherwise the 50-PCS slab).
+ */
+export function summarizeWholesale(lines: WholesaleSkuLine[]): WholesaleOrderSummary {
+  let totalQty = 0;
+  const tiers: Record<string, number> = {};
+  let total = 0;
+
+  for (const line of lines) {
+    if (line.qty <= 0) continue;
+    totalQty += line.qty;
+    const unit = line.qty >= WHOLESALE_TIER_100 && line.price100 > 0 ? line.price100 : line.price50;
+    tiers[String(unit)] = unit;
+    total += unit * line.qty;
+  }
+
+  return {
+    totalQty,
+    tiers: Object.keys(tiers)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map((p) => ({ name: `₹\u2009${p.toLocaleString('en-IN')}/PC`, unitPrice: p })),
+    total,
+  };
+}
+
+function formatBreakdown(lines: WholesaleSkuLine[]): string {
+  const order: Record<string, Record<string, number>> = {};
+  const sizeOrder = SIZE_LABELS as readonly string[];
+  for (const line of lines) {
+    if (line.qty <= 0) continue;
+    if (!order[line.color]) order[line.color] = {};
+    order[line.color][line.size] = (order[line.color][line.size] ?? 0) + line.qty;
+  }
+  return Object.entries(order)
+    .map(([color, sizes]) => {
+      const parts = sizeOrder
+        .filter((s) => sizes[s] > 0)
+        .map((s) => `${s} — ${sizes[s]}`);
+      return `  ${color}: ${parts.join(' | ')}`;
+    })
+    .join('\n');
+}
+
+/**
+ * Pre-filled WhatsApp message for a wholesale order (product page or cart).
+ * Includes real product, color, size, quantity, tier and total information.
+ */
+export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): string {
+  const summary = summarizeWholesale(payload.lines);
+
+  const sellerDetails = [
+    payload.businessName ? `Business: ${payload.businessName}` : null,
+    payload.phone ? `WhatsApp: ${payload.phone}` : null,
+    payload.city ? `City: ${payload.city}` : null,
+    payload.note ? `Note: ${payload.note}` : null,
+  ].filter(Boolean).join('\n');
+
+  const productBlocks = new Map<string, WholesaleSkuLine[]>();
+  for (const line of payload.lines) {
+    if (line.qty <= 0) continue;
+    const key = line.name;
+    if (!productBlocks.has(key)) productBlocks.set(key, []);
+    productBlocks.get(key)!.push(line);
+  }
+
+  const productText = [...productBlocks.entries()]
+    .map(([name, block]) => {
+      const unit = summarizeWholesale(block).totalQty >= WHOLESALE_TIER_100 && block[0].price100 > 0
+        ? block[0].price100
+        : block[0].price50;
+      return [
+        `Product: ${name} (${block[0].code})`,
+        `Breakdown:`,
+        formatBreakdown(block),
+        `Qty: ${summarizeWholesale(block).totalQty} PCS`,
+        `Rate: ₹\u2009${unit.toLocaleString('en-IN')}/PC`,
+        '',
+      ].join('\n');
+    })
+    .join('\n');
+
+  const message = [
+    ...(payload.businessName || payload.phone ? [`Hi DSLANG, wholesale order request:`] : ['Hi DSLANG, I am interested in a wholesale order:']),
+    '',
+    ...(payload.businessName || payload.phone ? [] : [`Please share the catalogue and confirm availability.`]),
+    productText.trim(),
+    `Total Quantity: ${summary.totalQty} PCS`,
+    summary.totalQty >= getSiteSettings().default_moq
+      ? `Wholesale Pricing: ${summary.tiers.map((t) => t.name).join(' / ')}`
+      : `Minimum wholesale order is ${getSiteSettings().default_moq} PCS.`,
+    `Order Total: ₹\u2009${summary.total.toLocaleString('en-IN')}`,
+    ...(sellerDetails ? ['', 'My Details:', sellerDetails] : []),
+    '',
+    'Please confirm availability and order details.',
+  ].join('\n');
+
+  return `https://wa.me/${getSiteSettings().whatsapp_number}?text=${encodeURIComponent(message)}`;
 }
 
 export interface WhatsAppOrder {
@@ -143,9 +354,9 @@ export function buildWhatsAppUrl(order: WhatsAppOrder): string {
     'Please confirm availability and delivery details.',
   ].join('\n');
 
-  return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+  return `https://wa.me/${getSiteSettings().whatsapp_number}?text=${encodeURIComponent(message)}`;
 }
 
 export function buildWhatsAppGeneralUrl(message: string): string {
-  return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+  return `https://wa.me/${getSiteSettings().whatsapp_number}?text=${encodeURIComponent(message)}`;
 }

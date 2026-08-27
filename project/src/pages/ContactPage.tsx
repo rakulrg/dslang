@@ -1,38 +1,41 @@
 import { MessageCircle, Mail, MapPin } from 'lucide-react';
 import { Button } from '@/components/Button';
+import { linkHref } from '@/lib/router';
 import {
   INSTAGRAM_URL,
-  WHATSAPP_NUMBER,
   EMAIL,
   buildWhatsAppGeneralUrl,
 } from '@/lib/catalog';
+import { useSiteSettings } from '@/lib/settings';
 import { Instagram } from '@/components/icons/Instagram';
 
-const CHANNELS = [
-  {
-    icon: MessageCircle,
-    label: 'WhatsApp',
-    value: '+91 99446 76178',
-    note: 'Fastest reply. Order confirmations & delivery questions.',
-    href: `https://wa.me/${WHATSAPP_NUMBER}`,
-  },
-  {
-    icon: Instagram,
-    label: 'Instagram',
-    value: '@dslang.in',
-    note: 'Drops, restocks, and behind-the-scenes.',
-    href: INSTAGRAM_URL,
-  },
-  {
-    icon: Mail,
-    label: 'Email',
-    value: EMAIL,
-    note: 'General enquiries & feedback.',
+export function ContactPage() {
+  const { settings } = useSiteSettings();
+  const whatsapp = settings.whatsapp_number;
+  const CHANNELS = [
+    {
+      icon: MessageCircle,
+      label: 'WhatsApp',
+      value: `+91 ${whatsapp}`,
+      note: 'Fastest reply. Wholesale enquiries, order confirmation & delivery updates.',
+      href: `https://wa.me/${whatsapp}`,
+    },
+    {
+      icon: Instagram,
+      label: 'Instagram',
+      value: '@dslang.in',
+      note: 'New drops, restocks, and the latest wholesale catalogue.',
+      href: INSTAGRAM_URL,
+    },
+    {
+      icon: Mail,
+      label: 'Email',
+      value: EMAIL,
+    note: 'Store registrations, bulk enquiries & partnerships.',
     href: `mailto:${EMAIL}`,
   },
 ];
 
-export function ContactPage() {
   return (
     <div className="pb-12 md:pb-20">
       <div className="mx-auto px-6 md:px-12 lg:px-20 xl:px-28">
@@ -41,7 +44,7 @@ export function ContactPage() {
           Let's Talk
         </h1>
         <p className="mt-4 text-bone-dim max-w-xl leading-relaxed">
-          Questions about a drop, a size, or your order? Reach out — we reply fast and we keep it real. No bots, no call centres.
+          A store, a reseller, or a bulk buyer — reach out and the DSLANG wholesale team replies fast. No bots, no call centres.
         </p>
 
         {/* Channels */}
@@ -65,25 +68,25 @@ export function ContactPage() {
           ))}
         </div>
 
-        {/* WhatsApp CTA */}
+        {/* Wholesale CTA */}
         <section className="mt-10 md:mt-14 border border-line bg-paper-2 p-6 md:p-10 text-center">
           <MessageCircle size={28} className="text-crimson mx-auto mb-3" strokeWidth={1.5} />
           <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone leading-[0.95]">
-            Order On WhatsApp
+            Wholesale Enquiry
           </h2>
           <p className="mt-4 text-bone-dim max-w-md mx-auto leading-relaxed">
-            Pick any product, hit Buy Now, and your order opens straight in WhatsApp. We confirm availability and walk you through payment and delivery — all in one chat.
+            Pick any product, build a mix of {settings.default_moq}+ PCS, and request your wholesale order — it opens straight in WhatsApp. We confirm availability, pricing and dispatch in one chat.
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             <Button
-              href={buildWhatsAppGeneralUrl('Hi DSLANG! I have a question about a product.')}
+              href={buildWhatsAppGeneralUrl("Hi DSLANG! I'd like to discuss a wholesale order for my store.")}
               external
               variant="primary"
             >
               <MessageCircle size={16} strokeWidth={2} /> Start A Chat
             </Button>
-            <Button href="#/shop" variant="outline">
-              Browse Products
+            <Button href={linkHref('/collection')} variant="outline">
+              Browse Collection
             </Button>
           </div>
         </section>
@@ -91,7 +94,7 @@ export function ContactPage() {
         {/* Location note */}
         <div className="mt-8 flex items-center gap-3 text-bone-soft text-sm">
           <MapPin size={16} strokeWidth={1.6} className="text-crimson" />
-          <span>Based in Tamil Nadu, India. Shipping pan-India.</span>
+          <span>Manufactured in Tiruppur, Tamil Nadu. Pan-India dispatch.</span>
         </div>
       </div>
     </div>

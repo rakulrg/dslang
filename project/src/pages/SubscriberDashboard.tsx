@@ -134,10 +134,10 @@ export function SubscriberDashboard() {
               <Settings size={18} strokeWidth={1.8} />
             </button>
             <a
-              href={linkHref('/shop')}
+              href={linkHref('/collection')}
               className="text-[11px] uppercase tracking-wide-2 font-medium text-bone-dim hover:text-crimson transition-colors hidden sm:block"
             >
-              Shop
+              Collection
             </a>
             <button
               onClick={handleLogout}
@@ -226,10 +226,10 @@ export function SubscriberDashboard() {
             <p className="font-label text-2xl uppercase tracking-wide-2 text-grey">No updates yet</p>
             <p className="mt-2 text-sm text-grey">New drops and restocks will show up here first.</p>
             <a
-              href={linkHref('/shop')}
+              href={linkHref('/collection')}
               className="mt-6 inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold text-crimson hover:text-crimson-dark transition-colors"
             >
-              Browse Current Drop <ExternalLink size={13} />
+              Browse The Collection <ExternalLink size={13} />
             </a>
           </div>
         ) : (

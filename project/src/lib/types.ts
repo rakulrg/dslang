@@ -16,6 +16,16 @@ export interface ProductRow {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  // Wholesale fields (added via migration; optional so old rows still load)
+  gsm?: number | null;
+  wash?: string | null;
+  print_type?: string | null;
+  moq?: number | null;
+  price50?: number | null;
+  price100?: number | null;
+  // Storefront visibility (added via migration; optional for older rows)
+  published?: boolean;
+  new_drop?: boolean;
 }
 
 export interface ProductColorRow {
@@ -56,6 +66,9 @@ export interface HeroSlideRow {
   sort_order: number;
   active: boolean;
   created_at: string;
+  // Optional CTA fields shown on the homepage hero
+  cta_text?: string | null;
+  cta_url?: string | null;
 }
 
 export interface CatalogProduct extends ProductRow {

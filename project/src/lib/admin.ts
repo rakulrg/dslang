@@ -8,6 +8,8 @@ import type {
   SizeChartRow,
 } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
+import { hasPublishColumns } from '@/lib/catalog';
+import type { SiteSettings } from '@/lib/settings';
 
 const ALLOWED_SIZES = new Set<string>(SIZE_LABELS);
 
@@ -74,7 +76,49 @@ export interface ProductInput {
   category: string;
   badge: string | null;
   featured: boolean;
+  published: boolean;
+  new_drop: boolean;
   sort_order: number;
+  gsm: number | null;
+  wash: string;
+  print_type: string | null;
+  moq: number | null;
+  price50: number | null;
+  price100: number | null;
+}
+
+export const WHOLESALE_COLUMNS = ['gsm', 'wash', 'print_type', 'moq', 'price50', 'price100'] as const;
+
+let wholesaleColumnsAvailable: boolean | null = null;
+
+/**
+ * Detects whether the products table has the wholesale columns yet.
+ * This lets the admin panel work before (and after) the migration is applied.
+ */
+export async function hasWholesaleColumns(): Promise<boolean> {
+  if (wholesaleColumnsAvailable !== null) return wholesaleColumnsAvailable;
+  const { error } = await supabase
+    .from('products')
+    .select('gsm, wash, print_type, moq, price50, price100')
+    .limit(1);
+  wholesaleColumnsAvailable = !error;
+  return wholesaleColumnsAvailable;
+}
+
+/**
+ * Builds a payload that only includes columns the schema actually has, so the
+ * admin panel works before and after the site-control migration is applied.
+ */
+async function sanitizeProductPayload(input: Partial<ProductInput>): Promise<Partial<ProductInput>> {
+  const clean = { ...input };
+  const wholesale = await hasWholesaleColumns();
+  if (!wholesale) for (const col of WHOLESALE_COLUMNS) delete clean[col as keyof ProductInput];
+  const publish = await hasPublishColumns();
+  if (!publish) {
+    delete clean.published;
+    delete clean.new_drop;
+  }
+  return clean;
 }
 
 async function requireAdminImageAccess(): Promise<void> {
@@ -128,7 +172,12 @@ export async function uploadProductImage(file: File, productId: string, colorNam
 }
 
 export async function adminCreateProduct(input: ProductInput): Promise<ProductRow> {
-  const { data, error } = await supabase.from('products').insert(input).select().single();
+  const payload = await sanitizeProductPayload(input);
+  const { data, error } = await supabase
+    .from('products')
+    .insert(payload)
+    .select()
+    .single();
   if (error) throw error;
 
   const product = data as ProductRow;
@@ -158,7 +207,8 @@ export async function adminCreateProduct(input: ProductInput): Promise<ProductRo
 
 export async function adminUpdateProduct(id: string, input: Partial<ProductInput>): Promise<void> {
   const { slug: _slug, ...rest } = input;
-  const { error } = await supabase.from('products').update(rest).eq('id', id);
+  const payload = await sanitizeProductPayload(rest);
+  const { error } = await supabase.from('products').update(payload).eq('id', id);
   if (error) throw error;
 }
 
@@ -309,23 +359,99 @@ export async function uploadHeroImage(file: File): Promise<string> {
 
 // Hero slides
 export async function adminCreateHero(input: Omit<HeroSlideRow, 'id' | 'created_at'>): Promise<void> {
-  const { error } = await supabase.from('hero_slides').insert({
+  const insert: Record<string, unknown> = {
     image_url: input.image_url,
     eyebrow: input.eyebrow,
     title: input.title,
     subtitle: input.subtitle,
     sort_order: input.sort_order,
     active: input.active,
-  });
+  };
+  if (await hasHeroCtaColumns()) {
+    insert.cta_text = input.cta_text ?? null;
+    insert.cta_url = input.cta_url ?? null;
+  }
+  const { error } = await supabase.from('hero_slides').insert(insert);
   if (error) throw error;
 }
 
 export async function adminUpdateHero(id: string, patch: Partial<Omit<HeroSlideRow, 'id' | 'created_at'>>): Promise<void> {
+  if (!(await hasHeroCtaColumns())) {
+    delete patch.cta_text;
+    delete patch.cta_url;
+  }
   const { error } = await supabase.from('hero_slides').update(patch).eq('id', id);
   if (error) throw error;
 }
 
 export async function adminDeleteHero(id: string): Promise<void> {
   const { error } = await supabase.from('hero_slides').delete().eq('id', id);
+  if (error) throw error;
+}
+
+let heroCtaAvailable: boolean | null = null;
+
+/** Whether hero_slides has the cta_text/cta_url columns yet (migration-gated). */
+export async function hasHeroCtaColumns(): Promise<boolean> {
+  if (heroCtaAvailable !== null) return heroCtaAvailable;
+  const { error } = await supabase.from('hero_slides').select('cta_text, cta_url').limit(1);
+  heroCtaAvailable = !error;
+  return heroCtaAvailable;
+}
+
+// Site settings (admin-controlled source of truth for storefront vitals)
+export async function adminFetchSiteSettings(): Promise<SiteSettings> {
+  const { data, error } = await supabase
+    .from('site_settings')
+    .select('*')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error) throw error;
+
+  const row = data as
+    | {
+        announcement_text?: string | null;
+        announcement_active?: boolean | null;
+        whatsapp_number?: string | null;
+        default_moq?: number | null;
+        dispatch_note?: string | null;
+        delivery_note?: string | null;
+      }
+    | null;
+
+  const fallback: SiteSettings = {
+    announcement_text: 'SAME DAY DISPATCH • FOR RESELLERS & WHOLESALE ONLY • PAN INDIA DELIVERY',
+    announcement_active: true,
+    whatsapp_number: '919944676178',
+    default_moq: 50,
+    dispatch_note: 'Same Day Dispatch',
+    delivery_note: 'Pan India',
+  };
+
+  if (!row) return fallback;
+
+  return {
+    announcement_text: row.announcement_text ?? fallback.announcement_text,
+    announcement_active: row.announcement_active ?? fallback.announcement_active,
+    whatsapp_number: (row.whatsapp_number ?? '').trim() || fallback.whatsapp_number,
+    default_moq: Number(row.default_moq ?? 0) || fallback.default_moq,
+    dispatch_note: row.dispatch_note ?? fallback.dispatch_note,
+    delivery_note: row.delivery_note ?? fallback.delivery_note,
+  };
+}
+
+export async function adminSaveSiteSettings(settings: SiteSettings): Promise<void> {
+  const { error } = await supabase
+    .from('site_settings')
+    .update({
+      announcement_text: settings.announcement_text,
+      announcement_active: settings.announcement_active,
+      whatsapp_number: settings.whatsapp_number,
+      default_moq: settings.default_moq,
+      dispatch_note: settings.dispatch_note,
+      delivery_note: settings.delivery_note,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', 1);
   if (error) throw error;
 }

@@ -1,45 +1,43 @@
 import { useEffect, useState, useCallback } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { ProductCard } from '@/components/ProductCard';
 import { linkHref } from '@/lib/router';
 import {
   fetchProducts,
   fetchHeroSlides,
+  buildWhatsAppGeneralUrl,
   type CatalogProduct,
   type HeroSlideRow,
 } from '@/lib/catalog';
+import { useSiteSettings } from '@/lib/settings';
 import { preloadImage } from '@/lib/image';
 
-const FALLBACK_HERO: HeroSlideRow[] = [
-  {
-    id: 'f1',
-    image_url:
-      'https://images.pexels.com/photos/30636000/pexels-photo-30636000.jpeg?auto=compress&cs=tinysrgb&w=1600',
-    eyebrow: '',
-    title: 'Wear The\nStruggle',
-    subtitle: 'Limited run. Once it sells out, it is gone.',
-    sort_order: 0,
-    active: true,
-    created_at: '',
-  },
+const WHY_DSLANG = [
+  { title: 'Fast Dispatch', body: 'Orders confirmed on WhatsApp and dispatched fast.' },
+  { title: 'Wholesale Pricing', body: 'Clean slab pricing — no haggling, no retail noise.' },
+  { title: 'Mixed Sizes & Colors', body: 'Assemble your own mix across M, L and XL.' },
+  { title: 'Pan India Delivery', body: 'Built for stores and resellers everywhere in India.' },
+];
+
+const STEPS = [
+  { n: '01', t: 'Browse', d: 'Explore the wholesale collection.' },
+  { n: '02', t: 'Select', d: 'Choose designs, colors and sizes.' },
+  { n: '03', t: 'Mix', d: 'Mix sizes and colors within the MOQ.' },
+  { n: '04', t: 'Order', d: 'Send the order on WhatsApp.' },
 ];
 
 export function HomePage() {
-  // Start empty (clean neutral hero) so no fallback/old image can flash before
-  // the real slide data arrives. FALLBACK_HERO is only used if the fetch fails.
   const [slides, setSlides] = useState<HeroSlideRow[]>([]);
-  // `target` is the slide navigation wants; `shown` is the slide whose image
-  // has fully loaded and is therefore safe to display. They are kept separate
-  // so an un-loaded incoming image can never flash over the current one.
   const [target, setTarget] = useState(0);
   const [shown, setShown] = useState(-1);
   const [products, setProducts] = useState<CatalogProduct[]>([]);
+  const { settings } = useSiteSettings();
 
   useEffect(() => {
     fetchHeroSlides()
-      .then((s) => setSlides(s.length > 0 ? s : FALLBACK_HERO))
-      .catch(() => setSlides(FALLBACK_HERO));
+      .then((s) => setSlides(s))
+      .catch(() => {});
     fetchProducts()
       .then(setProducts)
       .catch(() => {});
@@ -48,15 +46,11 @@ export function HomePage() {
   useEffect(() => {
     if (slides.length === 0) return;
     setTarget((t) => Math.min(t, slides.length - 1));
-    // Warm the cache for every slide up front so slide changes never stall.
     slides.forEach((s) => {
       if (s.image_url) void preloadImage(s.image_url).catch(() => {});
     });
   }, [slides]);
 
-  // Reveal a slide only after its image has fully loaded (or failed); while it
-  // loads, the previously shown slide simply remains stable — never a flash
-  // of the old asset for this slide, and never a blank pop-in mid-transition.
   useEffect(() => {
     const url = slides[target]?.image_url;
     if (!url) return;
@@ -74,14 +68,36 @@ export function HomePage() {
 
   useEffect(() => {
     if (slides.length <= 1) return;
-    const id = setInterval(next, 6000);
+    const id = setInterval(next, 7000);
     return () => clearInterval(id);
   }, [next, slides.length]);
 
+  const featured = products.filter((p) => p.featured).slice(0, 4);
+  const newDrops = (() => {
+    const flagged = products.filter((p) => p.new_drop).slice(0, 4);
+    if (flagged.length > 0) return flagged;
+    return [...products]
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 4);
+  })();
+  const collection = featured.length > 0 ? featured : products.slice(0, 4);
+
+  // Hero content is admin-controlled via hero_slides; empty values fall back
+  // to the brand message without pulling in product specifications.
+  const slide = slides[target];
+  const heroEyebrow = slide?.eyebrow?.trim() || 'DSLANG — Slang of Design';
+  const heroTitle = slide?.title?.trim() || 'Premium Streetwear';
+  const heroSubtitle = slide?.subtitle?.trim() || 'For Resellers & Wholesale';
+  const ctaText = slide?.cta_text?.trim() || 'View Collection';
+  const ctaUrl = slide?.cta_url?.trim() || linkHref('/collection');
+  const ctaExternal = ctaUrl.startsWith('http');
+
+  const whatsapp = (msg: string) => buildWhatsAppGeneralUrl(msg);
+
   return (
     <div>
-      {/* HERO */}
-      <section className="relative h-[50vh] md:h-[88vh] min-h-[320px] md:min-h-[520px] w-full overflow-hidden bg-paper-2">
+      {/* ============ HERO ============ */}
+      <section className="relative h-[78vh] md:h-[92vh] min-h-[560px] md:min-h-[620px] w-full overflow-hidden bg-ink">
         {slides.map((s, i) => (
           <div
             key={s.id}
@@ -91,40 +107,51 @@ export function HomePage() {
           >
             <img
               src={s.image_url}
-              alt={s.title}
+              alt=""
               loading="eager"
               decoding="async"
               className={`absolute inset-0 w-full h-full object-cover ${
                 i === shown ? 'scale-105' : 'scale-100'
-              } transition-transform duration-[6000ms] ease-out`}
+              } transition-transform duration-[7000ms] ease-out`}
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/15 to-black/5" />
           </div>
         ))}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/30" />
 
-        <div className="relative z-10 h-full mx-auto px-6 md:px-12 lg:px-20 xl:px-28 flex flex-col justify-end pb-10 md:pb-14">
-          {slides[shown] && (
-            <div key={shown} className="max-w-2xl animate-fade-up">
-              {slides[shown].eyebrow && (
-                <p className="font-label text-[10px] md:text-[11px] uppercase tracking-ultra text-white mb-2 md:mb-3 font-medium">
-                  {slides[shown].eyebrow}
-                </p>
-              )}
-              <h1 className="font-display text-[12vw] md:text-[5.5rem] leading-[0.88] uppercase tracking-wide-2 text-white text-shadow-dark whitespace-pre-line">
-                {slides[shown].title}
-              </h1>
-              <div className="mt-5 md:mt-7 flex flex-wrap items-center gap-3">
-                <Button href={linkHref('/shop')} variant="primary">
-                  Shop The Drop <ArrowRight size={15} strokeWidth={2} />
+        <div className="relative z-10 h-full mx-auto px-5 md:px-12 lg:px-20 xl:px-28 flex flex-col justify-end pb-16 md:pb-20">
+          <div key={shown} className="max-w-3xl animate-fade-up">
+            <p className="font-label text-[10px] md:text-[11px] uppercase tracking-ultra text-white/70 mb-3 font-medium">
+              {heroEyebrow}
+            </p>
+            <h1 className="font-display text-5xl sm:text-6xl md:text-8xl leading-[0.88] uppercase tracking-wide-2 text-white text-shadow-dark">
+              {heroTitle}
+            </h1>
+            <p className="mt-4 font-label text-sm md:text-base uppercase tracking-[0.28em] text-white/90">
+              {heroSubtitle}
+            </p>
+            <div className="mt-7 md:mt-9 flex flex-wrap gap-3">
+              {ctaExternal ? (
+                <Button href={ctaUrl} external variant="primary">
+                  {ctaText} <ArrowRight size={15} strokeWidth={2} />
                 </Button>
-              </div>
+              ) : (
+                <Button href={ctaUrl} variant="primary">
+                  {ctaText} <ArrowRight size={15} strokeWidth={2} />
+                </Button>
+              )}
+              <Button
+                href={whatsapp("Hi DSLANG! I'd like to place a wholesale order.")}
+                external
+                variant="outline-light"
+              >
+                <MessageCircle size={15} strokeWidth={2} /> WhatsApp
+              </Button>
             </div>
-          )}
+          </div>
         </div>
 
-        {/* Slide indicators */}
         {slides.length > 1 && (
-          <div className="absolute bottom-6 right-5 md:right-8 z-10 flex items-center gap-2">
+          <div className="absolute bottom-5 right-5 md:right-8 z-10 flex items-center gap-2">
             {slides.map((_, i) => (
               <button
                 key={i}
@@ -139,16 +166,122 @@ export function HomePage() {
         )}
       </section>
 
-      {/* ALL PRODUCTS */}
-      {products.length > 0 && (
-        <section className="pt-4 md:pt-8 pb-8 md:pb-12 mx-auto px-2 md:px-12 lg:px-20 xl:px-28">
+      {/* ============ WHOLESALE COLLECTION ============ */}
+      {collection.length > 0 && (
+        <section className="mx-auto px-2 md:px-12 lg:px-20 xl:px-28 pt-10 md:pt-16 pb-2">
+          <div className="flex items-end justify-between px-2 md:px-0 mb-4 md:mb-8">
+            <div>
+              <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">Wholesale Collection</p>
+              <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone leading-none">
+                Stock The Slang
+              </h2>
+            </div>
+            <a
+              href={linkHref('/collection')}
+              className="font-label text-[11px] uppercase tracking-wide-2 font-semibold text-crimson hover:text-crimson-dark transition-colors"
+            >
+              View Collection →
+            </a>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8">
-            {products.map((p, i) => (
+            {collection.map((p, i) => (
               <ProductCard key={p.id} product={p} index={i} />
             ))}
           </div>
         </section>
       )}
+
+      {/* ============ NEW DROPS ============ */}
+      {newDrops.length > 0 && (
+        <section className="mx-auto px-2 md:px-12 lg:px-20 xl:px-28 pt-10 md:pt-16 pb-8 md:pb-12">
+          <div className="flex items-end justify-between px-2 md:px-0 mb-4 md:mb-8">
+            <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone leading-none">
+              New Drops
+            </h2>
+            <a
+              href={linkHref('/new-drops')}
+              className="font-label text-[11px] uppercase tracking-wide-2 font-semibold text-crimson hover:text-crimson-dark transition-colors"
+            >
+              View All →
+            </a>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8">
+            {newDrops.map((p, i) => (
+              <ProductCard key={p.id} product={p} index={i} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ============ WHY DSLANG ============ */}
+      <section className="py-12 md:py-20 mx-auto px-5 md:px-12 lg:px-20 xl:px-28 bg-concrete border-y border-line">
+        <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">Why Wholesale With DSLANG</p>
+        <h2 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-[0.9] max-w-3xl">
+          Built For Stores And Resellers
+        </h2>
+        <div className="mt-8 md:mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+          {WHY_DSLANG.map((w) => (
+            <div key={w.title} className="border border-line bg-white p-5 md:p-7">
+              <p className="font-display text-xl md:text-2xl uppercase tracking-wide-2 text-bone">
+                {w.title}
+              </p>
+              <p className="mt-3 text-sm text-bone-soft leading-relaxed">{w.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ============ HOW IT WORKS ============ */}
+      <section className="py-12 md:py-20 mx-auto px-5 md:px-12 lg:px-20 xl:px-28">
+        <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">The Process</p>
+        <h2 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-[0.9]">
+          How It Works
+        </h2>
+        <div className="mt-8 md:mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+          {STEPS.map((s) => (
+            <div key={s.n} className="border-t border-line pt-4">
+              <p className="font-display text-2xl text-crimson">{s.n}</p>
+              <p className="mt-2 font-label text-sm uppercase tracking-[0.14em] font-semibold text-bone">
+                {s.t}
+              </p>
+              <p className="mt-2 text-xs text-bone-dim leading-relaxed">{s.d}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-8">
+          <Button href={linkHref('/how-it-works')} variant="outline">
+            See Full Process <ArrowRight size={15} strokeWidth={2} />
+          </Button>
+        </div>
+      </section>
+
+      {/* ============ FINAL CTA ============ */}
+      <section className="bg-ink py-14 md:py-20">
+        <div className="mx-auto px-5 md:px-12 lg:px-20 xl:px-28 max-w-5xl text-center">
+          <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-3">Wholesale Only</p>
+          <h2 className="font-display text-4xl md:text-7xl uppercase tracking-wide-2 text-white leading-[0.9]">
+            Ready To Stock DSLANG?
+          </h2>
+          <p className="mt-5 text-sm md:text-base text-white/70 max-w-2xl mx-auto leading-relaxed">
+            Place a wholesale order on WhatsApp. We confirm availability, pricing and dispatch in one chat.
+          </p>
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <Button href={linkHref('/collection')} variant="primary">
+              Order Wholesale <ArrowRight size={15} strokeWidth={2} />
+            </Button>
+            <Button
+              href={whatsapp("Hi DSLANG! I run a retail store and I'd like to stock DSLANG.")}
+              external
+              variant="outline-light"
+            >
+              <MessageCircle size={15} strokeWidth={2} /> Talk To The Team
+            </Button>
+          </div>
+          <p className="mt-8 text-[11px] uppercase tracking-[0.2em] text-white/50">
+            MOQ {settings.default_moq} PCS · {settings.delivery_note} Delivery · {settings.dispatch_note}
+          </p>
+        </div>
+      </section>
     </div>
   );
 }

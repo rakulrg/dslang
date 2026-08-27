@@ -4,13 +4,19 @@ import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/CartDrawer';
 import { LoginModal } from '@/components/LoginModal';
+import { StickyMobileBar } from '@/components/StickyMobileBar';
 import { HomePage } from '@/pages/HomePage';
-import { ShopPage } from '@/pages/ShopPage';
+import { CollectionPage } from '@/pages/CollectionPage';
+import { NewDropsPage } from '@/pages/NewDropsPage';
+import { WholesalePage } from '@/pages/WholesalePage';
+import { HowItWorksPage } from '@/pages/HowItWorksPage';
+import { AboutPage } from '@/pages/AboutPage';
 import { ProductPage } from '@/pages/ProductPage';
 import { ContactPage } from '@/pages/ContactPage';
 import { PoliciesPage } from '@/pages/PoliciesPage';
 import { SubscriberDashboard } from '@/pages/SubscriberDashboard';
 import { useAuth } from '@/lib/auth';
+import { useSiteSettings } from '@/lib/settings';
 import { notFound } from '@/lib/notFound';
 
 // Lazy-load the admin dashboard (large, admin-only) to keep the main bundle small.
@@ -18,16 +24,20 @@ const AdminDashboard = lazy(() =>
   import('@/pages/admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
 );
 
-const DEFAULT_TITLE = 'DSLANG — Limited Drop Streetwear';
+const DEFAULT_TITLE = 'DSLANG — Premium Streetwear Wholesale for Resellers';
 
 function getPageTitle(path: string): string {
   if (path === '/' || path === '') return DEFAULT_TITLE;
-  if (path.startsWith('/shop')) return 'Shop All — DSLANG';
+  if (path.startsWith('/collection') || path.startsWith('/shop')) return 'Wholesale Collection — DSLANG';
+  if (path.startsWith('/new-drops')) return 'New Drops — DSLANG';
+  if (path.startsWith('/wholesale')) return 'Wholesale — DSLANG';
+  if (path.startsWith('/how-it-works')) return 'How It Works — DSLANG';
+  if (path.startsWith('/stock-dslang') || path.startsWith('/about')) return 'Stock DSLANG — DSLANG';
   if (path.startsWith('/contact')) return 'Contact — DSLANG';
   if (path.startsWith('/policies')) return 'Policies — DSLANG';
   if (path.startsWith('/account')) return 'Account — DSLANG';
   if (path.startsWith('/admin')) return 'Admin — DSLANG';
-  if (path.startsWith('/product/')) return 'Product — DSLANG';
+  if (path.startsWith('/product/')) return 'Wholesale Product — DSLANG';
   return DEFAULT_TITLE;
 }
 
@@ -68,26 +78,14 @@ function App() {
     setLoginOpen(false);
   }, []);
 
-  const handleLoginClick = useCallback(() => {
-    if (loading) return;
-    if (!user) {
-      // Not authenticated - show login modal
-      setLoginOpen(true);
-    } else {
-      // Already authenticated - navigate to correct destination if needed
-      if (isAdmin && path !== '/admin') {
-        navigate('/admin');
-      } else if (!isAdmin && path !== '/account') {
-        navigate('/account');
-      }
-      // Already at correct destination - do nothing
-    }
-  }, [user, isAdmin, loading, path, navigate]);
-
 
   const renderPage = () => {
     if (segments.length === 0) return <HomePage />;
-    if (segments[0] === 'shop') return <ShopPage />;
+    if (segments[0] === 'collection' || segments[0] === 'shop') return <CollectionPage />;
+    if (segments[0] === 'new-drops') return <NewDropsPage />;
+    if (segments[0] === 'wholesale') return <WholesalePage />;
+    if (segments[0] === 'how-it-works') return <HowItWorksPage />;
+    if (segments[0] === 'stock-dslang' || segments[0] === 'about') return <AboutPage />;
     if (segments[0] === 'product' && segments[1]) return <ProductPage slug={segments[1]} />;
     if (segments[0] === 'contact') return <ContactPage />;
     if (segments[0] === 'policies') return <PoliciesPage />;
@@ -112,32 +110,27 @@ function App() {
 
   const isAdminPath = segments[0] === 'admin';
 
+  const announcement = useSiteSettings().settings;
+
   return (
     <div className="min-h-screen flex flex-col bg-paper">
-      <div className="fixed inset-x-0 top-0 z-[100] border-b border-white/10 bg-[#111111] overflow-hidden">
-        <div className="h-8 flex items-center whitespace-nowrap">
-          <span className="animate-marquee flex shrink-0 items-center whitespace-nowrap">
-            <span className="inline-flex shrink-0 items-center gap-8 pr-8 text-[10px] md:text-[11px] uppercase tracking-[0.28em] text-white/90">
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
+      {announcement.announcement_active && announcement.announcement_text.trim() && (
+        <div className="fixed inset-x-0 top-0 z-[100] border-b border-white/10 bg-[#111111] overflow-hidden">
+          <div className="h-8 flex items-center whitespace-nowrap">
+            <span className="animate-marquee flex shrink-0 items-center whitespace-nowrap">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <span key={i} className="inline-flex shrink-0 items-center gap-8 pr-8 text-[10px] md:text-[11px] uppercase tracking-[0.28em] text-white/90">
+                  <span>{announcement.announcement_text}</span>
+                  <span>{announcement.announcement_text}</span>
+                </span>
+              ))}
             </span>
-            <span className="inline-flex shrink-0 items-center gap-8 pr-8 text-[10px] md:text-[11px] uppercase tracking-[0.28em] text-white/90">
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-              <span>FREE SHIPPING ON ORDERS ABOVE ₹999</span>
-            </span>
-          </span>
+          </div>
         </div>
-      </div>
-      <Navbar currentPath={path} onLoginClick={handleLoginClick} />
+      )}
+      <Navbar currentPath={path} />
       <main className="flex-1 pt-[76px] md:pt-[88px] overflow-x-hidden">{isAdminPath ? <div className="min-h-screen bg-paper">{renderPage()}</div> : renderPage()}</main>
+      <StickyMobileBar />
       <Footer />
       <CartDrawer />
       <LoginModal isOpen={loginOpen} onClose={handleLoginClose} />
@@ -146,4 +139,3 @@ function App() {
 }
 
 export default App;
-

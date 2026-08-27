@@ -1,31 +1,30 @@
 import { useEffect, useState, useRef, useCallback, memo } from 'react';
-import { Minus, Plus, MessageCircle, ChevronDown, ChevronLeft, ChevronRight, ShoppingBag, Zap, CheckCircle2, X } from 'lucide-react';
+import { Minus, Plus, MessageCircle, ChevronDown, ChevronLeft, ChevronRight, ShoppingBag, CheckCircle2, X, AlertTriangle, Lock } from 'lucide-react';
 import { ProductCard } from '@/components/ProductCard';
 import {
   fetchProducts,
   fetchProduct,
+  getProductSpecs,
+  getWholesaleSlabs,
+  getWholesaleTier,
+  buildWholesaleWhatsAppUrl,
+  formatPerUnit,
   formatPrice,
-  buildWhatsAppUrl,
   type CatalogProduct,
+  type WholesaleSkuLine,
 } from '@/lib/catalog';
 import type { ProductColorRow, ProductSizeRow, SizeChartRow } from '@/lib/types';
 import { notFound } from '@/lib/notFound';
 import { useCart } from '@/lib/cart';
 
+const SIZE_LABELS = ['M', 'L', 'XL'] as const;
+type SizeLabel = (typeof SIZE_LABELS)[number];
+
 const ACCORDION = [
+  { title: 'Wholesale Info', body: 'wholesale' },
   { title: 'Size Chart', body: 'sizechart' },
-  { title: 'Shipping Info', body: 'shipping' },
-  { title: 'Return Policy', body: 'returns' },
+  { title: 'Care Instructions', body: 'care' },
 ];
-
-const SIZE_PRIORITY = ['M', 'L', 'XL'] as const;
-
-function findFirstAvailableSize(sizes: ProductSizeRow[]): string {
-  for (const label of SIZE_PRIORITY) {
-    if (sizes.some((s) => s.size_label === label && s.available)) return label;
-  }
-  return '';
-}
 
 /* ---- Swipe Gallery ---- */
 
@@ -404,6 +403,56 @@ function LightboxViewer({
   );
 }
 
+/* ---- Wholesale Quantity Matrix ---- */
+
+function MatrixCell({
+  label,
+  qty,
+  stock,
+  onChange,
+}: {
+  label: string;
+  qty: number;
+  stock: number;
+  onChange: (qty: number) => void;
+}) {
+  const disabled = stock <= 0;
+  const atCap = disabled || qty >= stock;
+  const shown = String(qty);
+
+  return (
+    <div className="flex items-center justify-center">
+      {disabled ? (
+        <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide-2 text-grey/60 line-through">
+          {label}-S/O
+        </span>
+      ) : (
+        <div className="inline-flex items-center border border-line bg-white">
+          <button
+            onClick={() => onChange(Math.max(0, qty - 1))}
+            disabled={qty <= 0}
+            className="w-7 h-8 md:w-8 md:h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label={`Decrease ${label}`}
+          >
+            <Minus size={13} strokeWidth={2} />
+          </button>
+          <span className="w-7 md:w-8 text-center text-sm font-semibold tabular-nums text-bone select-none">
+            {shown}
+          </span>
+          <button
+            onClick={() => onChange(qty + 1)}
+            disabled={atCap}
+            className="w-7 h-8 md:w-8 md:h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label={`Increase ${label}`}
+          >
+            <Plus size={13} strokeWidth={2} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---- Product Page ---- */
 
 export function ProductPage({ slug }: { slug: string }) {
@@ -412,14 +461,11 @@ export function ProductPage({ slug }: { slug: string }) {
   const [related, setRelated] = useState<CatalogProduct[]>([]);
 
   const [colorIdx, setColorIdx] = useState(0);
-  const [size, setSize] = useState('');
-  const [qty, setQty] = useState(1);
+  const [matrix, setMatrix] = useState<Record<string, Record<string, number>>>({});
   const [imgIdx, setImgIdx] = useState(0);
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [openAcc, setOpenAcc] = useState<string | null>(null);
   const [addedFeedback, setAddedFeedback] = useState(false);
-  const [showOrderForm, setShowOrderForm] = useState(false);
-  const [customer, setCustomer] = useState({ name: '', phone: '', city: '', address: '' });
 
   const { addItem, open: openCart } = useCart();
 
@@ -427,19 +473,14 @@ export function ProductPage({ slug }: { slug: string }) {
     setProduct(undefined);
     setLoadError(false);
     setColorIdx(0);
-    setSize('');
-    setQty(1);
+    setMatrix({});
     setImgIdx(0);
     fetchProduct(slug)
       .then((p) => {
         setProduct(p);
         if (p) {
           const firstColor = p.colors[0];
-          if (firstColor) {
-            setColorIdx(0);
-            const colorSizes = p.sizes.filter((s) => s.color_id === firstColor.id);
-            setSize(findFirstAvailableSize(colorSizes));
-          }
+          if (firstColor) setColorIdx(0);
           fetchProducts()
             .then((all) => setRelated(all.filter((x) => x.slug !== p.slug).slice(0, 3)))
             .catch(() => {});
@@ -501,79 +542,93 @@ export function ProductPage({ slug }: { slug: string }) {
   if (!color) return notFound();
   const images = color.images.filter((image) => image.trim().length > 0);
   const safeImgIdx = Math.max(0, Math.min(imgIdx, images.length - 1));
-  const canBuy = size !== '';
 
-  const colorSizes = product.sizes.filter((s) => s.color_id === color.id);
-  const selectedSize = colorSizes.find((s) => s.size_label === size);
-  const maxQty = selectedSize ? selectedSize.stock : 1;
+  const specs = getProductSpecs(product);
+  const slabs = getWholesaleSlabs(product);
+  const moq = slabs.moq;
 
-  const handleAddToCart = () => {
-    if (!canBuy || !selectedSize) return;
-    addItem({
-      productId: product.id,
-      slug: product.slug,
-      name: product.name,
-      code: product.code,
-      price: product.price,
-      image: images[0] ?? '',
-      color: color.name,
-      size,
-      stock: selectedSize.stock,
-    }, qty);
-    setAddedFeedback(true);
-    setTimeout(() => setAddedFeedback(false), 2500);
+  const sizes = product.sizes.filter((s) => s.color_id === color.id);
+
+  const stockFor = (colorId: string, size: string): number =>
+    product.sizes.find((s) => s.color_id === colorId && s.size_label === size)?.stock ?? 0;
+
+  const setCell = (colorId: string, size: string, qty: number) => {
+    setMatrix((prev) => ({ ...prev, [colorId]: { ...(prev[colorId] ?? {}), [size]: qty } }));
   };
 
-  const handleOrderSubmit = () => {
-    if (!canBuy || !selectedSize) return;
-    if (!customer.name || !customer.phone || !customer.city || !customer.address) return;
+  const totalQty = Object.values(matrix).reduce(
+    (sum, sizesMap) => sum + Object.values(sizesMap).reduce((a, b) => a + b, 0),
+    0
+  );
 
-    const item = {
-      productId: product.id,
-      slug: product.slug,
-      name: product.name,
-      code: product.code,
-      price: product.price,
-      image: images[0] ?? '',
-      color: color.name,
-      size,
-      stock: selectedSize.stock,
-    };
-    addItem(item, qty);
+  const tier = getWholesaleTier(totalQty, slabs);
+  const belowMoq = totalQty > 0 && totalQty < moq;
+  const canOrder = totalQty >= moq;
 
-    const orderUrl = buildWhatsAppUrl({
-      name: product.name,
-      code: product.code,
-      color: color.name,
-      size,
-      quantity: qty,
-      price: product.price,
-      customerName: customer.name,
-      phone: customer.phone,
-      city: customer.city,
-      address: customer.address,
-      notes: `${qty} unit(s) selected`,
-    });
-    window.open(orderUrl, '_blank', 'noopener,noreferrer');
-    setShowOrderForm(false);
+  const buildLines = (): WholesaleSkuLine[] =>
+    Object.entries(matrix).flatMap(([colorId, sizesMap]) =>
+      product.colors
+        .filter((c) => c.id === colorId)
+        .flatMap((c) =>
+          Object.entries(sizesMap)
+            .filter(([, qty]) => qty > 0)
+            .map(([size, qty]) => ({
+              name: product.name,
+              code: product.code,
+              color: c.name,
+              size,
+              qty,
+              price50: slabs.price50,
+              price100: slabs.price100,
+              image: c.images[0] ?? '',
+              slug: product.slug,
+            }))
+        )
+    );
+
+  const handleRequestOrder = () => {
+    if (!canOrder) return;
+    const lines = buildLines();
+    for (const line of lines) {
+      addItem(
+        {
+          productId: product.id,
+          slug: product.slug,
+          name: product.name,
+          code: product.code,
+          price: slabs.price50,
+          price50: slabs.price50,
+          price100: slabs.price100,
+          image: line.image,
+          color: line.color,
+          size: line.size,
+          stock: stockFor(product.colors.find((c) => c.name === line.color)?.id ?? color.id, line.size),
+        },
+        line.qty
+      );
+    }
+    setAddedFeedback(true);
+    setTimeout(() => setAddedFeedback(false), 2500);
     openCart();
   };
 
-  const discount = product.mrp
-    ? Math.round(((product.mrp - product.price) / product.mrp) * 100)
-    : null;
+  const handleWhatsApp = () => {
+    if (!canOrder) return;
+    const url = buildWholesaleWhatsAppUrl({ lines: buildLines() });
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
 
   const toggleAcc = (t: string) => setOpenAcc((o) => (o === t ? null : t));
 
   const sizeChart = product.size_chart;
+  const category = (product.category || 'tee').toLowerCase();
 
   return (
     <div>
       <div className="mx-auto max-w-[1500px] px-6 md:px-12 lg:px-16 xl:px-20 pt-0 pb-5 md:pt-0 md:pb-16">
-        <div className="grid grid-cols-1 lg:grid-cols-[1.8fr_1fr] gap-3 md:gap-8 lg:gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-[1.65fr_1fr] gap-3 md:gap-8 lg:gap-10">
           {/* GALLERY */}
           <div>
-            {/* Mobile: swipe gallery with dots */}
             <div className="lg:hidden">
               <SwipeGallery
                 images={images}
@@ -583,7 +638,6 @@ export function ProductPage({ slug }: { slug: string }) {
                 onIndexChange={handleIndexChange}
               />
             </div>
-            {/* Desktop: thumbnails + main image */}
             <div className="hidden lg:block">
               <DesktopGallery
                 images={images}
@@ -597,246 +651,231 @@ export function ProductPage({ slug }: { slug: string }) {
 
           {/* INFO */}
           <div className="mt-1 md:mt-6 lg:mt-0">
-          <h1 className="text-2xl md:text-4xl lg:text-3xl xl:text-4xl font-semibold text-bone leading-tight">
-            {product.name}
-          </h1>
-          <p className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey mt-1 lg:mt-1.5">{product.code}</p>
+            <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-1.5">
+              Wholesale · {category}
+            </p>
+            <h1 className="text-2xl md:text-4xl lg:text-3xl xl:text-4xl font-semibold text-bone leading-tight">
+              {product.name}
+            </h1>
+            <p className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey mt-1 lg:mt-1.5">{product.code}</p>
 
-          {/* Price */}
-          <div className="mt-3 md:mt-6 lg:mt-4 flex items-center gap-3">
-            <span className="font-price text-crimson text-2xl md:text-3xl lg:text-2xl xl:text-3xl">{formatPrice(product.price)}</span>
-            {product.mrp && (
-              <>
-                <span className="font-price text-grey line-through text-lg md:text-xl lg:text-base">{formatPrice(product.mrp)}</span>
-                <span className="font-label text-crimson text-xs md:text-sm uppercase tracking-wide-2 font-semibold">
-                  Save {discount}%
-                </span>
-              </>
-            )}
-          </div>
+            {/* Product info — admin-entered details only; empty values are hidden */}
+            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-4">
+              {specs.fabric && <Spec label="Fabric" value={specs.fabric} />}
+              {specs.gsm && <Spec label="GSM" value={`${specs.gsm}`} />}
+              {specs.wash && <Spec label="Wash" value={specs.wash} />}
+              {specs.fit && <Spec label="Fit" value={specs.fit} />}
+              {specs.printType && <Spec label="Print" value={specs.printType} />}
+              <Spec label="Sizes" value={SIZE_LABELS.join(' / ')} />
+              <Spec label="Colors" value={product.colors.map((c) => c.name).join(', ')} />
+            </div>
 
-          {/* Color */}
-          <div className="mt-5 md:mt-8 lg:mt-5">
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey">Color</span>
-              <span className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-bone-dim">{color.name}</span>
-            </div>
-            <div className="flex items-center gap-2.5 md:gap-3">
-              {product.colors.map((c: ProductColorRow, i: number) => (
-                <button
-                  key={c.id}
-                  onClick={() => {
-                    setColorIdx(i);
-                    setImgIdx(0);
-                    setQty(1);
-                    const nextSizes = product.sizes.filter((s) => s.color_id === c.id);
-                    setSize(findFirstAvailableSize(nextSizes));
-                  }}
-                  className="relative w-10 h-10 md:w-11 md:h-11 lg:w-10 lg:h-10 flex items-center justify-center"
-                  aria-label={c.name}
-                  title={c.name}
-                >
-                  <span
-                    className={`block w-6 h-6 md:w-6 md:h-6 border transition-all ${
-                      i === colorIdx ? 'border-crimson ring-1 ring-crimson ring-offset-1 ring-offset-paper' : 'border-line hover:border-bone-dim'
-                    }`}
-                    style={{ backgroundColor: c.hex }}
-                  />
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Size */}
-          <div className="mt-4 md:mt-7 lg:mt-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey">Size</span>
-            </div>
-            <div className="flex flex-wrap gap-2.5 md:gap-3">
-              {colorSizes.map((s: ProductSizeRow) => (
-                <button
-                  key={s.id}
-                  onClick={() => { if (s.available) { setSize(s.size_label); setQty(1); } }}
-                  disabled={!s.available}
-                  className={`font-label min-w-[3.25rem] md:min-w-[3.5rem] lg:min-w-[3.25rem] px-3 md:px-3.5 lg:px-3 py-2 md:py-2.5 lg:py-2 text-sm md:text-sm lg:text-[13px] font-medium border transition-all duration-200 ${
-                    !s.available
-                      ? 'border-line text-grey/50 line-through cursor-not-allowed bg-paper-2'
-                      : size === s.size_label
-                        ? 'bg-bone text-paper border-bone'
-                        : 'border-line text-bone-dim hover:border-bone-dim hover:text-bone'
-                  }`}
-                >
-                  {s.size_label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Quantity */}
-          <div className="mt-4 md:mt-7 lg:mt-4">
-            <span className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey block mb-2">Quantity</span>
-            <div className="inline-flex items-center border border-line">
-              <button
-                onClick={() => setQty((q) => Math.max(1, q - 1))}
-                className="w-10 h-10 md:w-11 md:h-11 lg:w-10 lg:h-10 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30"
-                disabled={qty <= 1}
-                aria-label="Decrease quantity"
-              >
-                <Minus size={15} strokeWidth={2} />
-              </button>
-              <span className="w-11 text-center text-bone font-medium tabular-nums text-sm">{qty}</span>
-              <button
-                onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
-                className="w-10 h-10 md:w-11 md:h-11 lg:w-10 lg:h-10 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30"
-                disabled={qty >= maxQty}
-                aria-label="Increase quantity"
-              >
-                <Plus size={15} strokeWidth={2} />
-              </button>
-            </div>
-          </div>
-
-          {/* Add to Cart + Buy Now */}
-          <div className="mt-5 md:mt-8 lg:mt-5 space-y-2 lg:space-y-2">
-            <div className="flex flex-col sm:flex-row gap-2.5 lg:gap-2.5">
-              <button
-                onClick={handleAddToCart}
-                disabled={!canBuy}
-                className="flex-1 inline-flex items-center justify-center gap-2 border border-bone-dim text-bone text-[11px] md:text-xs uppercase tracking-wide-2 font-semibold py-3.5 md:py-4 lg:py-3.5 px-5 transition-all duration-150 hover:bg-bone hover:text-paper disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-bone"
-              >
-                {addedFeedback ? <CheckCircle2 size={16} strokeWidth={2} /> : <ShoppingBag size={16} strokeWidth={1.8} />}
-                {addedFeedback ? 'Added to Cart' : 'Add to Cart'}
-              </button>
-              <button
-                onClick={() => {
-                  if (!canBuy) return;
-                  setShowOrderForm((prev) => !prev);
-                }}
-                disabled={!canBuy}
-                className="flex-1 inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] md:text-xs uppercase tracking-wide-2 font-semibold py-3.5 md:py-4 lg:py-3.5 px-5 transition-all duration-150 hover:bg-crimson-dark disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-crimson"
-              >
-                <Zap size={16} strokeWidth={2} />
-                Order via WhatsApp
-              </button>
-            </div>
-            {showOrderForm && (
-              <div className="rounded border border-line bg-paper-2 p-4 space-y-3">
-                <p className="text-[11px] uppercase tracking-wide-2 text-bone-dim">Customer details</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <input value={customer.name} onChange={(e) => setCustomer((p) => ({ ...p, name: e.target.value }))} placeholder="Full name" className="rounded border border-line bg-white px-3 py-2.5 text-sm text-bone outline-none" />
-                  <input value={customer.phone} onChange={(e) => setCustomer((p) => ({ ...p, phone: e.target.value }))} placeholder="Phone number" className="rounded border border-line bg-white px-3 py-2.5 text-sm text-bone outline-none" />
-                  <input value={customer.city} onChange={(e) => setCustomer((p) => ({ ...p, city: e.target.value }))} placeholder="City" className="rounded border border-line bg-white px-3 py-2.5 text-sm text-bone outline-none sm:col-span-2" />
-                  <textarea value={customer.address} onChange={(e) => setCustomer((p) => ({ ...p, address: e.target.value }))} placeholder="Delivery address" rows={3} className="rounded border border-line bg-white px-3 py-2.5 text-sm text-bone outline-none sm:col-span-2" />
+            {/* Wholesale pricing */}
+            <div className="mt-5 border border-line bg-paper-2 p-4 md:p-5">
+              <p className="font-label text-[10px] uppercase tracking-[0.18em] text-grey mb-3">
+                Wholesale Pricing (per piece)
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className={`border p-3 text-center ${totalQty >= slabTier(moq) ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
+                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">{moq} PCS</p>
+                  <p className="font-price text-lg md:text-xl text-bone mt-1">{formatPerUnit(slabs.price50)}</p>
                 </div>
-                <button
-                  onClick={handleOrderSubmit}
-                  className="w-full inline-flex items-center justify-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold py-3 rounded transition-colors hover:bg-ink"
-                >
-                  <MessageCircle size={16} strokeWidth={2} />
-                  Continue to WhatsApp
-                </button>
+                <div className={`border p-3 text-center ${totalQty >= 100 ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
+                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">100 PCS</p>
+                  <p className="font-price text-lg md:text-xl text-crimson mt-1">{formatPerUnit(slabs.price100)}</p>
+                  {totalQty >= 100 && (
+                    <p className="font-label text-[9px] uppercase tracking-wide-2 text-crimson mt-1">
+                      Applied
+                    </p>
+                  )}
+                </div>
               </div>
-            )}
-            {!canBuy && (
-              <p className="font-label text-[11px] uppercase tracking-wide-2 text-crimson/80">
-                Select a size to unlock checkout
-              </p>
-            )}
-            {addedFeedback && (
-              <p className="text-sm text-green-600 flex items-center gap-1.5">
-                <CheckCircle2 size={16} /> Added to cart — <button onClick={openCart} className="underline font-medium">view cart</button>
-              </p>
-            )}
-            <div className="pt-3 border-t border-line">
-              <p className="text-[11px] leading-relaxed text-bone-soft">
-                Orders are confirmed via WhatsApp. We'll contact you shortly to confirm availability and delivery details.
+              <p className="mt-3 text-[11px] text-bone-soft leading-relaxed">
+                Mixed sizes &amp; colors. {moq} PCS minimum; the 100 PCS rate unlocks automatically.
               </p>
             </div>
-          </div>
 
-          {/* Fabric / Fit / Care */}
-          <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 border-t border-line pt-5">
-            <div>
-              <dt className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Fabric</dt>
-              <dd className="mt-1 text-sm text-bone-dim">{product.fabric}</dd>
-            </div>
-            <div>
-              <dt className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Fit</dt>
-              <dd className="mt-1 text-sm text-bone-dim">{product.fit}</dd>
-            </div>
-            <div>
-              <dt className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Care</dt>
-              <dd className="mt-1 text-sm text-bone-dim leading-snug">{product.care}</dd>
-            </div>
-          </div>
-
-          {/* Accordion: Size Chart + Shipping Info + Return Policy */}
-          <div className="mt-6 border-t border-line">
-            {ACCORDION.map((a) => (
-              (a.body !== 'sizechart' || sizeChart.length > 0) && (
-              <div key={a.title} className="border-b border-line">
-                <button
-                  onClick={() => toggleAcc(a.title)}
-                  className="w-full flex items-center justify-between py-4 text-left"
-                >
-                  <span className="font-label text-[11px] uppercase tracking-wide-2 text-bone-dim font-medium">
-                    {a.title}
-                  </span>
-                  <ChevronDown
-                    size={16}
-                    className={`text-grey transition-transform duration-200 ${
-                      openAcc === a.title ? 'rotate-180' : ''
-                    }`}
-                    strokeWidth={1.8}
-                  />
-                </button>
-                {openAcc === a.title && (
-                  <div className="pb-5 text-sm text-grey leading-relaxed animate-slide-down">
-                    {a.body === 'sizechart' && (
-                      <div className="overflow-x-auto -mx-5 px-5 md:mx-0 md:px-0">
-                        <table className="w-full text-sm min-w-[320px]">
-                          <thead>
-                            <tr className="text-[10px] uppercase tracking-wide-2 text-grey border-b border-line">
-                              <th className="text-left py-2 pr-4 font-medium">Size</th>
-                              <th className="text-left py-2 pr-4 font-medium">Chest (in)</th>
-                              <th className="text-left py-2 pr-4 font-medium">Length (in)</th>
-                              <th className="text-left py-2 font-medium">Shoulder (in)</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {sizeChart.map((r: SizeChartRow) => (
-                              <tr key={r.id} className="border-b border-line last:border-0">
-                                <td className="py-2.5 pr-4 font-medium text-bone">{r.size_label}</td>
-                                <td className="py-2.5 pr-4 text-bone-dim">{r.chest}</td>
-                                <td className="py-2.5 pr-4 text-bone-dim">{r.length}</td>
-                                <td className="py-2.5 text-bone-dim">{r.shoulder}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+            {/* Wholesale quantity matrix */}
+            <div className="mt-5">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey">
+                  Wholesale Quantity
+                </span>
+                <span className="font-label text-[10px] uppercase tracking-wide-2 text-bone-soft">
+                  Add pieces per color &amp; size
+                </span>
+              </div>
+              <div className="border border-line overflow-hidden">
+                <div className="grid grid-cols-[1.3fr_repeat(3,1fr)] bg-paper-2 border-b border-line">
+                  <span className="px-3 py-2 font-label text-[10px] uppercase tracking-wide-2 text-grey">Color</span>
+                  {SIZE_LABELS.map((s) => (
+                    <span key={s} className="px-1 py-2 text-center font-label text-[11px] uppercase tracking-wide-2 text-bone font-semibold">
+                      {s}
+                    </span>
+                  ))}
+                </div>
+                {product.colors.map((c) => (
+                  <div key={c.id} className="grid grid-cols-[1.3fr_repeat(3,1fr)] border-b border-line last:border-0">
+                    <div className="px-3 py-2 flex items-center gap-2 min-w-0">
+                      <span className="w-3 h-3 border border-line shrink-0" style={{ backgroundColor: c.hex }} />
+                      <span className="text-[11px] md:text-xs text-bone truncate">{c.name}</span>
+                    </div>
+                    {SIZE_LABELS.map((s) => (
+                      <div key={`${c.id}-${s}`} className="px-1 py-2">
+                        <MatrixCell
+                          label={`${c.name} ${s}`}
+                          qty={matrix[c.id]?.[s] ?? 0}
+                          stock={stockFor(c.id, s)}
+                          onChange={(q) => setCell(c.id, s, q)}
+                        />
                       </div>
-                    )}
-                    {a.body === 'shipping' && (
-                      <div className="space-y-2">
-                        <p>Ships pan-India in 2–5 business days via tracked courier.</p>
-                        <p>Free shipping on orders above ₹999.</p>
-                        <p>Customer confirmation happens on WhatsApp before dispatch.</p>
-                      </div>
-                    )}
-                    {a.body === 'returns' && (
-                      <div className="space-y-2">
-                        <p>7-day exchange for size issues only — item must be unworn with tags intact.</p>
-                        <p>No returns on discounted or sale items.</p>
-                        <p>Reach out on WhatsApp to start an exchange.</p>
-                      </div>
-                    )}
+                    ))}
                   </div>
+                ))}
+              </div>
+
+              {/* Totals + validation */}
+              <div className="mt-4 bg-ink p-4 md:p-5 text-white">
+                <div className="flex items-center justify-between">
+                  <span className="font-label text-[10px] uppercase tracking-wide-2 text-white/50">Total Quantity</span>
+                  <span className="font-price text-xl md:text-2xl text-white tabular-nums">{totalQty} PCS</span>
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="font-label text-[10px] uppercase tracking-wide-2 text-white/50">Wholesale Price</span>
+                  <span className="font-price text-base md:text-lg text-white/90 tabular-nums">
+                    {totalQty >= moq && slabs.price50 > 0 ? `${formatPerUnit(tier.unitPrice)} × ${totalQty}` : '—'}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2">
+                  <span className="font-label text-[11px] uppercase tracking-wide-2 text-white/70">Total</span>
+                  <span className="font-price text-2xl md:text-3xl text-crimson tabular-nums">
+                    {totalQty >= moq ? formatPrice(tier.total) : formatPrice(0)}
+                  </span>
+                </div>
+              </div>
+
+              {/* MOQ status */}
+              <div className="mt-3 space-y-2">
+                {totalQty === 0 && (
+                  <p className="font-label text-[11px] uppercase tracking-wide-2 text-bone-soft">
+                    Build a mix of {moq} PCS or more to place a wholesale order.
+                  </p>
+                )}
+                {belowMoq && (
+                  <p className="flex items-center gap-2 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3">
+                    <AlertTriangle size={16} strokeWidth={1.8} className="shrink-0" />
+                    Minimum wholesale order is {moq} PCS. Add {moq - totalQty} more PCS — mix any colors and sizes.
+                  </p>
+                )}
+                {canOrder && totalQty < 100 && (
+                  <p className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-3">
+                    <CheckCircle2 size={16} strokeWidth={1.8} className="shrink-0" />
+                    Wholesale MOQ reached.
+                  </p>
+                )}
+                {totalQty >= 100 && (
+                  <p className="flex items-center gap-2 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3 font-medium">
+                    <CheckCircle2 size={16} strokeWidth={1.8} className="shrink-0" />
+                    You unlocked the {formatPerUnit(slabs.price100)} wholesale price.
+                  </p>
                 )}
               </div>
-              )
-            ))}
+            </div>
+
+            {/* CTAs */}
+            <div className="mt-5 space-y-2">
+              <button
+                onClick={handleRequestOrder}
+                disabled={!canOrder}
+                className="w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] md:text-xs uppercase tracking-wide-2 font-semibold py-4 px-5 transition-all duration-150 hover:bg-crimson-dark disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {addedFeedback ? <CheckCircle2 size={16} strokeWidth={2} /> : <ShoppingBag size={16} strokeWidth={1.8} />}
+                {addedFeedback ? 'Added to Wholesale Order' : 'Request Wholesale Order'}
+              </button>
+              <button
+                onClick={handleWhatsApp}
+                disabled={!canOrder}
+                className="w-full inline-flex items-center justify-center gap-2 border border-bone-dim text-bone text-[11px] md:text-xs uppercase tracking-wide-2 font-semibold py-4 px-5 transition-all duration-150 hover:bg-bone hover:text-paper disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <MessageCircle size={16} strokeWidth={2} />
+                Order On WhatsApp
+              </button>
+              {!canOrder && totalQty > 0 && (
+                <p className="flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey">
+                  <Lock size={12} strokeWidth={2} /> Order unlocks at {moq} PCS.
+                </p>
+              )}
+              <div className="pt-3 border-t border-line">
+                <p className="text-[11px] leading-relaxed text-bone-soft">
+                  Wholesale orders are confirmed via WhatsApp. We'll confirm availability, pricing and delivery details before dispatch.
+                </p>
+              </div>
+            </div>
+
+            {/* Accordion */}
+            <div className="mt-6 border-t border-line">
+              {ACCORDION.map((a) => (
+                (a.body !== 'sizechart' || sizeChart.length > 0) && (
+                <div key={a.title} className="border-b border-line">
+                  <button
+                    onClick={() => toggleAcc(a.title)}
+                    className="w-full flex items-center justify-between py-4 text-left"
+                  >
+                    <span className="font-label text-[11px] uppercase tracking-wide-2 text-bone-dim font-medium">
+                      {a.title}
+                    </span>
+                    <ChevronDown
+                      size={16}
+                      className={`text-grey transition-transform duration-200 ${
+                        openAcc === a.title ? 'rotate-180' : ''
+                      }`}
+                      strokeWidth={1.8}
+                    />
+                  </button>
+                  {openAcc === a.title && (
+                    <div className="pb-5 text-sm text-grey leading-relaxed animate-slide-down">
+                      {a.body === 'sizechart' && (
+                        <div className="overflow-x-auto -mx-5 px-5 md:mx-0 md:px-0">
+                          <table className="w-full text-sm min-w-[320px]">
+                            <thead>
+                              <tr className="text-[10px] uppercase tracking-wide-2 text-grey border-b border-line">
+                                <th className="text-left py-2 pr-4 font-medium">Size</th>
+                                <th className="text-left py-2 pr-4 font-medium">Chest (in)</th>
+                                <th className="text-left py-2 pr-4 font-medium">Length (in)</th>
+                                <th className="text-left py-2 font-medium">Shoulder (in)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sizeChart.map((r: SizeChartRow) => (
+                                <tr key={r.id} className="border-b border-line last:border-0">
+                                  <td className="py-2.5 pr-4 font-medium text-bone">{r.size_label}</td>
+                                  <td className="py-2.5 pr-4 text-bone-dim">{r.chest}</td>
+                                  <td className="py-2.5 pr-4 text-bone-dim">{r.length}</td>
+                                  <td className="py-2.5 text-bone-dim">{r.shoulder}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      {a.body === 'wholesale' && (
+                        <div className="space-y-2">
+                          <p>MOQ {moq} PCS per design — mixed sizes (M / L / XL) and colors allowed.</p>
+                          <p>Slab pricing: {moq} PCS at {formatPerUnit(slabs.price50)}; 100+ PCS at {formatPerUnit(slabs.price100)}.</p>
+                          <p>Pan-India delivery. Orders confirmed personally on WhatsApp before dispatch.</p>
+                          <p>Retailers and resellers: build your mix on this page and request the order — no account needed.</p>
+                        </div>
+                      )}
+                      {a.body === 'care' && (
+                        <p className="space-y-2">{product.care}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+                )
+              ))}
+            </div>
           </div>
-        </div>
         </div>
       </div>
 
@@ -856,7 +895,7 @@ export function ProductPage({ slug }: { slug: string }) {
         <section className="border-t border-line py-12 md:py-16">
           <div className="mx-auto px-3 md:px-12 lg:px-16 xl:px-20">
             <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone mb-4 md:mb-10">
-              You May Also Like
+              More Wholesale Designs
             </h2>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-8">
               {related.map((p, i) => (
@@ -868,4 +907,17 @@ export function ProductPage({ slug }: { slug: string }) {
       )}
     </div>
   );
+}
+
+function Spec({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="font-label text-[10px] uppercase tracking-wide-2 text-grey">{label}</dt>
+      <dd className="mt-0.5 text-sm text-bone-dim leading-snug">{value}</dd>
+    </div>
+  );
+}
+
+function slabTier(moq: number): number {
+  return moq;
 }

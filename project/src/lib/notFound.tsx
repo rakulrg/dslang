@@ -8,10 +8,10 @@ export function notFound(): import('react').ReactElement {
         This page sold out.
       </p>
       <a
-        href="#/shop"
+        href="#/collection"
         className="mt-8 inline-flex items-center text-[11px] uppercase tracking-wide-2 font-semibold bg-crimson text-white px-6 py-4 hover:bg-crimson-dark transition-colors"
       >
-        Back To Shop
+        Browse Wholesale Collection
       </a>
     </div>
   );

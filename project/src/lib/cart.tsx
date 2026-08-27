@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
-import { formatPrice } from '@/lib/catalog';
+import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
+import { formatPrice, WHOLESALE_TIER_100 } from '@/lib/catalog';
 
 export interface CartItem {
   productId: string;
@@ -7,6 +7,8 @@ export interface CartItem {
   name: string;
   code: string;
   price: number;
+  price50: number;
+  price100: number;
   image: string;
   color: string;
   size: string;
@@ -73,7 +75,29 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const close = useCallback(() => setIsOpen(false), []);
 
   const count = items.reduce((s, i) => s + i.qty, 0);
-  const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0);
+
+  /**
+   * Wholesale subtotal — the per-piece tier is decided per product by that
+   * product's total quantity across all colors/sizes (100+ = ₹100 slab).
+   */
+  const subtotal = useMemo(() => {
+    const byProduct = new Map<string, { qty: number; price50: number; price100: number; amount: number }>();
+    for (const item of items) {
+      const group = byProduct.get(item.productId) ?? { qty: 0, price50: item.price50, price100: item.price100 ?? 0, amount: 0 };
+      group.qty += item.qty;
+      byProduct.set(item.productId, group);
+    }
+    let total = 0;
+    for (const [groupId, group] of byProduct) {
+      const unit = group.qty >= WHOLESALE_TIER_100 && group.price100 > 0 ? group.price100 : group.price50;
+      let groupAmount = 0;
+      for (const item of items) {
+        if (item.productId === groupId) groupAmount += unit * item.qty;
+      }
+      total += groupAmount;
+    }
+    return total;
+  }, [items]);
 
   return (
     <CartContext.Provider value={{ items, count, subtotal, addItem, removeItem, updateQty, clear, isOpen, open, close }}>

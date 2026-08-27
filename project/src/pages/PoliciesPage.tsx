@@ -1,43 +1,46 @@
 import { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { FREE_SHIPPING_THRESHOLD } from '@/lib/catalog';
+import { useSiteSettings } from '@/lib/settings';
 
 const POLICY_TABS = [
+  { id: 'wholesale', label: 'Wholesale Terms' },
   { id: 'shipping', label: 'Shipping' },
-  { id: 'returns', label: 'Returns' },
-  { id: 'terms', label: 'Terms' },
+  { id: 'returns', label: 'Returns & Claims' },
   { id: 'privacy', label: 'Privacy' },
 ];
 
-const CONTENT: Record<string, { q: string; a: string }[]> = {
+const CONTENT = (moq: number): Record<string, { q: string; a: string }[]> => ({
+  wholesale: [
+    { q: 'Minimum Order Quantity', a: `Every wholesale order requires a minimum of ${moq} PCS of the same design. The mix is up to you — any combination of available colors and sizes (M / L / XL) counts toward the same MOQ.` },
+    { q: 'Wholesale Pricing', a: `Each design carries two wholesale slabs: a ${moq}-PCS price and a lower 100-PCS price shown per piece on the product page. Orders of 100+ PCS automatically get the higher tier across the entire order.` },
+    { q: 'How To Order', a: 'Build your mix on the product page or add products to the wholesale order. Request the order on WhatsApp with your store name, city and delivery address — our team confirms availability and sends a final quote before dispatch.' },
+    { q: 'Who Can Order', a: 'We work with streetwear stores, boutiques, online resellers and independent brands. Wholesale pricing and MOQ apply to all confirmed wholesale orders.' },
+  ],
   shipping: [
-    { q: 'Processing Time', a: 'Orders are processed within 24–48 hours of confirmation on WhatsApp. You will receive a tracking link once your order ships.' },
-    { q: 'Delivery Time', a: 'Pan-India delivery takes 2–5 business days depending on your location. Remote areas may take up to 7 days.' },
-    { q: 'Shipping Charges', a: `Free shipping on orders over ₹${FREE_SHIPPING_THRESHOLD}. A flat ₹60 applies on orders below that. COD is available in select regions — confirm on WhatsApp before ordering.` },
-    { q: 'Order Confirmation', a: 'Since checkout happens on WhatsApp, every order is personally confirmed by our team before dispatch. Nothing ships without your confirmation.' },
+    { q: 'Processing Time', a: 'Wholesale orders are processed within 2–4 working days of confirmation on WhatsApp. You will receive a tracking link once your order ships.' },
+    { q: 'Dispatch', a: 'Dispatched from Tiruppur, Tamil Nadu. Pan-India delivery takes 3–7 business days depending on your location. Remote areas may take up to 10 days.' },
+    { q: 'Shipping Charges', a: 'Shipping is quoted per order on WhatsApp based on weight and destination. Bulk orders often qualify for subsidised rates — confirm before dispatch.' },
+    { q: 'Order Confirmation', a: 'Nothing ships without your confirmation. Every order is personally reviewed by the DSLANG team on WhatsApp before dispatch.' },
   ],
   returns: [
-    { q: 'Exchange Policy', a: '7-day exchange for size issues only. The item must be unworn, unwashed, and have all original tags intact. Reach out on WhatsApp within 7 days of delivery to start an exchange.' },
-    { q: 'Non-Returnable Items', a: 'Discounted, sale, or clearance items are final sale and cannot be exchanged or returned.' },
-    { q: 'Damaged Or Wrong Item', a: 'If you receive a damaged or incorrect item, contact us on WhatsApp within 48 hours of delivery with a photo. We will replace it at no cost.' },
-    { q: 'Refunds', a: 'Refunds are issued only in cases where a replacement is not available. Refunds are processed to the original payment method within 5–7 business days.' },
-  ],
-  terms: [
-    { q: 'How To Order', a: 'Browse products on the site, add items to your cart, and place your order directly through WhatsApp. There is no on-site payment gateway — all purchases are confirmed and completed via WhatsApp.' },
-    { q: 'Pricing', a: 'All prices are listed in Indian Rupees (₹) and are inclusive of applicable taxes. Prices may change between drops. The price confirmed on WhatsApp at the time of order is final.' },
-    { q: 'Product Representation', a: 'We do our best to represent colours and fits accurately, but fabric colours may vary slightly from screen to screen due to photography lighting and display settings.' },
+    { q: 'Quality Check', a: 'Every piece is quality-checked before dispatch. If you receive a damaged or incorrect item, contact us on WhatsApp within 48 hours of delivery with photos. We will replace it at no cost.' },
+    { q: 'Exchange Policy', a: '7-day exchange for size issues on wholesale orders. The items must be unworn, unwashed, and have all original tags intact. Reach out on WhatsApp within 7 days of delivery to arrange an exchange.' },
+    { q: 'Sale Or Clearance Lots', a: 'Clearance and labelled-final-sale lots are non-returnable and non-exchangeable.' },
+    { q: 'Claims', a: 'Damage, shortage or dispatch-error claims must be raised within 48 hours of delivery. Claims received later cannot be processed.' },
   ],
   privacy: [
-    { q: 'What We Collect', a: 'When you place an order via WhatsApp, we collect your name, contact number, and delivery address — only what is needed to ship your order.' },
-    { q: 'How We Use It', a: 'Your information is used solely for order processing, delivery, and order-related communication. We do not send promotional messages without your consent.' },
-    { q: 'No Third-Party Sharing', a: 'We never sell or share your personal information with third parties for marketing. Courier partners receive only the details needed to deliver your order.' },
+    { q: 'What We Collect', a: 'When you place a wholesale order via WhatsApp, we collect your store name, contact number, city and delivery address — only what is needed to process and ship your order.' },
+    { q: 'How We Use It', a: 'Your information is used solely for order processing, delivery and order-related communication. We do not share your details with any marketplace or third-party marketing.' },
+    { q: 'No Third-Party Sharing', a: 'We never sell or share your personal or business information with third parties for marketing. Courier partners receive only the details needed to deliver your order.' },
     { q: 'Your Data', a: 'You can request deletion of your contact information from our records at any time by messaging us on WhatsApp.' },
   ],
-};
+});
 
 export function PoliciesPage() {
-  const [tab, setTab] = useState('shipping');
+  const [tab, setTab] = useState('wholesale');
   const [open, setOpen] = useState<number | null>(0);
+  const { settings } = useSiteSettings();
+  const content = CONTENT(settings.default_moq);
 
   return (
     <div className="pt-4 pb-12 md:pt-8 md:pb-20">
@@ -65,7 +68,7 @@ export function PoliciesPage() {
 
         {/* Accordion */}
         <div className="mt-8">
-          {CONTENT[tab].map((item, i) => (
+          {content[tab].map((item, i) => (
             <div key={i} className="border-b border-line">
               <button
                 onClick={() => setOpen(open === i ? null : i)}
@@ -90,7 +93,7 @@ export function PoliciesPage() {
         </div>
 
         <div className="mt-8 border-t border-line pt-6 text-sm text-grey">
-          <p>Questions about any of this? Message us on WhatsApp at +91 99446 76178 — we are happy to clarify.</p>
+          <p>Questions about any of this? Message us on WhatsApp at +91 {settings.whatsapp_number} — we are happy to clarify.</p>
         </div>
       </div>
     </div>

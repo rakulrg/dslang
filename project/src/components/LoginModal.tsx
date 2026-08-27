@@ -167,7 +167,7 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
             onChange={(e) => setOptIn(e.target.checked)}
             className="w-4 h-4 accent-crimson"
           />
-          <span className="text-xs text-bone-soft">Email me with news and offers</span>
+          <span className="text-xs text-bone-soft">Email me wholesale drops, clearance lots & offers</span>
         </label>
 
         <p className="mt-5 text-center text-xs text-grey">

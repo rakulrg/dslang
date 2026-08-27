@@ -1,0 +1,111 @@
+import { useEffect, useState } from 'react';
+import { MessageCircle } from 'lucide-react';
+import { ProductCard } from '@/components/ProductCard';
+import { fetchProducts, buildWhatsAppGeneralUrl, type CatalogProduct } from '@/lib/catalog';
+import { useSiteSettings } from '@/lib/settings';
+
+export function CollectionPage() {
+  const [filter, setFilter] = useState('all');
+  const [products, setProducts] = useState<CatalogProduct[] | null>(null);
+  const [error, setError] = useState(false);
+  const { settings } = useSiteSettings();
+
+  useEffect(() => {
+    fetchProducts()
+      .then((p) => { setProducts(p); setError(false); })
+      .catch(() => setError(true));
+  }, []);
+
+  const categories = Array.from(
+    new Set((products ?? []).map((p) => (p.category || 'tee').toLowerCase()))
+  ).sort();
+  const activeCat = filter === 'all' ? null : filter;
+
+  const filtered = (products ?? []).filter((p) => {
+    if (filter === 'all') return true;
+    return (p.category || 'tee').toLowerCase() === filter;
+  });
+
+  return (
+    <div className="pb-12 md:pb-20 pt-3">
+      <div className="mx-auto px-2 md:px-12 lg:px-20 xl:px-28">
+        {/* Header */}
+        <div className="px-2 md:px-0 border-b border-line pb-4 md:pb-8">
+          <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">
+            For Stores &amp; Resellers
+          </p>
+          <h1 className="font-display text-[1.75rem] md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
+            Wholesale Collection
+          </h1>
+          <p className="mt-3 text-bone-dim max-w-xl leading-relaxed text-sm md:text-base">
+            {settings.default_moq} PCS MOQ with mixed sizes and colors. Order direct on WhatsApp · {settings.dispatch_note} · {settings.delivery_note} Delivery.
+          </p>
+        </div>
+
+        {/* Filters */}
+        <div className="flex items-center gap-3 mt-3 mb-5 overflow-x-auto no-scrollbar">
+          {[{ label: 'All', value: 'all' }, ...categories.map((c) => ({ label: c, value: c }))].map((f) => (
+            <button
+              key={f.value}
+              onClick={() => setFilter(f.value)}
+              className={`shrink-0 font-label text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-150 ${
+                filter === f.value
+                  ? 'bg-bone text-white border-bone'
+                  : 'border-line text-bone-dim hover:border-bone-dim hover:text-bone'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+          <span className="ml-auto shrink-0 font-label text-[11px] uppercase tracking-wide-2 text-grey">
+            {filtered.length} {filtered.length === 1 ? 'Design' : 'Designs'}
+          </span>
+        </div>
+
+        {error ? (
+          <div className="py-16 text-center">
+            <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">Something went wrong</p>
+            <p className="mt-2 text-sm text-grey">Could not load the collection. Please try again.</p>
+          </div>
+        ) : products === null ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="aspect-[3/4] bg-paper-3 border border-line animate-pulse" />
+            ))}
+          </div>
+        ) : filtered.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8">
+            {filtered.map((p, i) => (
+              <ProductCard key={p.id} product={p} index={i} />
+            ))}
+          </div>
+        ) : (
+          <div className="py-16 text-center">
+            <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No Designs</p>
+            <p className="mt-2 text-sm text-grey">{activeCat ? `Nothing in "${activeCat}" yet. ` : ''}Next drop loading. Stay close.</p>
+          </div>
+        )}
+
+        {/* Wholesale CTA */}
+        <div className="mt-10 bg-ink p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div>
+            <p className="font-label text-[11px] uppercase tracking-wide-2 text-white font-semibold">
+              Need a different mix or quantity?
+            </p>
+            <p className="mt-1 text-sm text-white/60">
+              Message us with your color and size combination — we'll confirm pricing and availability.
+            </p>
+          </div>
+          <a
+            href={buildWhatsAppGeneralUrl("Hi DSLANG! I have a question about the wholesale collection.")}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-4 hover:bg-crimson-dark transition-colors shrink-0"
+          >
+            <MessageCircle size={16} strokeWidth={2} /> Order On WhatsApp
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
