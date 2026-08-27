@@ -13,7 +13,6 @@ import {
   Check,
   ExternalLink,
   Upload,
-  ShoppingBag,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
@@ -36,14 +35,11 @@ import {
   uploadProductImage,
   uploadHeroImage,
   hasWholesaleColumns,
-  hasRebuildColumns,
   hasHeroCtaColumns,
   hasOrderMinColumns,
   adminFetchSiteSettings,
   adminSaveSiteSettings,
-  adminFetchOrders,
   type ProductInput,
-  type WholesaleOrderRow,
 } from '@/lib/admin';
 import { hasPublishColumns } from '@/lib/catalog';
 import type { SiteSettings } from '@/lib/settings';
@@ -51,7 +47,7 @@ import { setCachedSettings, fetchSiteSettings } from '@/lib/settings';
 import type { CatalogProduct, HeroSlideRow, ProductColorRow } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
 
-type Tab = 'products' | 'hero' | 'settings' | 'orders';
+type Tab = 'products' | 'hero' | 'settings';
 
 const EXPECTED_RATIO = 4 / 5;
 const RATIO_TOLERANCE = 0.03;
@@ -91,14 +87,11 @@ export function AdminDashboard() {
   const [creating, setCreating] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [wholesaleReady, setWholesaleReady] = useState(false);
-  const [rebuildReady, setRebuildReady] = useState(false);
   const [publishReady, setPublishReady] = useState(false);
   const [heroCtaReady, setHeroCtaReady] = useState(false);
   const [orderMinReady, setOrderMinReady] = useState(false);
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [settingsError, setSettingsError] = useState('');
-  const [orders, setOrders] = useState<WholesaleOrderRow[] | null>(null);
-  const [ordersError, setOrdersError] = useState('');
 
   const loadProducts = useCallback(async () => {
     try {
@@ -130,39 +123,19 @@ export function AdminDashboard() {
     }
   }, []);
 
-  const loadOrders = useCallback(async () => {
-    try {
-      setOrdersError('');
-      setOrders(await adminFetchOrders());
-    } catch (err) {
-      setOrders(null);
-      setOrdersError(err instanceof Error ? err.message : 'Failed to load orders');
-    }
-  }, []);
-
   useEffect(() => {
     loadProducts();
     loadHero();
   }, [loadProducts, loadHero]);
 
   useEffect(() => {
-    if (tab === 'orders') void loadOrders();
-  }, [tab, loadOrders]);
-
-  useEffect(() => {
     let cancelled = false;
     hasWholesaleColumns().then((ok) => { if (!cancelled) setWholesaleReady(ok); });
-    hasRebuildColumns().then((ok) => { if (!cancelled) setRebuildReady(ok); });
     hasPublishColumns().then((ok) => { if (!cancelled) setPublishReady(ok); });
     hasHeroCtaColumns().then((ok) => { if (!cancelled) setHeroCtaReady(ok); });
     hasOrderMinColumns().then((ok) => { if (!cancelled) setOrderMinReady(ok); });
     return () => { cancelled = true; };
   }, []);
-
-  const handleTogglePublish = async (id: string, published: boolean) => {
-    await adminUpdateProduct(id, { published });
-    await loadProducts();
-  };
 
   const loadSiteSettingsCache = useCallback(async () => {
     try {
@@ -203,10 +176,10 @@ export function AdminDashboard() {
             </button>
           </div>
         </div>
-        <div className="flex gap-1 px-3 pb-2">
+        <div className="flex gap-1 px-3 pb-2 overflow-x-auto no-scrollbar items-stretch">
           <button
             onClick={() => { setTab('products'); setEditingId(null); setCreating(false); }}
-            className={`flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
+            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
               tab === 'products' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
@@ -214,23 +187,15 @@ export function AdminDashboard() {
           </button>
           <button
             onClick={() => { setTab('hero'); setEditingId(null); setCreating(false); }}
-            className={`flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
+            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
               tab === 'hero' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <ImageIcon size={13} strokeWidth={1.8} /> Homepage
           </button>
           <button
-            onClick={() => setTab('orders')}
-            className={`flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'orders' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <ShoppingBag size={13} strokeWidth={1.8} /> Orders
-          </button>
-          <button
             onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); void loadSettings(); }}
-            className={`flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
+            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
               tab === 'settings' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
@@ -266,14 +231,6 @@ export function AdminDashboard() {
             <ImageIcon size={16} strokeWidth={1.8} /> Homepage
           </button>
           <button
-            onClick={() => { setTab('orders'); setEditingId(null); setCreating(false); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'orders' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <ShoppingBag size={16} strokeWidth={1.8} /> Orders
-          </button>
-          <button
             onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); void loadSettings(); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
               tab === 'settings' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
@@ -307,7 +264,7 @@ export function AdminDashboard() {
         {/* Top bar */}
         <header className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-line px-4 sm:px-6 h-12 sm:h-14 flex items-center justify-between gap-3">
           <h1 className="font-display text-lg sm:text-2xl tracking-wide-2 text-bone uppercase">
-            {tab === 'products' ? 'Products' : tab === 'hero' ? 'Homepage' : tab === 'orders' ? 'Wholesale Orders' : 'Wholesale Settings'}
+            {tab === 'products' ? 'Products' : tab === 'hero' ? 'Homepage' : 'Wholesale Settings'}
           </h1>
           {tab === 'products' && !creating && !editingProduct && (
             <button
@@ -337,7 +294,6 @@ export function AdminDashboard() {
             creating ? (
               <ProductForm
                 wholesaleReady={wholesaleReady}
-                rebuildReady={rebuildReady}
                 publishReady={publishReady}
                 onSave={async (input) => { await adminCreateProduct(input); await loadProducts(); setCreating(false); }}
                 onCancel={() => setCreating(false)}
@@ -346,7 +302,6 @@ export function AdminDashboard() {
               <ProductEditor
                 product={editingProduct}
                 wholesaleReady={wholesaleReady}
-                rebuildReady={rebuildReady}
                 publishReady={publishReady}
                 onSave={async (id, input) => { await adminUpdateProduct(id, input); await loadProducts(); setEditingId(null); }}
                 onCancel={() => setEditingId(null)}
@@ -357,7 +312,6 @@ export function AdminDashboard() {
                 products={products}
                 onEdit={(id) => setEditingId(id)}
                 onDelete={async (id) => { await adminDeleteProduct(id); await loadProducts(); }}
-                onTogglePublish={handleTogglePublish}
               />
             )
           )}
@@ -388,14 +342,6 @@ export function AdminDashboard() {
               onSave={async (s) => { await adminSaveSiteSettings(s); setSettings(s); await loadSiteSettingsCache(); }}
             />
           )}
-
-          {tab === 'orders' && (
-            <OrdersTab
-              orders={orders}
-              error={ordersError}
-              onLoad={loadOrders}
-            />
-          )}
         </div>
       </div>
     </div>
@@ -408,15 +354,11 @@ function ProductList({
   products,
   onEdit,
   onDelete,
-  onTogglePublish,
 }: {
   products: CatalogProduct[] | null;
   onEdit: (id: string) => void;
   onDelete: (id: string) => Promise<void>;
-  onTogglePublish: (id: string, published: boolean) => Promise<void>;
 }) {
-  const [visibility, setVisibility] = useState<'all' | 'published' | 'unpublished'>('all');
-
   if (products === null) {
     return (
       <div className="space-y-3">
@@ -436,35 +378,9 @@ function ProductList({
     );
   }
 
-  const visible = products.filter((p) => {
-    if (visibility === 'published') return p.published !== false;
-    if (visibility === 'unpublished') return p.published === false;
-    return true;
-  });
-
   return (
     <div className="space-y-2.5 sm:space-y-3">
-      <div className="flex items-center gap-2 flex-wrap">
-        {(['all', 'published', 'unpublished'] as const).map((v) => (
-          <button
-            key={v}
-            onClick={() => setVisibility(v)}
-            className={`text-[11px] uppercase tracking-wide-2 font-semibold px-3 py-1.5 rounded border transition-colors ${
-              visibility === v ? 'bg-bone text-paper border-bone' : 'text-bone-dim border-line hover:border-bone-dim'
-            }`}
-          >
-            {v === 'all' ? `All (${products.length})` : v === 'published' ? `Published (${products.filter((p) => p.published !== false).length})` : `Unpublished (${products.filter((p) => p.published === false).length})`}
-          </button>
-        ))}
-      </div>
-
-      {visible.length === 0 && (
-        <div className="text-center py-16 border border-line rounded bg-white">
-          <p className="font-label text-2xl uppercase tracking-wide-2 text-grey">Nothing here</p>
-        </div>
-      )}
-
-      {visible.map((p) => {
+      {products.map((p) => {
         const primary = p.colors[0];
         const isPublished = p.published !== false;
         return (
@@ -508,16 +424,6 @@ function ProductList({
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
-                  onClick={() => onTogglePublish(p.id, !isPublished)}
-                  className={`text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold px-2.5 sm:px-3 py-1.5 sm:py-2 border rounded transition-colors ${
-                    isPublished
-                      ? 'text-bone-dim border-line hover:border-bone-dim hover:text-bone'
-                      : 'text-green-700 border-green-600/40 hover:border-green-700'
-                  }`}
-                >
-                  {isPublished ? 'Hide' : 'Publish'}
-                </button>
-                <button
                   onClick={() => onEdit(p.id)}
                   className="text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson transition-colors px-2.5 sm:px-3 py-1.5 sm:py-2 border border-line rounded hover:border-crimson"
                 >
@@ -545,13 +451,11 @@ function ProductForm({
   onSave,
   onCancel,
   wholesaleReady,
-  rebuildReady,
   publishReady,
 }: {
   onSave: (input: ProductInput) => Promise<void>;
   onCancel: () => void;
   wholesaleReady: boolean;
-  rebuildReady: boolean;
   publishReady: boolean;
 }) {
   const [form, setForm] = useState<ProductInput>({
@@ -645,14 +549,6 @@ function ProductForm({
           Wholesale pricing fields will appear after the wholesale migration is applied to the database.
         </p>
       )}
-      <Field label="Description">
-        <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className={inputCls} />
-      </Field>
-      {rebuildReady && (
-        <Field label="Details" hint="Extra product info (fabric, fit, wash, care, notes) shown on the product page">
-          <textarea value={form.details} onChange={(e) => setForm({ ...form, details: e.target.value })} rows={3} className={inputCls} />
-        </Field>
-      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <div>
           <label className="text-[11px] uppercase tracking-wide-2 text-grey block mb-2">Available Sizes</label>
@@ -685,7 +581,7 @@ function ProductForm({
         {publishReady && (
           <label className="flex items-end gap-2">
             <input type="checkbox" checked={form.published} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
-            <span className="text-sm text-bone-dim">Published (visible on site)</span>
+            <span className="text-sm text-bone-dim">Available (visible on the wholesale storefront)</span>
           </label>
         )}
         <label className="flex items-end gap-2">
@@ -723,7 +619,6 @@ function ProductEditor({
   onCancel,
   onChanged,
   wholesaleReady,
-  rebuildReady,
   publishReady,
 }: {
   product: CatalogProduct;
@@ -731,7 +626,6 @@ function ProductEditor({
   onCancel: () => void;
   onChanged: () => Promise<void>;
   wholesaleReady: boolean;
-  rebuildReady: boolean;
   publishReady: boolean;
 }) {
   const existingSizes = Array.isArray(product.available_sizes)
@@ -742,8 +636,6 @@ function ProductEditor({
     name: product.name,
     code: product.code,
     drop_label: product.drop_label,
-    description: product.description,
-    details: product.details ?? '',
     category: product.category,
     badge: product.badge,
     featured: product.featured,
@@ -825,14 +717,6 @@ function ProductEditor({
             Wholesale pricing fields will appear after the wholesale migration is applied to the database.
           </p>
         )}
-        <Field label="Description">
-          <textarea value={form.description ?? ''} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className={inputCls} />
-        </Field>
-        {rebuildReady && (
-          <Field label="Details" hint="Extra product info (fabric, fit, wash, care, notes) shown on the product page">
-            <textarea value={form.details ?? ''} onChange={(e) => setForm({ ...form, details: e.target.value })} rows={3} className={inputCls} />
-          </Field>
-        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <div>
             <label className="text-[11px] uppercase tracking-wide-2 text-grey block mb-2">Available Sizes</label>
@@ -865,7 +749,7 @@ function ProductEditor({
           {publishReady && (
             <label className="flex items-end gap-2">
               <input type="checkbox" checked={form.published ?? true} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
-              <span className="text-sm text-bone-dim">Published (visible on site)</span>
+              <span className="text-sm text-bone-dim">Available (visible on the wholesale storefront)</span>
             </label>
           )}
           <label className="flex items-end gap-2">
@@ -1697,6 +1581,12 @@ function SettingsForm({
             <p className="mt-3 text-xs text-grey">
               Apply the migration <code className="bg-paper-2 px-1 py-0.5 rounded">20260827030000_dslang_color_packs_orders.sql</code> in the Supabase SQL editor first.
             </p>
+            <button
+              onClick={() => void onLoad()}
+              className="mt-5 inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors"
+            >
+              Try again
+            </button>
           </>
         ) : (
           <div className="h-20 bg-paper-3 rounded animate-pulse" />
@@ -1852,138 +1742,6 @@ function SettingsForm({
         Product-level MOQ overrides the displayed MOQ when set. Buyers order in whole color packs and can place orders from the order minimum (48 PCS by default). Changes go live on save.
       </p>
     </form>
-  );
-}
-
-/* ---- Wholesale Orders ---- */
-
-function OrdersTab({
-  orders,
-  error,
-  onLoad,
-}: {
-  orders: WholesaleOrderRow[] | null;
-  error: string;
-  onLoad: () => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-
-  const reload = async () => {
-    setBusy(true);
-    try {
-      await onLoad();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (orders === null) {
-    return (
-      <div className="max-w-4xl bg-white border border-line rounded p-6">
-        {error ? (
-          <>
-            <p className="font-label text-lg uppercase tracking-wide-2 text-grey mb-2">Orders unavailable</p>
-            <p className="text-sm text-grey">{error}</p>
-            <p className="mt-3 text-xs text-grey">
-              Apply the migration <code className="bg-paper-2 px-1 py-0.5 rounded">20260827030000_dslang_color_packs_orders.sql</code> in the Supabase SQL editor to enable order logging.
-            </p>
-            <button
-              onClick={reload}
-              className="mt-4 inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors"
-            >
-              Retry
-            </button>
-          </>
-        ) : (
-          <div className="space-y-3">
-            <div className="h-20 bg-paper-3 rounded animate-pulse" />
-            <div className="h-20 bg-paper-3 rounded animate-pulse" />
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (orders.length === 0) {
-    return (
-      <div className="max-w-4xl bg-white border border-line rounded p-6 text-center">
-        <ShoppingBag size={40} className="text-line mx-auto mb-3" strokeWidth={1} />
-        <p className="font-label text-lg uppercase tracking-wide-2 text-grey">No orders yet</p>
-        <p className="mt-1 text-sm text-grey">
-          Orders placed through the storefront appear here with their color-pack breakdown. Buyers are asked to log the order before it opens on WhatsApp.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-w-5xl space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-grey">{orders.length} order{orders.length !== 1 ? 's' : ''} recorded</p>
-        <button
-          onClick={reload}
-          disabled={busy}
-          className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson transition-colors disabled:opacity-50"
-        >
-          {busy ? 'Loading…' : 'Refresh'}
-        </button>
-      </div>
-
-      {orders.map((order) => {
-        const created = new Date(order.created_at);
-        const seller = order.seller;
-        return (
-          <div key={order.id} className="bg-white border border-line rounded overflow-hidden">
-            <div className="flex items-center justify-between gap-3 flex-wrap px-4 sm:px-5 py-3 border-b border-line bg-paper-2">
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="font-label text-xs uppercase tracking-wide-2 text-bone font-semibold">
-                  {order.ref}
-                </span>
-                <span className="font-label text-[10px] uppercase tracking-wide-2 text-grey">
-                  {created.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}{' '}
-                  {created.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                </span>
-                <span className="inline-flex items-center px-2 py-0.5 rounded bg-crimson/10 text-crimson font-label text-[10px] uppercase tracking-wide-2 font-semibold">
-                  {order.status}
-                </span>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="text-right">
-                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Total</p>
-                  <p className="font-price text-sm text-bone tabular-nums">{order.total_qty} PCS</p>
-                </div>
-                <div className="text-right">
-                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Amount</p>
-                  <p className="font-price text-sm text-crimson tabular-nums">₹{order.total_amount.toLocaleString('en-IN')}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="px-4 sm:px-5 py-3">
-              {(Array.isArray(order.lines) ? order.lines : []).map((line, li) => (
-                <div key={li} className="flex items-center justify-between gap-3 py-1.5 text-sm">
-                  <div className="min-w-0">
-                    <p className="text-bone truncate">{line.name} <span className="text-grey">({line.code})</span></p>
-                    <p className="text-xs text-grey mt-0.5">
-                      {line.color}{line.color_hex ? ` · ${line.color_hex}` : ''} — {line.packs} pack{line.packs !== 1 ? 's' : ''} · {line.m} M / {line.l} L / {line.xl} XL · {line.qty} PCS
-                    </p>
-                  </div>
-                  <span className="font-label text-[11px] uppercase tracking-wide-2 text-bone-dim shrink-0 tabular-nums">
-                    ₹{line.qty * (line.price50 || 0)} (₹{line.price50 || 0}/PC)
-                  </span>
-                </div>
-              ))}
-
-              {seller && (seller.business_name || seller.phone || seller.city) && (
-                <p className="mt-2 pt-2 border-t border-line text-xs text-grey">
-                  Seller: {[seller.business_name, seller.phone, seller.city].filter(Boolean).join(' · ')}
-                </p>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 

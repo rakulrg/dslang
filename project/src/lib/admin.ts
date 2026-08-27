@@ -10,30 +10,6 @@ import { SIZE_LABELS } from '@/lib/types';
 import { hasPublishColumns } from '@/lib/catalog';
 import { DEFAULT_SETTINGS, type SiteSettings } from '@/lib/settings';
 
-export interface WholesaleOrderRow {
-  id: number;
-  ref: string;
-  lines: Array<{
-    product_id: string;
-    name: string;
-    code: string;
-    color: string;
-    color_hex: string;
-    packs: number;
-    m: number;
-    l: number;
-    xl: number;
-    qty: number;
-    price50: number;
-    price100: number;
-  }>;
-  total_qty: number;
-  total_amount: number;
-  seller: { business_name?: string; phone?: string; city?: string } | null;
-  status: string;
-  created_at: string;
-}
-
 export const PRODUCT_IMAGE_BUCKET = 'product-images';
 const PRODUCT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_PRODUCT_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -375,19 +351,14 @@ export async function hasOrderMinColumns(): Promise<boolean> {
 
 // Site settings (admin-controlled source of truth for storefront vitals)
 export async function adminFetchSiteSettings(): Promise<SiteSettings> {
-  let row: Record<string, unknown> | null = null;
-  try {
-    const { data, error } = await supabase
-      .from('site_settings')
-      .select('*')
-      .eq('id', 1)
-      .maybeSingle();
-    if (error) throw error;
-    row = (data as Record<string, unknown> | null) ?? null;
-  } catch {
-    row = null;
-  }
+  const { data, error } = await supabase
+    .from('site_settings')
+    .select('*')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error) throw error;
 
+  const row = (data as Record<string, unknown> | null) ?? null;
   if (!row) return { ...DEFAULT_SETTINGS };
 
   const pick = <T,>(key: string, fallback: T): T => {
@@ -414,6 +385,7 @@ export async function adminFetchSiteSettings(): Promise<SiteSettings> {
 
 export async function adminSaveSiteSettings(settings: SiteSettings): Promise<void> {
   const patch: Record<string, unknown> = {
+    id: 1,
     announcement_text: settings.announcement_text,
     announcement_active: settings.announcement_active,
     whatsapp_number: settings.whatsapp_number,
@@ -433,18 +405,6 @@ export async function adminSaveSiteSettings(settings: SiteSettings): Promise<voi
   }
   const { error } = await supabase
     .from('site_settings')
-    .update(patch)
-    .eq('id', 1);
+    .upsert(patch, { onConflict: 'id' });
   if (error) throw error;
-}
-
-// Wholesale orders
-export async function adminFetchOrders(): Promise<WholesaleOrderRow[]> {
-  const { data, error } = await supabase
-    .from('orders')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(100);
-  if (error) throw error;
-  return (data as WholesaleOrderRow[]) ?? [];
 }

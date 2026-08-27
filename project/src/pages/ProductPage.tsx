@@ -411,20 +411,20 @@ function PackStepper({
       <button
         onClick={() => work(Math.max(0, packs - 1))}
         disabled={packs <= 0}
-        className="w-8 h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        className="w-10 h-11 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         aria-label={`Decrease ${label} packs`}
       >
-        <Minus size={13} strokeWidth={2} />
+        <Minus size={15} strokeWidth={2} />
       </button>
-      <span className="w-9 text-center text-sm font-semibold tabular-nums text-bone select-none">
+      <span className="w-10 text-center text-base font-semibold tabular-nums text-bone select-none">
         {packs}
       </span>
       <button
         onClick={() => work(packs + 1)}
-        className="w-8 h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors"
+        className="w-10 h-11 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors"
         aria-label={`Increase ${label} packs`}
       >
-        <Plus size={13} strokeWidth={2} />
+        <Plus size={15} strokeWidth={2} />
       </button>
     </div>
   );
@@ -596,8 +596,6 @@ export function ProductPage({ slug }: { slug: string }) {
   };
 
   const category = (product.category || 'tee').toLowerCase();
-  const description = (product.description || '').trim();
-  const details = (product.details || '').trim();
 
   return (
     <div>
@@ -630,10 +628,10 @@ export function ProductPage({ slug }: { slug: string }) {
             <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-1.5">
               Wholesale · {category}
             </p>
-            <h1 className="text-2xl md:text-4xl lg:text-3xl xl:text-4xl font-semibold text-bone leading-tight">
+            <h1 className="text-3xl md:text-5xl lg:text-4xl xl:text-5xl font-semibold text-bone leading-tight">
               {product.name}
             </h1>
-            <p className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey mt-1 lg:mt-1.5">{product.code}</p>
+            <p className="font-label text-sm md:text-base uppercase tracking-wide-2 text-grey mt-1.5 lg:mt-2">{product.code}</p>
 
             {/* Colors */}
             <div className="mt-4 border-t border-line pt-4">
@@ -650,17 +648,17 @@ export function ProductPage({ slug }: { slug: string }) {
                       type="button"
                       disabled={!hasImages}
                       onClick={() => setColorIdx(i)}
-                      className={`inline-flex items-center gap-2 border px-3 py-2 text-[11px] uppercase tracking-wide-2 transition-colors ${
+                      className={`inline-flex items-center gap-2.5 border px-3.5 py-2.5 text-xs md:text-sm uppercase tracking-wide-2 transition-colors ${
                         selected
                           ? 'border-crimson text-bone'
                           : 'border-line text-grey hover:border-bone-dim hover:text-bone'
                       } disabled:opacity-40 disabled:cursor-not-allowed`}
                       title={c.name}
                     >
-                      <span className="w-3 h-3 border border-line shrink-0" style={{ backgroundColor: c.hex }} />
+                      <span className="w-5 h-5 border border-line shrink-0" style={{ backgroundColor: c.hex }} />
                       {c.name}
                       {packsByColor[c.id] > 0 && (
-                        <span className="font-label text-[10px] tabular-nums">
+                        <span className="font-label text-[10px] md:text-xs tabular-nums font-semibold">
                           {packsByColor[c.id]} pack{packsByColor[c.id] !== 1 ? 's' : ''}
                         </span>
                       )}
@@ -683,14 +681,14 @@ export function ProductPage({ slug }: { slug: string }) {
               <div className="grid grid-cols-2 gap-3">
                 <div className={`border p-3 text-center transition-colors ${canOrder && totalQty < 100 ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
                   <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">{moqDisplay} PCS</p>
-                  <p className="font-price text-lg md:text-xl text-bone mt-1">{slabs.price50 > 0 ? formatPerUnit(slabs.price50) : '—'}</p>
+                  <p className="font-price text-xl md:text-2xl text-bone mt-1">{slabs.price50 > 0 ? formatPerUnit(slabs.price50) : '—'}</p>
                   <p className="mt-1 font-label text-[9px] uppercase tracking-wide-2 text-grey/70">
                     {minOrderQty}–99 PCS
                   </p>
                 </div>
                 <div className={`border p-3 text-center transition-colors ${totalQty >= 100 ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
                   <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">100 PCS</p>
-                  <p className="font-price text-lg md:text-xl text-crimson mt-1">{slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}</p>
+                  <p className="font-price text-xl md:text-2xl text-crimson mt-1">{slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}</p>
                   <p className="mt-1 font-label text-[9px] uppercase tracking-wide-2 text-grey/70">
                     100+ PCS
                   </p>
@@ -722,7 +720,7 @@ export function ProductPage({ slug }: { slug: string }) {
                   const selected = i === colorIdx;
                   const hasImages = c.images.filter((x) => x.trim()).length > 0;
                   return (
-                    <div key={c.id} className="flex items-center gap-3 px-3 py-2.5 flex-wrap">
+                    <div key={c.id} className="flex items-center gap-3 px-3 py-3 flex-wrap">
                       <button
                         type="button"
                         disabled={!hasImages}
@@ -731,10 +729,10 @@ export function ProductPage({ slug }: { slug: string }) {
                         title={hasImages ? `View ${c.name} images` : c.name}
                       >
                         <span
-                          className={`w-3 h-3 border shrink-0 ${selected ? 'border-crimson' : 'border-line'}`}
+                          className={`w-4 h-4 border shrink-0 ${selected ? 'border-crimson' : 'border-line'}`}
                           style={{ backgroundColor: c.hex }}
                         />
-                        <span className={`text-[11px] md:text-xs truncate ${selected ? 'text-bone font-semibold' : 'text-bone'}`}>
+                        <span className={`text-xs md:text-sm truncate ${selected ? 'text-bone font-semibold' : 'text-bone'}`}>
                           {c.name}
                         </span>
                       </button>
@@ -743,10 +741,10 @@ export function ProductPage({ slug }: { slug: string }) {
                         packs={line.packs}
                         work={(next) => setPacks(i, next)}
                       />
-                      <span className="font-label text-[10px] text-grey tabular-nums shrink-0">
+                      <span className="font-label text-[10px] md:text-xs text-grey tabular-nums shrink-0">
                         {line.packs > 0 ? `${line.m} M · ${line.l} L · ${line.xl} XL` : '—'}
                       </span>
-                      <span className="ml-auto font-label text-[11px] tabular-nums text-bone font-semibold shrink-0">
+                      <span className="ml-auto font-label text-xs md:text-sm tabular-nums text-bone font-semibold shrink-0">
                         {line.qty} PCS
                       </span>
                     </div>
@@ -844,24 +842,6 @@ export function ProductPage({ slug }: { slug: string }) {
                 <p>Pan-India delivery. Orders confirmed personally on WhatsApp before dispatch — no account needed.</p>
               </div>
             </div>
-
-            {/* Description + Details */}
-            {(description || details) && (
-              <div className="mt-6 border-t border-line">
-                {description && (
-                  <div className="pt-4">
-                    <h2 className="font-label text-[11px] uppercase tracking-wide-2 text-bone-dim font-medium mb-2">Description</h2>
-                    <p className="text-sm text-grey leading-relaxed whitespace-pre-line">{description}</p>
-                  </div>
-                )}
-                {details && (
-                  <div className="pt-4 border-t border-line mt-4">
-                    <h2 className="font-label text-[11px] uppercase tracking-wide-2 text-bone-dim font-medium mb-2">Details</h2>
-                    <p className="text-sm text-grey leading-relaxed whitespace-pre-line">{details}</p>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
       </div>

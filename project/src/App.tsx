@@ -4,7 +4,6 @@ import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/CartDrawer';
 import { LoginModal } from '@/components/LoginModal';
-import { StickyMobileBar } from '@/components/StickyMobileBar';
 import { HomePage } from '@/pages/HomePage';
 import { CollectionPage } from '@/pages/CollectionPage';
 import { NewDropsPage } from '@/pages/NewDropsPage';
@@ -130,7 +129,6 @@ function App() {
       )}
       <Navbar currentPath={path} />
       <main className="flex-1 pt-[76px] md:pt-[88px] overflow-x-hidden">{isAdminPath ? <div className="min-h-screen bg-paper">{renderPage()}</div> : renderPage()}</main>
-      <StickyMobileBar />
       <Footer />
       <CartDrawer />
       <LoginModal isOpen={loginOpen} onClose={handleLoginClose} />

@@ -136,12 +136,6 @@ export function Navbar({ currentPath }: { currentPath: string }) {
                   </span>
                 )}
               </button>
-              <button
-                onClick={openCart}
-                className="hidden md:inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-[0.16em] font-semibold px-5 py-2.5 hover:bg-crimson transition-colors duration-150"
-              >
-                Wholesale Order
-              </button>
             </div>
           </div>
         </nav>
@@ -207,23 +201,6 @@ export function Navbar({ currentPath }: { currentPath: string }) {
               </li>
             </ul>
             <div className="flex-1" />
-            <div className="px-5 pb-6 space-y-2">
-              <a
-                href={wholesaleChat}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setMenuOpen(false)}
-                className="w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-[0.16em] font-semibold py-3.5 px-5"
-              >
-                <MessageCircle size={16} strokeWidth={2} /> Order On WhatsApp
-              </a>
-              <button
-                onClick={() => { setMenuOpen(false); openCart(); }}
-                className="w-full inline-flex items-center justify-center gap-2 border border-bone-dim text-bone text-[11px] uppercase tracking-[0.16em] font-semibold py-3.5 px-5"
-              >
-                <ShoppingBag size={16} strokeWidth={1.8} /> Wholesale Order
-              </button>
-            </div>
           </div>
           <div className="p-5 border-t border-line flex items-center gap-6 shrink-0">
             <a
