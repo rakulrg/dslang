@@ -9,7 +9,7 @@ export function WholesalePage() {
   const { settings } = useSiteSettings();
   const OFFER = [
     { k: `MOQ ${settings.default_moq} PCS`, v: 'Minimum order per design — no single-color pressure.' },
-    { k: 'Mixed Sizes', v: 'Combine M / L / XL freely across your order.' },
+    { k: 'Fixed Size Ratio', v: `Every color pack ships as ${settings.pack_m} M + ${settings.pack_l} L + ${settings.pack_xl} XL — sizes are never sold separately.` },
     { k: 'Mixed Colors', v: 'Split your quantity across every colorway of a design.' },
     { k: 'Slab Pricing', v: `${settings.default_moq}+ PCS earns the wholesale rate; 100+ PCS unlocks the better per-piece rate.` },
     { k: `${settings.delivery_note} Delivery`, v: 'Dispatched across India after WhatsApp confirmation.' },

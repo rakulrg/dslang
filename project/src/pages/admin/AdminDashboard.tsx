@@ -34,18 +34,17 @@ import {
   adminDeleteHero,
   uploadProductImage,
   uploadHeroImage,
-  hasWholesaleColumns,
   hasHeroCtaColumns,
   hasOrderMinColumns,
   adminFetchSiteSettings,
   adminSaveSiteSettings,
+  toWholesaleErrorMessage,
   type ProductInput,
 } from '@/lib/admin';
 import { hasPublishColumns } from '@/lib/catalog';
 import type { SiteSettings } from '@/lib/settings';
 import { setCachedSettings, fetchSiteSettings } from '@/lib/settings';
 import type { CatalogProduct, HeroSlideRow, ProductColorRow } from '@/lib/types';
-import { SIZE_LABELS } from '@/lib/types';
 
 type Tab = 'products' | 'hero' | 'settings';
 
@@ -86,7 +85,6 @@ export function AdminDashboard() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [loadError, setLoadError] = useState('');
-  const [wholesaleReady, setWholesaleReady] = useState(false);
   const [publishReady, setPublishReady] = useState(false);
   const [heroCtaReady, setHeroCtaReady] = useState(false);
   const [orderMinReady, setOrderMinReady] = useState(false);
@@ -119,7 +117,7 @@ export function AdminDashboard() {
       setSettings(await adminFetchSiteSettings());
     } catch (err) {
       setSettings(null);
-      setSettingsError(err instanceof Error ? err.message : 'Failed to load wholesale settings');
+      setSettingsError(toWholesaleErrorMessage(err, 'Failed to load wholesale settings'));
     }
   }, []);
 
@@ -130,7 +128,6 @@ export function AdminDashboard() {
 
   useEffect(() => {
     let cancelled = false;
-    hasWholesaleColumns().then((ok) => { if (!cancelled) setWholesaleReady(ok); });
     hasPublishColumns().then((ok) => { if (!cancelled) setPublishReady(ok); });
     hasHeroCtaColumns().then((ok) => { if (!cancelled) setHeroCtaReady(ok); });
     hasOrderMinColumns().then((ok) => { if (!cancelled) setOrderMinReady(ok); });
@@ -293,7 +290,6 @@ export function AdminDashboard() {
           {tab === 'products' && (
             creating ? (
               <ProductForm
-                wholesaleReady={wholesaleReady}
                 publishReady={publishReady}
                 onSave={async (input) => { await adminCreateProduct(input); await loadProducts(); setCreating(false); }}
                 onCancel={() => setCreating(false)}
@@ -301,7 +297,6 @@ export function AdminDashboard() {
             ) : editingProduct ? (
               <ProductEditor
                 product={editingProduct}
-                wholesaleReady={wholesaleReady}
                 publishReady={publishReady}
                 onSave={async (id, input) => { await adminUpdateProduct(id, input); await loadProducts(); setEditingId(null); }}
                 onCancel={() => setEditingId(null)}
@@ -450,12 +445,10 @@ function ProductList({
 function ProductForm({
   onSave,
   onCancel,
-  wholesaleReady,
   publishReady,
 }: {
   onSave: (input: ProductInput) => Promise<void>;
   onCancel: () => void;
-  wholesaleReady: boolean;
   publishReady: boolean;
 }) {
   const [form, setForm] = useState<ProductInput>({
@@ -463,8 +456,6 @@ function ProductForm({
     name: '',
     code: '',
     drop_label: '',
-    description: '',
-    details: '',
     category: 'tee',
     badge: null,
     featured: true,
@@ -474,7 +465,6 @@ function ProductForm({
     moq: null,
     price50: null,
     price100: null,
-    available_sizes: [...SIZE_LABELS],
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -485,7 +475,7 @@ function ProductForm({
       setError('Slug, name, and code are required.');
       return;
     }
-    if (wholesaleReady && !(form.price50 && form.price50 > 0)) {
+    if (!(form.price50 && form.price50 > 0)) {
       setError('Set the wholesale price (50 PCS+ tier) to make this product orderable.');
       return;
     }
@@ -509,89 +499,69 @@ function ProductForm({
         </button>
       </div>
 
-      <Field label="Slug" hint="URL-friendly, no spaces">
-        <input value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="fallen-halo-tee" className={inputCls} />
-      </Field>
-      <Field label="Product Name">
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Fallen Halo Tee" className={inputCls} />
-      </Field>
-      <Field label="Code">
-        <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="DSL-FH-01" className={inputCls} />
-      </Field>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-        <Field label="Category">
-          <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls}>
-            <option value="tee">Tee</option>
-            <option value="hoodie">Hoodie</option>
-            <option value="jogger">Jogger</option>
-            <option value="tank">Tank</option>
-            <option value="drop">Drop</option>
-          </select>
-        </Field>
-        <Field label="Wholesale MOQ (PCS)" hint="Display only — blank uses the global default (50)">
-          <NumInput value={form.moq} onChange={(n) => setForm({ ...form, moq: n })} className={inputCls} placeholder="50" />
-        </Field>
-      </div>
-      {wholesaleReady ? (
-        <div className="border-t border-line pt-4">
-          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Pricing (₹ per piece)</h3>
+      <div>
+        <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Product</h3>
+        <div className="space-y-4">
+          <Field label="Slug" hint="URL-friendly, no spaces">
+            <input value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="fallen-halo-tee" className={inputCls} />
+          </Field>
+          <Field label="Product Name">
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Fallen Halo Tee" className={inputCls} />
+          </Field>
+          <Field label="Code">
+            <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="DSL-FH-01" className={inputCls} />
+          </Field>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-            <Field label="Price @ 50 PCS+" hint="Applied from the order minimum (48 PCS) up to 99 PCS">
-              <NumInput value={form.price50} onChange={(n) => setForm({ ...form, price50: n })} className={inputCls} placeholder="—" />
+            <Field label="Category">
+              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls}>
+                <option value="tee">Tee</option>
+                <option value="hoodie">Hoodie</option>
+                <option value="jogger">Jogger</option>
+                <option value="tank">Tank</option>
+                <option value="drop">Drop</option>
+              </select>
             </Field>
-            <Field label="Price @ 100 PCS+" hint="Optional — better per-piece tier at 100+">
-              <NumInput value={form.price100} onChange={(n) => setForm({ ...form, price100: n })} className={inputCls} placeholder="—" />
-            </Field>
+            <div className="hidden sm:block" />
           </div>
         </div>
-      ) : (
-        <p className="text-xs text-grey border-t border-line pt-3">
-          Wholesale pricing fields will appear after the wholesale migration is applied to the database.
-        </p>
-      )}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-        <div>
-          <label className="text-[11px] uppercase tracking-wide-2 text-grey block mb-2">Available Sizes</label>
-          <div className="flex flex-wrap gap-3">
-            {SIZE_LABELS.map((s) => (
-              <label key={s} className="flex items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  checked={form.available_sizes.includes(s)}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      available_sizes: e.target.checked
-                        ? [...f.available_sizes, s]
-                        : f.available_sizes.filter((x) => x !== s),
-                    }))
-                  }
-                  className="w-4 h-4 accent-crimson"
-                />
-                <span className="text-sm text-bone-dim">{s}</span>
-              </label>
-            ))}
-          </div>
+      </div>
+
+      <div>
+        <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Wholesale Pricing</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <Field label="Wholesale MOQ (PCS)" hint="Display only — blank uses the global default (50)">
+            <NumInput value={form.moq} onChange={(n) => setForm({ ...form, moq: n })} className={inputCls} placeholder="50" />
+          </Field>
+          <Field label="Wholesale Price — 50 PCS+" hint="₹ per piece, applied from the order minimum (48 PCS) up to 99 PCS">
+            <NumInput value={form.price50} onChange={(n) => setForm({ ...form, price50: n })} className={inputCls} placeholder="—" />
+          </Field>
+          <Field label="Wholesale Price — 100 PCS+" hint="₹ per piece, optional — better per-piece tier at 100+">
+            <NumInput value={form.price100} onChange={(n) => setForm({ ...form, price100: n })} className={inputCls} placeholder="—" />
+          </Field>
         </div>
+      </div>
+
+      <div>
+        <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Status</h3>
         <Field label="Sort Order">
           <NumInput value={form.sort_order} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
         </Field>
-      </div>
-      <div className="flex items-end gap-4 flex-wrap">
-        {publishReady && (
+        <div className="flex items-end gap-4 flex-wrap mt-3">
+          {publishReady && (
+            <label className="flex items-end gap-2">
+              <input type="checkbox" checked={form.published} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
+              <span className="text-sm text-bone-dim">Available (visible on the wholesale storefront)</span>
+            </label>
+          )}
           <label className="flex items-end gap-2">
-            <input type="checkbox" checked={form.published} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
-            <span className="text-sm text-bone-dim">Available (visible on the wholesale storefront)</span>
+            <input type="checkbox" checked={form.featured} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
+            <span className="text-sm text-bone-dim">Featured on homepage</span>
           </label>
-        )}
-        <label className="flex items-end gap-2">
-          <input type="checkbox" checked={form.featured} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
-          <span className="text-sm text-bone-dim">Featured on homepage</span>
-        </label>
-        <label className="flex items-end gap-2">
-          <input type="checkbox" checked={form.new_drop} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-crimson" />
-          <span className="text-sm text-bone-dim">New Drop</span>
-        </label>
+          <label className="flex items-end gap-2">
+            <input type="checkbox" checked={form.new_drop} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-crimson" />
+            <span className="text-sm text-bone-dim">New Drop</span>
+          </label>
+        </div>
       </div>
 
       {error && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{error}</p>}
@@ -605,7 +575,7 @@ function ProductForm({
         </button>
       </div>
       <p className="text-xs text-grey pt-2 border-t border-line">
-        After creating, add colors with images. Every included color needs the per-color minimum (6 PCS by default) and the total order must reach the global minimum (48 PCS by default).
+        After creating, add colors with images. Buyers order whole color packs (6 PCS each: 2 M + 2 L + 2 XL) and the whole order must reach the order minimum (48 PCS by default).
       </p>
     </form>
   );
@@ -618,19 +588,14 @@ function ProductEditor({
   onSave,
   onCancel,
   onChanged,
-  wholesaleReady,
   publishReady,
 }: {
   product: CatalogProduct;
   onSave: (id: string, input: Partial<ProductInput>) => Promise<void>;
   onCancel: () => void;
   onChanged: () => Promise<void>;
-  wholesaleReady: boolean;
   publishReady: boolean;
 }) {
-  const existingSizes = Array.isArray(product.available_sizes)
-    ? product.available_sizes.filter((s) => (SIZE_LABELS as readonly string[]).includes(s))
-    : [...SIZE_LABELS];
   const [form, setForm] = useState<Partial<ProductInput>>({
     slug: product.slug,
     name: product.name,
@@ -645,7 +610,6 @@ function ProductEditor({
     moq: product.moq ?? null,
     price50: product.price50 ?? null,
     price100: product.price100 ?? null,
-    available_sizes: existingSizes.length > 0 ? existingSizes : [...SIZE_LABELS],
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -677,81 +641,57 @@ function ProductEditor({
           </button>
         </div>
 
-        <Field label="Slug" hint="Cannot be changed after creation">
-          <input value={form.slug ?? ''} disabled className={inputCls + ' opacity-60 cursor-not-allowed'} />
-        </Field>
-        <Field label="Product Name">
-          <input value={form.name ?? ''} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} />
-        </Field>
-        <Field label="Code">
-          <input value={form.code ?? ''} onChange={(e) => setForm({ ...form, code: e.target.value })} className={inputCls} />
-        </Field>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          <Field label="Category">
-            <select value={form.category ?? 'tee'} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls}>
-              <option value="tee">Tee</option>
-              <option value="hoodie">Hoodie</option>
-              <option value="jogger">Jogger</option>
-              <option value="tank">Tank</option>
-              <option value="drop">Drop</option>
-            </select>
-          </Field>
-          <Field label="Wholesale MOQ (PCS)" hint={`Display only — blank uses the global default (${DEFAULT_MOQ})`}>
-            <NumInput value={form.moq ?? null} onChange={(n) => setForm({ ...form, moq: n })} className={inputCls} placeholder="—" />
-          </Field>
+        <div>
+          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Product</h3>
+          <div className="space-y-4">
+            <Field label="Slug" hint="Cannot be changed after creation">
+              <input value={form.slug ?? ''} disabled className={inputCls + ' opacity-60 cursor-not-allowed'} />
+            </Field>
+            <Field label="Product Name">
+              <input value={form.name ?? ''} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Code">
+              <input value={form.code ?? ''} onChange={(e) => setForm({ ...form, code: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Category">
+              <select value={form.category ?? 'tee'} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls}>
+                <option value="tee">Tee</option>
+                <option value="hoodie">Hoodie</option>
+                <option value="jogger">Jogger</option>
+                <option value="tank">Tank</option>
+                <option value="drop">Drop</option>
+              </select>
+            </Field>
+          </div>
         </div>
-        {wholesaleReady ? (
-          <div className="border-t border-line pt-4">
-            <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Pricing (₹ per piece)</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-              <Field label="Price @ 50 PCS+" hint="Applied from the order minimum (48 PCS) up to 99 PCS">
-                <NumInput value={form.price50 ?? null} onChange={(n) => setForm({ ...form, price50: n })} className={inputCls} placeholder="—" />
-              </Field>
-              <Field label="Price @ 100 PCS+" hint="Optional — better tier at 100+">
-                <NumInput value={form.price100 ?? null} onChange={(n) => setForm({ ...form, price100: n })} className={inputCls} placeholder="—" />
-              </Field>
-            </div>
+
+        <div>
+          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Wholesale Pricing</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            <Field label="Wholesale MOQ (PCS)" hint={`Display only — blank uses the global default (${DEFAULT_MOQ})`}>
+              <NumInput value={form.moq ?? null} onChange={(n) => setForm({ ...form, moq: n })} className={inputCls} placeholder="—" />
+            </Field>
+            <Field label="Wholesale Price — 50 PCS+" hint="₹ per piece, applied from the order minimum (48 PCS) up to 99 PCS">
+              <NumInput value={form.price50 ?? null} onChange={(n) => setForm({ ...form, price50: n })} className={inputCls} placeholder="—" />
+            </Field>
+            <Field label="Wholesale Price — 100 PCS+" hint="₹ per piece, optional — better per-piece tier at 100+">
+              <NumInput value={form.price100 ?? null} onChange={(n) => setForm({ ...form, price100: n })} className={inputCls} placeholder="—" />
+            </Field>
           </div>
-        ) : (
-          <p className="text-xs text-grey border-t border-line pt-3">
-            Wholesale pricing fields will appear after the wholesale migration is applied to the database.
-          </p>
-        )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          <div>
-            <label className="text-[11px] uppercase tracking-wide-2 text-grey block mb-2">Available Sizes</label>
-            <div className="flex flex-wrap gap-3">
-              {SIZE_LABELS.map((s) => (
-                <label key={s} className="flex items-center gap-1.5">
-                  <input
-                    type="checkbox"
-                    checked={(form.available_sizes ?? []).includes(s)}
-                    onChange={(e) =>
-                      setForm((f) => ({
-                        ...f,
-                        available_sizes: e.target.checked
-                          ? [...(f.available_sizes ?? []), s]
-                          : (f.available_sizes ?? []).filter((x) => x !== s),
-                      }))
-                    }
-                    className="w-4 h-4 accent-crimson"
-                  />
-                  <span className="text-sm text-bone-dim">{s}</span>
-                </label>
-              ))}
-            </div>
-          </div>
+        </div>
+
+        <div>
+          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Status</h3>
           <Field label="Sort Order">
             <NumInput value={form.sort_order ?? 0} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
           </Field>
-        </div>
-        <div className="flex items-end gap-4 flex-wrap">
-          {publishReady && (
-            <label className="flex items-end gap-2">
-              <input type="checkbox" checked={form.published ?? true} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
-              <span className="text-sm text-bone-dim">Available (visible on the wholesale storefront)</span>
-            </label>
-          )}
+          <div className="flex items-end gap-4 flex-wrap mt-3">
+            {publishReady && (
+              <label className="flex items-end gap-2">
+                <input type="checkbox" checked={form.published ?? true} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
+                <span className="text-sm text-bone-dim">Available (visible on the wholesale storefront)</span>
+              </label>
+            )}
           <label className="flex items-end gap-2">
             <input type="checkbox" checked={form.featured ?? false} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
             <span className="text-sm text-bone-dim">Featured</span>
@@ -760,6 +700,7 @@ function ProductEditor({
             <input type="checkbox" checked={form.new_drop ?? false} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-crimson" />
             <span className="text-sm text-bone-dim">New Drop</span>
           </label>
+        </div>
         </div>
 
         {error && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{error}</p>}
@@ -1578,9 +1519,6 @@ function SettingsForm({
           <>
             <p className="font-label text-lg uppercase tracking-wide-2 text-grey mb-2">Wholesale settings unavailable</p>
             <p className="text-sm text-grey">{error}</p>
-            <p className="mt-3 text-xs text-grey">
-              Apply the migration <code className="bg-paper-2 px-1 py-0.5 rounded">20260827030000_dslang_color_packs_orders.sql</code> in the Supabase SQL editor first.
-            </p>
             <button
               onClick={() => void onLoad()}
               className="mt-5 inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors"
@@ -1649,7 +1587,7 @@ function SettingsForm({
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Failed to save settings');
+      setLocalError(toWholesaleErrorMessage(err, 'Failed to save settings'));
     } finally {
       setBusy(false);
     }

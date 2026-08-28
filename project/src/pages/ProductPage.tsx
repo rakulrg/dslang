@@ -675,19 +675,19 @@ export function ProductPage({ slug }: { slug: string }) {
                   Wholesale Pricing (per piece)
                 </p>
                 <p className="font-label text-[10px] uppercase tracking-wide-2 text-bone-soft">
-                  MOQ {moqDisplay} PCS · acceptance from {minOrderQty} PCS
+                  MOQ {moqDisplay} PCS · Mixed Colors · Fixed Size Ratio: {packCfg.m}M + {packCfg.l}L + {packCfg.xl}XL
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className={`border p-3 text-center transition-colors ${canOrder && totalQty < 100 ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
-                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">{moqDisplay} PCS</p>
+                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">50 PCS+</p>
                   <p className="font-price text-xl md:text-2xl text-bone mt-1">{slabs.price50 > 0 ? formatPerUnit(slabs.price50) : '—'}</p>
                   <p className="mt-1 font-label text-[9px] uppercase tracking-wide-2 text-grey/70">
                     {minOrderQty}–99 PCS
                   </p>
                 </div>
                 <div className={`border p-3 text-center transition-colors ${totalQty >= 100 ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
-                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">100 PCS</p>
+                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">100 PCS+</p>
                   <p className="font-price text-xl md:text-2xl text-crimson mt-1">{slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}</p>
                   <p className="mt-1 font-label text-[9px] uppercase tracking-wide-2 text-grey/70">
                     100+ PCS
@@ -811,7 +811,7 @@ export function ProductPage({ slug }: { slug: string }) {
                 className="w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] md:text-xs uppercase tracking-wide-2 font-semibold py-4 px-5 transition-all duration-150 hover:bg-crimson-dark disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {addedFeedback ? <CheckCircle2 size={16} strokeWidth={2} /> : <ShoppingBag size={16} strokeWidth={1.8} />}
-                {addedFeedback ? 'Added to Wholesale Order' : 'Request Wholesale Order'}
+                {addedFeedback ? 'Added to Wholesale Order' : 'Place Wholesale Order'}
               </button>
               <button
                 onClick={handleWhatsApp}

@@ -16,9 +16,12 @@
 --     site defaults)
 --
 -- Also adds an orders table and a SECURITY DEFINER RPC that VALIDATES every
--- wholesale order server-side (whole packs >= 0, sizes derived from the ratio,
--- total >= min_order_quantity) so a manipulated request cannot create an
--- invalid order. Orders store the full color/size breakdown for the admin.
+-- wholesale order server-side (whole packs >= 0, product exists + published,
+-- color belongs to the product, sizes derived from the ratio,
+-- total >= min_order_quantity) and re-prices every line from the database
+-- (product 50+/100+ price with global site fallbacks — never the client), so a
+-- manipulated request cannot create an invalid or mispriced order. Orders store
+-- the full color/size breakdown for the admin.
 -- =============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -133,6 +136,13 @@ create index if not exists idx_orders_created_at on public.orders (created_at de
 
 -- ----------------------------------------------------------------------------
 -- 4. Server-side validated order creation RPC.
+--
+-- The function is SECURITY DEFINER so it can read products/product_colors and
+-- site_settings regardless of RLS. It IGNORES any client-supplied pricing and
+-- instead re-prices every line from the database (product-level 50+/100+ price
+-- falling back to the admin-controlled global site defaults), and validates
+-- that the product exists, is published, the color really belongs to it, whole
+-- packs are >= 0 and the total meets the order minimum.
 -- ----------------------------------------------------------------------------
 create or replace function public.create_wholesale_order(
   p_lines jsonb,
@@ -149,13 +159,20 @@ declare
   v_pack_l int := 2;
   v_pack_xl int := 2;
   v_min_qty int := 48;
+  v_global_50 numeric := 0;
+  v_global_100 numeric := 0;
 
   v_validated jsonb := '[]'::jsonb;
   v_total_qty int := 0;
   v_total_amount numeric := 0;
   v_row jsonb;
   v_packs int;
+  v_product_id text;
+  v_color text;
   v_product_qty int;
+  v_prod_price50 numeric;
+  v_prod_price100 numeric;
+  v_published boolean;
   v_unit numeric;
   v_i int;
   v_n int;
@@ -165,6 +182,15 @@ begin
   select coalesce(pack_size, 6), coalesce(pack_m, 2), coalesce(pack_l, 2),
          coalesce(pack_xl, 2), coalesce(min_order_quantity, 48)
     into v_pack_size, v_pack_m, v_pack_l, v_pack_xl, v_min_qty
+  from public.site_settings
+  where id = 1;
+
+  if v_pack_m + v_pack_l + v_pack_xl <> v_pack_size then
+    raise exception 'Invalid pack configuration — M + L + XL must equal the pack size.';
+  end if;
+
+  select coalesce(wholesale_price_50, 0), coalesce(wholesale_price_100, 0)
+    into v_global_50, v_global_100
   from public.site_settings
   where id = 1;
 
@@ -194,9 +220,7 @@ begin
         'm', v_packs * v_pack_m,
         'l', v_packs * v_pack_l,
         'xl', v_packs * v_pack_xl,
-        'qty', v_packs * v_pack_size,
-        'price50', coalesce((v_row ->> 'price50')::numeric, 0),
-        'price100', coalesce((v_row ->> 'price100')::numeric, 0)
+        'qty', v_packs * v_pack_size
       );
       v_total_qty := v_total_qty + v_packs * v_pack_size;
     end if;
@@ -210,24 +234,58 @@ begin
     raise exception 'Minimum wholesale order is % PCS (currently % PCS).', v_min_qty, v_total_qty;
   end if;
 
-  -- Pass 2: price each line by its product's own total quantity
-  -- (>= 100 PCS -> 100+ price; otherwise the 50+ price).
+  -- Pass 2: server-side sanity checks + pricing sourced from the database.
   v_n := jsonb_array_length(v_validated);
   for v_i in 0 .. v_n - 1 loop
     v_row := jsonb_array_element(v_validated, v_i);
+    v_product_id := v_row->>'product_id';
+    v_color := v_row->>'color';
+
+    if v_product_id is null
+       or v_product_id !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+       or not exists (select 1 from public.products p2 where p2.id = v_product_id::uuid) then
+      raise exception 'Unknown product "%" — please refresh and try again.', coalesce(v_row->>'name', v_product_id);
+    end if;
+
+    select p2.price50, p2.price100, p2.published
+      into v_prod_price50, v_prod_price100, v_published
+    from public.products p2
+    where p2.id = v_product_id::uuid;
+    v_prod_price50 := coalesce(v_prod_price50, 0);
+    v_prod_price100 := coalesce(v_prod_price100, 0);
+    v_published := coalesce(v_published, false);
+
+    if not v_published then
+      raise exception 'Product "%" is not available for wholesale orders right now.', coalesce(v_row->>'name', '');
+    end if;
+
+    if not exists (
+      select 1 from public.product_colors pc
+      where pc.product_id = v_product_id::uuid
+        and lower(pc.name) = lower(v_color)
+    ) then
+      raise exception 'Color "%" is not part of the product "%".', v_color, coalesce(v_row->>'name', '');
+    end if;
 
     select coalesce(sum((x->>'qty')::int), 0)
       into v_product_qty
     from jsonb_array_elements(v_validated) x
-    where x->>'product_id' = v_row->>'product_id';
+    where x->>'product_id' = v_product_id;
 
-    if v_product_qty >= 100 and coalesce((v_row->>'price100')::numeric, 0) > 0 then
-      v_unit := (v_row->>'price100')::numeric;
-    else
-      v_unit := coalesce((v_row->>'price50')::numeric, 0);
+    v_unit := 0;
+    if v_product_qty >= 100 and (v_prod_price100 > 0 or v_global_100 > 0) then
+      v_unit := coalesce(nullif(v_prod_price100, 0), v_global_100);
+    elsif v_prod_price50 > 0 or v_global_50 > 0 then
+      v_unit := coalesce(nullif(v_prod_price50, 0), v_global_50);
     end if;
 
-    v_row := v_row || jsonb_build_object('unit_price', v_unit, 'line_total', v_unit * (v_row->>'qty')::int);
+    if v_unit <= 0 then
+      raise exception 'Product "%" has no wholesale price set — contact the DSLANG team.', coalesce(v_row->>'name', '');
+    end if;
+
+    v_row := v_row
+      || jsonb_build_object('price50', v_prod_price50, 'price100', v_prod_price100)
+      || jsonb_build_object('unit_price', v_unit, 'line_total', v_unit * (v_row->>'qty')::int);
     v_validated := jsonb_set(v_validated, array[v_i::text], v_row);
     v_total_amount := v_total_amount + v_unit * (v_row->>'qty')::int;
   end loop;

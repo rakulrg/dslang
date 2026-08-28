@@ -66,8 +66,6 @@ export interface ProductInput {
   name: string;
   code: string;
   drop_label: string;
-  description: string;
-  details: string;
   category: string;
   badge: string | null;
   featured: boolean;
@@ -77,14 +75,11 @@ export interface ProductInput {
   moq: number | null;
   price50: number | null;
   price100: number | null;
-  available_sizes: string[];
 }
 
 export const WHOLESALE_COLUMNS = ['moq', 'price50', 'price100'] as const;
-export const REBUILD_COLUMNS = ['details', 'available_sizes'] as const;
 
 let wholesaleColumnsAvailable: boolean | null = null;
-let rebuildColumnsAvailable: boolean | null = null;
 
 /**
  * Detects whether the products table has the wholesale columns yet.
@@ -101,18 +96,6 @@ export async function hasWholesaleColumns(): Promise<boolean> {
 }
 
 /**
- * Whether the products table has the wholesale rebuild columns
- * (details + available_sizes). Migration-gated so the admin panel works
- * before and after the rebuild migration is applied.
- */
-export async function hasRebuildColumns(): Promise<boolean> {
-  if (rebuildColumnsAvailable !== null) return rebuildColumnsAvailable;
-  const { error } = await supabase.from('products').select('details, available_sizes').limit(1);
-  rebuildColumnsAvailable = !error;
-  return rebuildColumnsAvailable;
-}
-
-/**
  * Builds a payload that only includes columns the schema actually has, so the
  * admin panel works before and after the migrations are applied.
  */
@@ -120,8 +103,6 @@ async function sanitizeProductPayload(input: Partial<ProductInput>): Promise<Par
   const clean = { ...input };
   const wholesale = await hasWholesaleColumns();
   if (!wholesale) for (const col of WHOLESALE_COLUMNS) delete clean[col as keyof ProductInput];
-  const rebuild = await hasRebuildColumns();
-  if (!rebuild) for (const col of REBUILD_COLUMNS) delete clean[col as keyof ProductInput];
   const publish = await hasPublishColumns();
   if (!publish) {
     delete clean.published;
@@ -350,6 +331,32 @@ export async function hasOrderMinColumns(): Promise<boolean> {
 }
 
 // Site settings (admin-controlled source of truth for storefront vitals)
+
+/**
+ * Maps a Supabase/PostgREST failure into a short, friendly message for the
+ * admin UI while logging the full technical detail to the console.
+ */
+export function toWholesaleErrorMessage(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  const technical =
+    raw ||
+    (typeof err === 'object' && err !== null ? JSON.stringify(err) : String(err ?? ''));
+  console.error('DSLANG wholesale request failed:', err);
+  if (/permission denied|row.?level security/i.test(technical)) {
+    return "You don't have permission to do that — check the admin account and try again.";
+  }
+  if (/does not exist|UndefinedTable|UndefinedColumn|42P0/i.test(technical)) {
+    return 'The database setup is incomplete — some wholesale tables or columns are missing. Details logged to the console.';
+  }
+  if (/could not find a function/i.test(technical)) {
+    return 'Wholesale ordering is not set up yet — the database function is missing. Details logged to the console.';
+  }
+  if (/new row violates|violates|check constraint/i.test(technical)) {
+    return 'That value is not allowed — please check the numbers and try again.';
+  }
+  return raw || fallback;
+}
+
 export async function adminFetchSiteSettings(): Promise<SiteSettings> {
   const { data, error } = await supabase
     .from('site_settings')

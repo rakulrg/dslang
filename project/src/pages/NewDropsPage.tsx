@@ -26,7 +26,7 @@ export function NewDropsPage() {
       <div className="mx-auto px-2 md:px-12 lg:px-20 xl:px-28">
         <div className="px-2 md:px-0 border-b border-line pb-4 md:pb-8">
           <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">
-            Latest For Retail
+            Latest For Wholesale
           </p>
           <h1 className="font-display text-[1.75rem] md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
             New Drops

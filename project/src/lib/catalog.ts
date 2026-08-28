@@ -309,17 +309,11 @@ function packForLine(line: WholesaleSkuLine): string {
   return parts.join(' · ');
 }
 
-function formatBreakdown(lines: WholesaleSkuLine[]): string {
-  return lines
-    .filter((l) => l.packs > 0)
-    .map((line) => `  ${line.color}: ${line.packs} pack${line.packs > 1 ? 's' : ''} (${packForLine(line)}) — ${line.qty} PCS`)
-    .join('\n');
-}
-
 /**
  * Pre-filled WhatsApp message for a wholesale order (product page or cart).
- * Includes the stored order reference when one exists, the per-color pack
- * breakdown, applied tier and total.
+ * Message shape: header, product + code, per-color pack breakdown
+ * (color, packs, M/L/XL split, PCS), total PCS, price per piece, total.
+ * Includes the stored order reference when one exists.
  */
 export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): string {
   const summary = summarizeWholesale(payload.lines);
@@ -340,88 +334,40 @@ export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): st
     productBlocks.get(key)!.push(line);
   }
 
-  const productText = [...productBlocks.entries()]
-    .map(([id, block]) => {
-      const blockSummary = summarizeWholesale(block);
-      const unit = blockSummary.tiers[0]?.unitPrice ?? 0;
-      const first = block[0];
-      return [
-        `Product: ${first.name} (${first.code})`,
-        `Breakdown:`,
-        formatBreakdown(block),
-        `Qty: ${blockSummary.totalQty} PCS`,
-        unit > 0 ? `Rate: ₹\u2009${unit.toLocaleString('en-IN')}/PC` : null,
-        '',
-      ].filter(Boolean).join('\n');
-    })
-    .join('\n');
-
-  const rep = payload.lines.find((l) => l.packs > 0);
   const orderable = summary.totalQty >= settings.min_order_quantity;
-  const message = [
-    ...(payload.businessName || payload.phone
-      ? [`Hi DSLANG, wholesale order${payload.orderRef ? ` #${payload.orderRef}` : ''} request:`]
-      : [`Hi DSLANG, I am interested in a wholesale order${payload.orderRef ? ` (Ref #${payload.orderRef})` : ''}:`]),
+
+  const message: string[] = [
+    'DSLANG WHOLESALE ORDER',
+    payload.orderRef ? `Ref #${payload.orderRef}` : null,
     '',
-    productText.trim(),
-    `Total Quantity: ${summary.totalQty} PCS`,
-    orderable
-      ? `Wholesale Pricing: ${summary.tiers.map((t) => t.name).join(' / ')}`
-      : `Minimum order acceptance from ${settings.min_order_quantity} PCS (MOQ ${settings.default_moq} PCS).`,
-    rep && orderable ? `Applicable Wholesale Price: ₹\u2009${(rep.qty >= WHOLESALE_TIER_100 && rep.price100 > 0 ? rep.price100 : rep.price50).toLocaleString('en-IN')}/PC` : null,
-    rep && orderable ? `Order Total: ₹\u2009${summary.total.toLocaleString('en-IN')}` : null,
-    ...(sellerDetails ? ['', 'My Details:', sellerDetails] : []),
-    '',
-    payload.orderRef
-      ? `Order reference #${payload.orderRef} has been logged with DSLANG.`
-      : null,
-    'Please confirm availability and order details.',
-  ].filter(Boolean).join('\n');
+  ].filter(Boolean) as string[];
 
-  return `https://wa.me/${settings.whatsapp_number}?text=${encodeURIComponent(message)}`;
-}
+  for (const block of productBlocks.values()) {
+    const blockSummary = summarizeWholesale(block);
+    const unit = blockSummary.tiers[0]?.unitPrice ?? 0;
+    const first = block[0];
+    message.push(`Product: ${first.name}`, `Code: ${first.code}`, '');
+    for (const line of block) {
+      message.push(
+        `${line.color}: ${line.packs} pack${line.packs > 1 ? 's' : ''} — ${packForLine(line)} = ${line.qty} PCS`
+      );
+    }
+    message.push('', `Price: ${unit > 0 ? formatPerUnit(unit) : '—'}`, '');
+  }
 
-export interface WhatsAppOrder {
-  name: string;
-  code: string;
-  color: string;
-  size: string;
-  quantity: number;
-  price: number;
-  customerName?: string;
-  phone?: string;
-  city?: string;
-  address?: string;
-  notes?: string;
-  /** Optional pre-computed total. When provided, it overrides price * quantity. */
-  total?: number;
-}
+  message.push(`Total PCS: ${summary.totalQty}`);
+  message.push(`Total: ${orderable && summary.total > 0 ? formatPrice(summary.total) : formatPrice(0)}`);
+  if (!orderable) {
+    message.push(`(Order acceptance starts from ${settings.min_order_quantity} PCS — MOQ ${settings.default_moq} PCS.)`);
+  }
 
-export function buildWhatsAppUrl(order: WhatsAppOrder): string {
-  const total = order.total ?? order.price * order.quantity;
-  const customerDetails = [
-    order.customerName ? `Customer Name: ${order.customerName}` : null,
-    order.phone ? `Phone: ${order.phone}` : null,
-    order.city ? `City: ${order.city}` : null,
-    order.address ? `Address: ${order.address}` : null,
-    order.notes ? `Notes: ${order.notes}` : null,
-  ].filter(Boolean).join('\n');
+  if (sellerDetails) {
+    message.push('', 'My Details:', sellerDetails);
+  }
 
-  const message = [
-    "Hi DSLANG! I'd like to order:",
-    '',
-    `Product: ${order.name}`,
-    `Code: ${order.code}`,
-    `Color: ${order.color}`,
-    `Size: ${order.size}`,
-    `Qty: ${order.quantity}`,
-    `Price: ₹${order.price} x ${order.quantity} = ₹${total}`,
-    ...(customerDetails ? ['', 'Customer Details:', customerDetails] : []),
-    '',
-    'Please confirm availability and delivery details.',
-  ].join('\n');
+  message.push('', 'Please confirm availability and dispatch details.');
 
-  return `https://wa.me/${getSiteSettings().whatsapp_number}?text=${encodeURIComponent(message)}`;
+  return `https://wa.me/${settings.whatsapp_number}?text=${encodeURIComponent(message.join('\n'))}`;
 }
 
 export function buildWhatsAppGeneralUrl(message: string): string {
