@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { ArrowRight, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { ProductCard } from '@/components/ProductCard';
@@ -7,6 +7,8 @@ import {
   fetchProducts,
   fetchHeroSlides,
   buildWhatsAppGeneralUrl,
+  MIN_PACKS,
+  MIN_ORDER_PCS,
   type CatalogProduct,
   type HeroSlideRow,
 } from '@/lib/catalog';
@@ -43,12 +45,11 @@ export function HomePage() {
       .catch(() => {});
   }, []);
 
+  // Do not preload every slide up front — only the active one (and only on
+  // success) so a failed image never advances to a broken slide.
   useEffect(() => {
     if (slides.length === 0) return;
     setTarget((t) => Math.min(t, slides.length - 1));
-    slides.forEach((s) => {
-      if (s.image_url) void preloadImage(s.image_url).catch(() => {});
-    });
   }, [slides]);
 
   useEffect(() => {
@@ -56,8 +57,9 @@ export function HomePage() {
     if (!url) return;
     let cancelled = false;
     preloadImage(url)
-      .catch(() => {})
-      .then(() => { if (!cancelled) setShown(target); });
+      .then(() => { if (!cancelled) setShown(target); })
+      // On failure keep showing whatever is current instead of a blank slide.
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [target, slides]);
 
@@ -72,21 +74,21 @@ export function HomePage() {
     return () => clearInterval(id);
   }, [next, slides.length]);
 
-  const featured = products.filter((p) => p.featured).slice(0, 4);
-  const newDrops = (() => {
+  const featured = useMemo(() => products.filter((p) => p.featured).slice(0, 4), [products]);
+  const newDrops = useMemo(() => {
     const flagged = products.filter((p) => p.new_drop).slice(0, 4);
     if (flagged.length > 0) return flagged;
     return [...products]
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 4);
-  })();
-  const collection = featured.length > 0 ? featured : products.slice(0, 4);
+  }, [products]);
+  const collection = useMemo(() => (featured.length > 0 ? featured : products.slice(0, 4)), [featured, products]);
 
   // Hero content is admin-controlled via hero_slides; empty values fall back
   // to the brand message without pulling in product specifications.
   const slide = slides[target];
-  const heroEyebrow = slide?.eyebrow?.trim() || 'DSLANG — Slang of Design';
-  const heroTitle = slide?.title?.trim() || 'Premium Streetwear';
+  const heroEyebrow = slide?.eyebrow?.trim() || 'DSLANG';
+  const heroTitle = slide?.title?.trim() || 'SLANG OF DESIGN';
   const heroSubtitle = slide?.subtitle?.trim() || 'For Resellers & Wholesale';
   const ctaText = slide?.cta_text?.trim() || 'View Collection';
   const ctaUrl = slide?.cta_url?.trim() || linkHref('/collection');
@@ -96,74 +98,77 @@ export function HomePage() {
 
   return (
     <div>
-      {/* ============ HERO ============ */}
-      <section className="relative h-[78vh] md:h-[92vh] min-h-[560px] md:min-h-[620px] w-full overflow-hidden bg-ink">
-        {slides.map((s, i) => (
-          <div
-            key={s.id}
-            className={`absolute inset-0 transition-opacity duration-300 ${
-              i === shown ? 'opacity-100' : 'opacity-0'
-            }`}
-          >
-            <img
-              src={s.image_url}
-              alt=""
-              loading="eager"
-              decoding="async"
-              className={`absolute inset-0 w-full h-full object-cover ${
-                i === shown ? 'scale-105' : 'scale-100'
-              } transition-transform duration-[7000ms] ease-out`}
-            />
-          </div>
-        ))}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/30" />
-
-        <div className="relative z-10 h-full mx-auto px-5 md:px-12 lg:px-20 xl:px-28 flex flex-col justify-end pb-16 md:pb-20">
-          <div key={shown} className="max-w-3xl animate-fade-up">
-            <p className="font-label text-[10px] md:text-[11px] uppercase tracking-ultra text-white/70 mb-3 font-medium">
-              {heroEyebrow}
-            </p>
-            <h1 className="font-display text-5xl sm:text-6xl md:text-8xl leading-[0.88] uppercase tracking-wide-2 text-white text-shadow-dark">
-              {heroTitle}
-            </h1>
-            <p className="mt-4 font-label text-sm md:text-base uppercase tracking-[0.28em] text-white/90">
-              {heroSubtitle}
-            </p>
-            <div className="mt-7 md:mt-9 flex flex-wrap gap-3">
-              {ctaExternal ? (
-                <Button href={ctaUrl} external variant="primary">
-                  {ctaText} <ArrowRight size={15} strokeWidth={2} />
-                </Button>
-              ) : (
-                <Button href={ctaUrl} variant="primary">
-                  {ctaText} <ArrowRight size={15} strokeWidth={2} />
-                </Button>
-              )}
-              <Button
-                href={whatsapp("Hi DSLANG! I'd like to place a wholesale order.")}
-                external
-                variant="outline-light"
-              >
-                <MessageCircle size={15} strokeWidth={2} /> WhatsApp
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        {slides.length > 1 && (
-          <div className="absolute bottom-5 right-5 md:right-8 z-10 flex items-center gap-2">
-            {slides.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setTarget(i)}
-                aria-label={`Slide ${i + 1}`}
-                className={`h-1 transition-all duration-200 ${
-                  i === target ? 'w-10 bg-white' : 'w-5 bg-white/40 hover:bg-white/70'
+      {/* ============ HERO — mobile 1:1 full-bleed, desktop landscape ============ */}
+      <section className="w-full overflow-hidden bg-ink">
+        <div className="relative w-full aspect-square md:aspect-auto md:h-[78vh] md:min-h-[520px] overflow-hidden bg-paper-3">
+            {slides.map((s, i) => (
+              <div
+                key={s.id}
+                className={`absolute inset-0 transition-opacity duration-300 ${
+                  i === shown ? 'opacity-100' : 'opacity-0'
                 }`}
-              />
+              >
+                <img
+                  src={s.image_url}
+                  alt=""
+                  loading={i === shown ? 'eager' : 'lazy'}
+                  fetchPriority={i === shown ? 'high' : 'low'}
+                  decoding="async"
+                  className={`absolute inset-0 w-full h-full object-cover ${
+                    i === shown ? 'scale-105' : 'scale-100'
+                  } transition-transform duration-[7000ms] ease-out`}
+                />
+              </div>
             ))}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-black/20" />
+
+            <div key={shown} className="absolute inset-x-0 bottom-0 z-10 p-5 md:p-8 text-center animate-fade-up">
+              <div className="mx-auto w-full max-w-4xl">
+              <p className="font-label text-[10px] md:text-xs uppercase tracking-ultra text-white/70 mb-2 font-medium">
+                {heroEyebrow}
+              </p>
+              <h1 className="font-display text-[clamp(2rem,9vw,4rem)] leading-[0.88] uppercase tracking-wide-2 text-white text-shadow-dark text-balance break-words">
+                {heroTitle}
+              </h1>
+              <p className="mt-3 font-label text-[11px] md:text-sm uppercase tracking-[0.28em] text-white/90">
+                {heroSubtitle}
+              </p>
+              <div className="mt-6 md:mt-7 flex flex-wrap justify-center gap-3">
+                {ctaExternal ? (
+                  <Button href={ctaUrl} external variant="primary">
+                    {ctaText} <ArrowRight size={15} strokeWidth={2} />
+                  </Button>
+                ) : (
+                  <Button href={ctaUrl} variant="primary">
+                    {ctaText} <ArrowRight size={15} strokeWidth={2} />
+                  </Button>
+                )}
+                <Button
+                  href={whatsapp("Hi DSLANG! I'd like to place a wholesale order.")}
+                  external
+                  variant="outline-light"
+                >
+                  <MessageCircle size={15} strokeWidth={2} /> WhatsApp
+                </Button>
+              </div>
+              </div>
+            </div>
+
+            {slides.length > 1 && (
+              <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+                {slides.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setTarget(i)}
+                    aria-label={`Slide ${i + 1}`}
+                    className={`h-1 transition-all duration-200 ${
+                      i === target ? 'w-8 bg-white' : 'w-4 bg-white/40 hover:bg-white/70'
+                    }`}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-        )}
       </section>
 
       {/* ============ WHOLESALE COLLECTION ============ */}
@@ -278,7 +283,7 @@ export function HomePage() {
             </Button>
           </div>
           <p className="mt-8 text-[11px] uppercase tracking-[0.2em] text-white/50">
-            MOQ {settings.default_moq} PCS · {settings.delivery_note} Delivery · {settings.dispatch_note}
+            Min. order {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS) · {settings.delivery_note} Delivery · {settings.dispatch_note}
           </p>
         </div>
       </section>

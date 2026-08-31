@@ -4,7 +4,15 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { useRouter } from '@/lib/router';
 
-export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+export function LoginModal({
+  isOpen,
+  onClose,
+  initialMode = 'signin',
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  initialMode?: 'signin' | 'signup';
+}) {
   const { user, loading, isAdmin } = useAuth();
   const { navigate } = useRouter();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -14,6 +22,34 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // Reset the form each time the modal opens, honoring the requested mode
+  // (e.g. "Create Account" from the menu opens straight in signup).
+  useEffect(() => {
+    if (isOpen) {
+      setMode(initialMode);
+      setShowPassword(false);
+      setError('');
+      setEmail('');
+      setPassword('');
+      setOptIn(true);
+      setBusy(false);
+    }
+  }, [isOpen, initialMode]);
+
+  // Close the modal with Escape and lock body scroll while it is open.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     if (!loading && user) {
@@ -59,8 +95,8 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
 
   if (user) {
     return (
-      <div className="fixed inset-0 z-[80] flex items-center justify-center px-5">
-        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in" onClick={onClose} />
+    <div role="dialog" aria-modal="true" aria-label="Account redirect" className="fixed inset-0 z-[80] flex items-center justify-center px-5">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in" onClick={onClose} />
         <div className="relative w-full max-w-md bg-white border border-line rounded p-8 animate-scale-in">
           <button onClick={onClose} className="absolute top-4 right-4 text-grey hover:text-bone transition-colors" aria-label="Close">
             <X size={22} strokeWidth={1.8} />
@@ -74,7 +110,7 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
             {isAdmin ? (
               <p className="text-sm text-bone-dim">Redirecting to Admin Dashboard…</p>
             ) : (
-              <p className="text-sm text-bone-dim">Redirecting to your profile…</p>
+              <p className="text-sm text-bone-dim">Taking you to your account…</p>
             )}
           </div>
         </div>
@@ -83,7 +119,7 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center px-5">
+    <div role="dialog" aria-modal="true" aria-labelledby="login-title" className="fixed inset-0 z-[80] flex items-center justify-center px-5">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in" onClick={onClose} />
       <div className="relative w-full max-w-md bg-white border border-line p-6 md:p-8 animate-scale-in max-h-[90vh] overflow-y-auto">
         <button onClick={onClose} className="absolute top-4 right-4 text-grey hover:text-bone transition-colors" aria-label="Close">
@@ -94,7 +130,7 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
           <span className="font-brand text-3xl tracking-[0.03em] text-bone">DSLANG<span className="text-crimson">.</span></span>
         </div>
 
-        <h2 className="font-price text-[28px] md:text-[32px] uppercase tracking-[0.03em] text-bone text-center leading-[1.05]">
+        <h2 id="login-title" className="font-price text-[28px] md:text-[32px] uppercase tracking-[0.03em] text-bone text-center leading-[1.05]">
           SIGN IN OR CREATE<br />ACCOUNT
         </h2>
 
@@ -125,18 +161,21 @@ export function LoginModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
           </label>
 
           {showPassword && (
-            <div className="relative">
-              <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-grey" strokeWidth={1.6} />
-              <input
-                type="password"
-                required
-                minLength={6}
-                value={password}
-                onChange={(e) => { setPassword(e.target.value); setError(''); }}
-                placeholder="Password (min 6 characters)"
-                className="w-full pl-10 pr-4 py-3.5 bg-white border border-line text-bone text-sm placeholder:text-grey focus:outline-none focus:border-crimson transition-colors"
-              />
-            </div>
+            <label className="block">
+              <span className="mb-2 block font-label text-[11px] uppercase tracking-wide-2 text-grey">Password</span>
+              <div className="relative">
+                <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-grey" strokeWidth={1.6} />
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                  placeholder="Password (min 6 characters)"
+                  className="w-full pl-10 pr-4 py-3.5 bg-white border border-line text-bone text-sm placeholder:text-grey focus:outline-none focus:border-crimson transition-colors"
+                />
+              </div>
+            </label>
           )}
 
           {error && (

@@ -21,8 +21,8 @@ export interface ProductRow {
   wash?: string | null;
   print_type?: string | null;
   moq?: number | null;
-  price50?: number | null;
-  price100?: number | null;
+  wholesale_price_50?: number | null;
+  wholesale_price_100?: number | null;
   // Storefront visibility (added via migration; optional for older rows)
   published?: boolean;
   new_drop?: boolean;

@@ -11,12 +11,15 @@ import {
   buildWholesaleWhatsAppUrl,
   formatPerUnit,
   formatPrice,
+  MIN_PACKS,
+  MIN_ORDER_PCS,
+  TIER_100_PCS,
   type CatalogProduct,
   type WholesaleSkuLine,
 } from '@/lib/catalog';
 import { notFound } from '@/lib/notFound';
 import { useCart } from '@/lib/cart';
-import { getSiteSettings, useSiteSettings } from '@/lib/settings';
+import { LoadingDots } from '@/components/LoadingDots';
 
 /* ---- Swipe Gallery ---- */
 
@@ -444,11 +447,9 @@ export function ProductPage({ slug }: { slug: string }) {
   const [addedFeedback, setAddedFeedback] = useState(false);
 
   const { addItem, open: openCart } = useCart();
-  const { settings } = useSiteSettings();
-
-  const minOrderQty = settings.min_order_quantity;
 
   useEffect(() => {
+    let cancelled = false;
     setProduct(undefined);
     setLoadError(false);
     setColorIdx(0);
@@ -456,20 +457,23 @@ export function ProductPage({ slug }: { slug: string }) {
     setImgIdx(0);
     fetchProduct(slug)
       .then((p) => {
+        if (cancelled) return;
         setProduct(p);
         if (p) {
           const init: Record<string, number> = {};
           for (const c of p.colors) init[c.id] = 0;
           setPacksByColor(init);
           fetchProducts()
-            .then((all) => setRelated(all.filter((x) => x.slug !== p.slug).slice(0, 3)))
+            .then((all) => { if (!cancelled) setRelated(all.filter((x) => x.slug !== p.slug).slice(0, 3)); })
             .catch(() => {});
         }
       })
       .catch(() => {
+        if (cancelled) return;
         setProduct(null);
         setLoadError(true);
       });
+    return () => { cancelled = true; };
   }, [slug]);
 
   useEffect(() => {
@@ -489,14 +493,18 @@ export function ProductPage({ slug }: { slug: string }) {
       return (
         <div className="min-h-[70vh] flex flex-col items-center justify-center text-center px-5">
           <p className="font-display text-5xl md:text-7xl uppercase tracking-wide-2 text-bone leading-none">!</p>
-          <p className="mt-5 text-sm uppercase tracking-wide-2 text-grey">
-            Failed to load product.
-          </p>
+          <p className="mt-5 text-sm uppercase tracking-wide-2 text-grey">Failed to load product.</p>
           <button
-            onClick={() => window.location.reload()}
-            className="mt-8 inline-flex items-center text-[11px] uppercase tracking-wide-2 font-semibold bg-crimson text-white px-6 py-4 hover:bg-crimson-dark transition-colors"
+            onClick={() => {
+              setProduct(undefined);
+              setLoadError(false);
+              fetchProduct(slug)
+                .then((p) => { setProduct(p); if (p) { const init: Record<string, number> = {}; for (const c of p.colors) init[c.id] = 0; setPacksByColor(init); } })
+                .catch(() => { setProduct(null); setLoadError(true); });
+            }}
+            className="mt-8 inline-flex items-center text-[11px] uppercase tracking-wide-2 font-semibold bg-crimson text-white px-6 py-3.5 hover:bg-crimson-dark transition-colors"
           >
-            Retry
+            Try Again
           </button>
         </div>
       );
@@ -505,15 +513,8 @@ export function ProductPage({ slug }: { slug: string }) {
   }
   if (product === undefined) {
     return (
-      <div className="mx-auto max-w-[1500px] px-6 md:px-12 lg:px-16 xl:px-20 py-5 md:py-12">
-        <div className="grid grid-cols-1 lg:grid-cols-[1.8fr_1fr] gap-8 lg:gap-8">
-          <div className="aspect-[4/5] bg-paper-3 border border-line animate-pulse" />
-          <div className="space-y-4 mt-6 lg:mt-0">
-            <div className="h-10 bg-paper-3 animate-pulse" />
-            <div className="h-6 w-32 bg-paper-3 animate-pulse" />
-            <div className="h-8 w-40 bg-paper-3 animate-pulse" />
-          </div>
-        </div>
+      <div className="min-h-[70vh] flex items-center justify-center">
+        <LoadingDots />
       </div>
     );
   }
@@ -524,7 +525,6 @@ export function ProductPage({ slug }: { slug: string }) {
   const safeImgIdx = Math.max(0, Math.min(imgIdx, images.length - 1));
 
   const slabs = getWholesaleSlabs(product);
-  const moqDisplay = slabs.moq;
   const packCfg = getPackConfig();
 
   const setPacks = (colorIndex: number, packs: number) => {
@@ -539,8 +539,8 @@ export function ProductPage({ slug }: { slug: string }) {
   });
 
   const totalQty = colorLines.reduce((sum, cl) => sum + cl.qty, 0);
-  const belowMinTotal = totalQty > 0 && totalQty < minOrderQty;
-  const canOrder = totalQty >= minOrderQty;
+  const belowMinTotal = totalQty > 0 && totalQty < MIN_ORDER_PCS;
+  const canOrder = totalQty >= MIN_ORDER_PCS;
 
   const tier = getWholesaleTier(totalQty, slabs);
 
@@ -648,14 +648,17 @@ export function ProductPage({ slug }: { slug: string }) {
                       type="button"
                       disabled={!hasImages}
                       onClick={() => setColorIdx(i)}
-                      className={`inline-flex items-center gap-2.5 border px-3.5 py-2.5 text-xs md:text-sm uppercase tracking-wide-2 transition-colors ${
+                      className={`inline-flex items-center gap-3 border px-4 py-3 text-xs md:text-sm uppercase tracking-wide-2 transition-colors ${
                         selected
                           ? 'border-crimson text-bone'
                           : 'border-line text-grey hover:border-bone-dim hover:text-bone'
                       } disabled:opacity-40 disabled:cursor-not-allowed`}
                       title={c.name}
                     >
-                      <span className="w-5 h-5 border border-line shrink-0" style={{ backgroundColor: c.hex }} />
+                      <span
+                        className={`w-8 h-8 border shrink-0 ${selected ? 'border-crimson' : 'border-line'}`}
+                        style={{ backgroundColor: c.hex }}
+                      />
                       {c.name}
                       {packsByColor[c.id] > 0 && (
                         <span className="font-label text-[10px] md:text-xs tabular-nums font-semibold">
@@ -669,30 +672,25 @@ export function ProductPage({ slug }: { slug: string }) {
             </div>
 
             {/* Wholesale pricing */}
-            <div className="mt-5 border border-line bg-paper-2 p-4 md:p-5">
-              <div className="flex items-center justify-between mb-3">
-                <p className="font-label text-[10px] uppercase tracking-[0.18em] text-grey">
-                  Wholesale Pricing (per piece)
-                </p>
-                <p className="font-label text-[10px] uppercase tracking-wide-2 text-bone-soft">
-                  MOQ {moqDisplay} PCS · Mixed Colors · Fixed Size Ratio: {packCfg.m}M + {packCfg.l}L + {packCfg.xl}XL
-                </p>
-              </div>
+            <div className="mt-5">
+              <p className="font-label text-[10px] uppercase tracking-[0.18em] text-grey mb-2">
+                Wholesale Pricing
+              </p>
               <div className="grid grid-cols-2 gap-3">
-                <div className={`border p-3 text-center transition-colors ${canOrder && totalQty < 100 ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
-                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">50 PCS+</p>
+                <div className={`border p-3 text-center transition-colors ${canOrder && totalQty < TIER_100_PCS ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
+                  <p className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey">{MIN_ORDER_PCS}–{TIER_100_PCS - 6} PCS</p>
                   <p className="font-price text-xl md:text-2xl text-bone mt-1">{slabs.price50 > 0 ? formatPerUnit(slabs.price50) : '—'}</p>
                   <p className="mt-1 font-label text-[9px] uppercase tracking-wide-2 text-grey/70">
-                    {minOrderQty}–99 PCS
+                    wholesale rate
                   </p>
                 </div>
-                <div className={`border p-3 text-center transition-colors ${totalQty >= 100 ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
-                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">100 PCS+</p>
+                <div className={`border p-3 text-center transition-colors ${totalQty >= TIER_100_PCS ? 'border-crimson bg-white' : 'border-line bg-white'}`}>
+                  <p className="font-label text-[11px] md:text-xs uppercase tracking-wide-2 text-grey">{TIER_100_PCS}+ PCS</p>
                   <p className="font-price text-xl md:text-2xl text-crimson mt-1">{slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}</p>
                   <p className="mt-1 font-label text-[9px] uppercase tracking-wide-2 text-grey/70">
-                    100+ PCS
+                    best rate
                   </p>
-                  {totalQty >= 100 && (
+                  {totalQty >= TIER_100_PCS && (
                     <p className="font-label text-[9px] uppercase tracking-wide-2 text-crimson mt-1">
                       Applied
                     </p>
@@ -700,7 +698,7 @@ export function ProductPage({ slug }: { slug: string }) {
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-bone-soft leading-relaxed">
-                Mixed colors allowed. Each color pack is fixed at {packCfg.packSize} PCS ({packCfg.m} M · {packCfg.l} L · {packCfg.xl} XL) — sizes are not sold separately.
+                Mixed colors allowed. Each color pack is fixed at {packCfg.packSize} PCS ({packCfg.m} M · {packCfg.l} L · {packCfg.xl} XL) — sizes are not sold separately. Minimum order: {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS).
               </p>
             </div>
 
@@ -720,19 +718,19 @@ export function ProductPage({ slug }: { slug: string }) {
                   const selected = i === colorIdx;
                   const hasImages = c.images.filter((x) => x.trim()).length > 0;
                   return (
-                    <div key={c.id} className="flex items-center gap-3 px-3 py-3 flex-wrap">
+                    <div key={c.id} className="grid items-center gap-x-3 px-3 py-3 grid-cols-[minmax(0,1fr)_auto_auto]">
                       <button
                         type="button"
                         disabled={!hasImages}
                         onClick={() => setColorIdx(i)}
-                        className="flex items-center gap-2 min-w-0"
+                        className="flex items-center gap-2 min-w-0 overflow-hidden"
                         title={hasImages ? `View ${c.name} images` : c.name}
                       >
                         <span
                           className={`w-4 h-4 border shrink-0 ${selected ? 'border-crimson' : 'border-line'}`}
                           style={{ backgroundColor: c.hex }}
                         />
-                        <span className={`text-xs md:text-sm truncate ${selected ? 'text-bone font-semibold' : 'text-bone'}`}>
+                        <span className={`text-xs md:text-sm truncate min-w-0 ${selected ? 'text-bone font-semibold' : 'text-bone'}`}>
                           {c.name}
                         </span>
                       </button>
@@ -741,10 +739,7 @@ export function ProductPage({ slug }: { slug: string }) {
                         packs={line.packs}
                         work={(next) => setPacks(i, next)}
                       />
-                      <span className="font-label text-[10px] md:text-xs text-grey tabular-nums shrink-0">
-                        {line.packs > 0 ? `${line.m} M · ${line.l} L · ${line.xl} XL` : '—'}
-                      </span>
-                      <span className="ml-auto font-label text-xs md:text-sm tabular-nums text-bone font-semibold shrink-0">
+                      <span className="font-label text-xs md:text-sm tabular-nums text-bone font-semibold text-right whitespace-nowrap">
                         {line.qty} PCS
                       </span>
                     </div>
@@ -761,7 +756,7 @@ export function ProductPage({ slug }: { slug: string }) {
                 <div className="mt-2 flex items-center justify-between">
                   <span className="font-label text-[10px] uppercase tracking-wide-2 text-white/50">Wholesale Price</span>
                   <span className="font-price text-base md:text-lg text-white/90 tabular-nums">
-                    {canOrder && slabs.price50 > 0 ? `${formatPerUnit(tier.unitPrice)} × ${totalQty}` : '—'}
+                    {canOrder && tier.unitPrice > 0 ? `${formatPerUnit(tier.unitPrice)} × ${totalQty}` : '—'}
                   </span>
                 </div>
                 <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2">
@@ -776,28 +771,28 @@ export function ProductPage({ slug }: { slug: string }) {
               <div className="mt-3 space-y-2">
                 {totalQty === 0 && (
                   <p className="font-label text-[11px] uppercase tracking-wide-2 text-bone-soft">
-                    Pick whole color packs to build your order — acceptance starts from {minOrderQty} PCS.
+                    Pick whole color packs to build your order — minimum order is {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS).
                   </p>
                 )}
                 {belowMinTotal && (
                   <p className="flex items-center gap-2 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3">
                     <AlertTriangle size={16} strokeWidth={1.8} className="shrink-0" />
                     <span>
-                      Order acceptance starts from {minOrderQty} PCS. Add {minOrderQty - totalQty} more PCS (
-                      {Math.ceil((minOrderQty - totalQty) / packCfg.packSize)} more pack{Math.ceil((minOrderQty - totalQty) / packCfg.packSize) !== 1 ? 's' : ''}) across any colors.
+                      Minimum wholesale order is {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS). Add {MIN_ORDER_PCS - totalQty} more PCS (
+                      {Math.ceil((MIN_ORDER_PCS - totalQty) / packCfg.packSize)} more pack{Math.ceil((MIN_ORDER_PCS - totalQty) / packCfg.packSize) !== 1 ? 's' : ''}) across any colors.
                     </span>
                   </p>
                 )}
-                {canOrder && totalQty < 100 && (
+                {canOrder && totalQty < TIER_100_PCS && (
                   <p className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-3">
                     <CheckCircle2 size={16} strokeWidth={1.8} className="shrink-0" />
-                    Order ready — {minOrderQty} PCS minimum reached. Add {100 - totalQty} more PCS to unlock the 100+ PCS rate.
+                    Order ready — {MIN_ORDER_PCS} PCS minimum reached. Add {TIER_100_PCS - totalQty} more PCS to unlock the {TIER_100_PCS}+ PCS rate.
                   </p>
                 )}
-                {totalQty >= 100 && (
+                {totalQty >= TIER_100_PCS && (
                   <p className="flex items-center gap-2 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3 font-medium">
                     <CheckCircle2 size={16} strokeWidth={1.8} className="shrink-0" />
-                    You unlocked the 100+ PCS wholesale price ({slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}).
+                    You unlocked the {TIER_100_PCS}+ PCS wholesale price ({slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}).
                   </p>
                 )}
               </div>
@@ -823,7 +818,7 @@ export function ProductPage({ slug }: { slug: string }) {
               </button>
               {!canOrder && totalQty > 0 && (
                 <p className="flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey">
-                  <Lock size={12} strokeWidth={2} /> Order unlocks at {minOrderQty} PCS (whole color packs only).
+                  <Lock size={12} strokeWidth={2} /> Order unlocks at {MIN_ORDER_PCS} PCS (whole color packs only).
                 </p>
               )}
               <div className="pt-3 border-t border-line">
@@ -836,9 +831,9 @@ export function ProductPage({ slug }: { slug: string }) {
             {/* Wholesale info */}
             <div className="mt-6 border-t border-line">
               <div className="pt-4 space-y-2 text-sm text-grey leading-relaxed">
-                <p>MOQ {moqDisplay} PCS per design — mixed colors allowed.</p>
+                <p>Minimum order: {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS) per design — mixed colors allowed.</p>
                 <p>Color packs are fixed: each included color ships as {packCfg.m} M · {packCfg.l} L · {packCfg.xl} XL per {packCfg.packSize}-PCS pack. Sizes are not sold separately.</p>
-                <p>Slab pricing: {moqDisplay} PCS at {slabs.price50 > 0 ? formatPerUnit(slabs.price50) : '—'}; 100+ PCS at {slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}.</p>
+                <p>Slab pricing: {MIN_ORDER_PCS}–{TIER_100_PCS - 6} PCS at {slabs.price50 > 0 ? formatPerUnit(slabs.price50) : '—'}; {TIER_100_PCS}+ PCS at {slabs.price100 > 0 ? formatPerUnit(slabs.price100) : '—'}.</p>
                 <p>Pan-India delivery. Orders confirmed personally on WhatsApp before dispatch — no account needed.</p>
               </div>
             </div>

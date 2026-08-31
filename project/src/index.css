@@ -134,3 +134,21 @@
   to { opacity: 1; transform: translateX(0); }
 }
 
+/* ---- DSLANG loading dots ---- */
+
+@keyframes dslang-loading-pulse {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 1; }
+}
+
+.dslang-loading-dot {
+  animation: dslang-loading-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dslang-loading-dot {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}
+

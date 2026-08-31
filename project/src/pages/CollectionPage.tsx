@@ -1,20 +1,24 @@
 import { useEffect, useState } from 'react';
 import { MessageCircle } from 'lucide-react';
 import { ProductCard } from '@/components/ProductCard';
-import { fetchProducts, buildWhatsAppGeneralUrl, type CatalogProduct } from '@/lib/catalog';
+import { fetchProducts, buildWhatsAppGeneralUrl, MIN_PACKS, MIN_ORDER_PCS, type CatalogProduct } from '@/lib/catalog';
 import { useSiteSettings } from '@/lib/settings';
+import { LoadingDots } from '@/components/LoadingDots';
 
 export function CollectionPage() {
   const [filter, setFilter] = useState('all');
   const [products, setProducts] = useState<CatalogProduct[] | null>(null);
   const [error, setError] = useState(false);
+  const [loadKey, setLoadKey] = useState(0);
   const { settings } = useSiteSettings();
 
   useEffect(() => {
+    setProducts(null);
+    setError(false);
     fetchProducts()
       .then((p) => { setProducts(p); setError(false); })
       .catch(() => setError(true));
-  }, []);
+  }, [loadKey]);
 
   const categories = Array.from(
     new Set((products ?? []).map((p) => (p.category || 'tee').toLowerCase()))
@@ -38,8 +42,7 @@ export function CollectionPage() {
             Wholesale Collection
           </h1>
           <p className="mt-3 text-bone-dim max-w-xl leading-relaxed text-sm md:text-base">
-            {settings.default_moq} PCS MOQ with mixed sizes and colors. Order direct on WhatsApp · {settings.dispatch_note} · {settings.delivery_note} Delivery.
-          </p>
+            Min. order {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS), mixed sizes and colors. Order direct on WhatsApp · {settings.dispatch_note} · {settings.delivery_note} Delivery.          </p>
         </div>
 
         {/* Filters */}
@@ -63,16 +66,18 @@ export function CollectionPage() {
         </div>
 
         {error ? (
-          <div className="py-16 text-center">
+          <div className="min-h-[50vh] flex flex-col items-center justify-center text-center px-5">
             <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">Something went wrong</p>
             <p className="mt-2 text-sm text-grey">Could not load the collection. Please try again.</p>
+            <button
+              onClick={() => setLoadKey((k) => k + 1)}
+              className="mt-8 inline-flex items-center text-[11px] uppercase tracking-wide-2 font-semibold bg-crimson text-white px-6 py-3.5 hover:bg-crimson-dark transition-colors"
+            >
+              Try Again
+            </button>
           </div>
         ) : products === null ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="aspect-[3/4] bg-paper-3 border border-line animate-pulse" />
-            ))}
-          </div>
+          <div className="min-h-[50vh] flex items-center justify-center"><LoadingDots /></div>
         ) : filtered.length > 0 ? (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8">
             {filtered.map((p, i) => (

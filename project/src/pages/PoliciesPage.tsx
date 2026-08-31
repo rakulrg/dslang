@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { getPackConfig } from '@/lib/catalog';
+import { getPackConfig, MIN_PACKS, MIN_ORDER_PCS, TIER_100_PCS } from '@/lib/catalog';
 import { useSiteSettings } from '@/lib/settings';
 
 const POLICY_TABS = [
@@ -10,12 +10,12 @@ const POLICY_TABS = [
   { id: 'privacy', label: 'Privacy' },
 ];
 
-const CONTENT = (moq: number, minOrderQty: number, pack: ReturnType<typeof getPackConfig>): Record<string, { q: string; a: string }[]> => ({
+const CONTENT = (pack: ReturnType<typeof getPackConfig>): Record<string, { q: string; a: string }[]> => ({
   wholesale: [
-    { q: 'Minimum Order Quantity', a: `Every wholesale order is accepted from ${minOrderQty} PCS of the same design (MOQ ${moq} PCS). You order in whole colour packs — 1 pack = ${pack.packSize} PCS, always packed as ${pack.m} M · ${pack.l} L · ${pack.xl} XL. Sizes are not sold separately, and any mix of colours counts toward the same order.` },
-    { q: 'Wholesale Pricing', a: `Each design carries two wholesale slabs: a ${moq}-PCS price and a lower 100-PCS price shown per piece on the product page. Orders of 100+ PCS automatically get the higher tier across the entire order.` },
+    { q: 'Minimum Order Quantity', a: `Every wholesale order is accepted from ${MIN_ORDER_PCS} PCS (${MIN_PACKS} packs) of the same design. You order in whole colour packs — 1 pack = ${pack.packSize} PCS, always packed as ${pack.m} M · ${pack.l} L · ${pack.xl} XL. Sizes are not sold separately, and any mix of colours counts toward the same order.` },
+    { q: 'Wholesale Pricing', a: `Each design carries two wholesale slabs: the ${MIN_ORDER_PCS}–${TIER_100_PCS - 6} PCS price and the better ${TIER_100_PCS}+ PCS price, shown per piece on the product page. Orders of ${TIER_100_PCS}+ PCS automatically get the higher tier across the entire order.` },
     { q: 'How To Order', a: 'Pick whole colour packs on the product page or add them to the wholesale order. Request the order on WhatsApp with your store name, city and delivery address — our team confirms availability and sends a final quote before dispatch.' },
-    { q: 'Who Can Order', a: 'We work with streetwear stores, boutiques, online resellers and independent brands. Wholesale pricing and MOQ apply to all confirmed wholesale orders.' },
+    { q: 'Who Can Order', a: 'We work with streetwear stores, boutiques, online resellers and independent brands. Wholesale pricing and minimums apply to all confirmed wholesale orders.' },
   ],
   shipping: [
     { q: 'Processing Time', a: 'Wholesale orders are processed within 2–4 working days of confirmation on WhatsApp. You will receive a tracking link once your order ships.' },
@@ -41,7 +41,7 @@ export function PoliciesPage() {
   const [tab, setTab] = useState('wholesale');
   const [open, setOpen] = useState<number | null>(0);
   const { settings } = useSiteSettings();
-  const content = CONTENT(settings.default_moq, settings.min_order_quantity, getPackConfig());
+  const content = CONTENT(getPackConfig());
 
   return (
     <div className="pt-4 pb-12 md:pt-8 md:pb-20">

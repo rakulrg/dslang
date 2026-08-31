@@ -23,6 +23,19 @@ export const DEFAULT_MOQ = 50;
 export const WHOLESALE_TIER_100 = 100;
 export const WHOLESALE_TIER_DISCOUNT_STEP = 10;
 
+// Fixed color-pack wholesale model (source of truth for pack thresholds).
+// Products are sold in fixed color packs of PACK_SIZE pieces. The wholesale
+// minimum is MIN_PACKS packs (MIN_ORDER_PCS pieces). The two per-product price
+// tiers are pack-compatible thresholds: at/above MIN_ORDER_PCS but below
+// TIER_100_PCS use wholesale_price_50; at/above TIER_100_PCS use
+// wholesale_price_100. PACK_SIZE and the tier boundaries are intentionally
+// derived from the pack size so arbitrary piece quantities are never valid.
+export const PACK_SIZE = 6;
+export const MIN_PACKS = 8;
+export const MIN_ORDER_PCS = PACK_SIZE * MIN_PACKS; // 48
+export const TIER_100_PACKS = 17;
+export const TIER_100_PCS = PACK_SIZE * TIER_100_PACKS; // 102
+
 const ALLOWED_SIZES = new Set<string>(SIZE_LABELS);
 
 const SIZE_ORDER: Record<string, number> = { M: 0, L: 1, XL: 2 };
@@ -133,7 +146,7 @@ export function formatPrice(n: number): string {
 }
 
 export function formatPerUnit(n: number): string {
-  return `₹\u2009${n.toLocaleString('en-IN')}/PC`;
+  return `₹\u2009${n.toLocaleString('en-IN')} / piece`;
 }
 
 export interface ProductSpecs {
@@ -171,8 +184,8 @@ export interface WholesaleSlabs {
 export function getWholesaleSlabs(product: ProductRow | CatalogProduct): WholesaleSlabs {
   const settings = getSiteSettings();
   const moq = Number(product.moq ?? 0) || settings.default_moq;
-  const price50 = Number(product.price50 ?? 0) || settings.wholesale_price_50 || 0;
-  const price100 = Number(product.price100 ?? 0) || settings.wholesale_price_100 || 0;
+  const price50 = Number(product.wholesale_price_50 ?? 0) || settings.wholesale_price_50 || 0;
+  const price100 = Number(product.wholesale_price_100 ?? 0) || settings.wholesale_price_100 || 0;
   return { moq, price50, price100 };
 }
 
@@ -185,14 +198,28 @@ export interface WholesaleTierState {
 }
 
 export function getWholesaleTier(totalQty: number, slabs: WholesaleSlabs): WholesaleTierState {
-  const minQty = getSiteSettings().min_order_quantity;
-  if (totalQty >= WHOLESALE_TIER_100 && slabs.price100 > 0) {
+  // Pack-based thresholds: totalQty must be a whole number of PACK_SIZE pieces.
+  // 48–96 PCS -> wholesale_price_50; 102+ PCS -> wholesale_price_100.
+  if (totalQty >= TIER_100_PCS && slabs.price100 > 0) {
     return { tier: '100', unitPrice: slabs.price100, total: slabs.price100 * totalQty };
   }
-  if (totalQty >= minQty && slabs.price50 > 0) {
+  if (totalQty >= MIN_ORDER_PCS && slabs.price50 > 0) {
     return { tier: '50', unitPrice: slabs.price50, total: slabs.price50 * totalQty };
   }
   return { tier: 'below-moq', unitPrice: slabs.price50, total: slabs.price50 * totalQty };
+}
+
+/**
+ * The per-product wholesale unit price for a given total piece quantity across
+ * a product's colors. Single source of truth for the 48–96 / 102+ boundary.
+ * Returns 0 when below the minimum order or the tier's price is not set.
+ */
+export function getWholesaleUnitPrice(qty: number, price50: number, price100: number): number {
+  if (qty >= MIN_ORDER_PCS) {
+    if (qty >= TIER_100_PCS && price100 > 0) return price100;
+    if (price50 > 0) return price50;
+  }
+  return 0;
 }
 
 /* ---- Fixed color-pack model ---- */
@@ -265,7 +292,8 @@ export interface WholesaleOrderSummary {
 /**
  * Builds a wholesale order summary from a set of color-pack lines.
  * The per-piece price for each product depends on that product's own total
- * quantity (100+ PCS = price100 slab, otherwise the 50-PCS slab).
+ * quantity across all its colors (102+ PCS = price100 slab, otherwise the
+ * 48–96 PCS slab).
  */
 export function summarizeWholesale(lines: WholesaleSkuLine[]): WholesaleOrderSummary {
   let totalQty = 0;
@@ -281,7 +309,7 @@ export function summarizeWholesale(lines: WholesaleSkuLine[]): WholesaleOrderSum
   }
 
   for (const [productId, group] of byProduct) {
-    const unit = group.qty >= WHOLESALE_TIER_100 && group.price100 > 0 ? group.price100 : group.price50;
+    const unit = getWholesaleUnitPrice(group.qty, group.price50, group.price100);
     if (unit <= 0) continue;
     tiers[String(unit)] = unit;
     for (const line of lines) {
@@ -294,7 +322,7 @@ export function summarizeWholesale(lines: WholesaleSkuLine[]): WholesaleOrderSum
     tiers: Object.keys(tiers)
       .map(Number)
       .sort((a, b) => a - b)
-      .map((p) => ({ name: `₹\u2009${p.toLocaleString('en-IN')}/PC`, unitPrice: p })),
+      .map((p) => ({ name: formatPerUnit(p), unitPrice: p })),
     total,
   };
 }
@@ -334,7 +362,7 @@ export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): st
     productBlocks.get(key)!.push(line);
   }
 
-  const orderable = summary.totalQty >= settings.min_order_quantity;
+  const orderable = summary.totalQty >= MIN_ORDER_PCS;
 
   const message: string[] = [
     'DSLANG WHOLESALE ORDER',
@@ -358,7 +386,7 @@ export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): st
   message.push(`Total PCS: ${summary.totalQty}`);
   message.push(`Total: ${orderable && summary.total > 0 ? formatPrice(summary.total) : formatPrice(0)}`);
   if (!orderable) {
-    message.push(`(Order acceptance starts from ${settings.min_order_quantity} PCS — MOQ ${settings.default_moq} PCS.)`);
+    message.push(`(Minimum wholesale order: ${MIN_PACKS} packs — ${MIN_ORDER_PCS} PCS.)`);
   }
 
   if (sellerDetails) {

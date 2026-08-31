@@ -2,16 +2,20 @@ import { useEffect, useState } from 'react';
 import { MessageCircle } from 'lucide-react';
 import { ProductCard } from '@/components/ProductCard';
 import { fetchProducts, buildWhatsAppGeneralUrl, type CatalogProduct } from '@/lib/catalog';
+import { LoadingDots } from '@/components/LoadingDots';
 
 export function NewDropsPage() {
   const [products, setProducts] = useState<CatalogProduct[] | null>(null);
   const [error, setError] = useState(false);
+  const [loadKey, setLoadKey] = useState(0);
 
   useEffect(() => {
+    setProducts(null);
+    setError(false);
     fetchProducts()
       .then((p) => { setProducts(p); setError(false); })
       .catch(() => setError(true));
-  }, []);
+  }, [loadKey]);
 
   const flagged = [...(products ?? [])].filter((p) => p.new_drop);
   const drops =
@@ -37,16 +41,18 @@ export function NewDropsPage() {
         </div>
 
         {error ? (
-          <div className="py-16 text-center">
+          <div className="min-h-[50vh] flex flex-col items-center justify-center text-center px-5">
             <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">Something went wrong</p>
             <p className="mt-2 text-sm text-grey">Could not load the latest drops. Please try again.</p>
+            <button
+              onClick={() => setLoadKey((k) => k + 1)}
+              className="mt-8 inline-flex items-center text-[11px] uppercase tracking-wide-2 font-semibold bg-crimson text-white px-6 py-3.5 hover:bg-crimson-dark transition-colors"
+            >
+              Try Again
+            </button>
           </div>
         ) : products === null ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8 pt-6">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="aspect-[3/4] bg-paper-3 border border-line animate-pulse" />
-            ))}
-          </div>
+          <div className="min-h-[50vh] flex items-center justify-center"><LoadingDots /></div>
         ) : drops.length > 0 ? (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8 pt-6">
             {drops.map((p, i) => (

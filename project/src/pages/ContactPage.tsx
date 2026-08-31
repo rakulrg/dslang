@@ -5,6 +5,8 @@ import {
   INSTAGRAM_URL,
   EMAIL,
   buildWhatsAppGeneralUrl,
+  MIN_PACKS,
+  MIN_ORDER_PCS,
 } from '@/lib/catalog';
 import { useSiteSettings } from '@/lib/settings';
 import { Instagram } from '@/components/icons/Instagram';
@@ -75,7 +77,7 @@ export function ContactPage() {
             Wholesale Enquiry
           </h2>
           <p className="mt-4 text-bone-dim max-w-md mx-auto leading-relaxed">
-            Pick any product, build a mix of {settings.default_moq}+ PCS, and request your wholesale order — it opens straight in WhatsApp. We confirm availability, pricing and dispatch in one chat.
+            Pick any product, build a mix of color packs (minimum {MIN_PACKS} packs / {MIN_ORDER_PCS} PCS), and request your wholesale order — it opens straight in WhatsApp. We confirm availability, pricing and dispatch in one chat.
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             <Button

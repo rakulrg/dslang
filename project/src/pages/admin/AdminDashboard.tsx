@@ -1,8 +1,7 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+﻿import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   LayoutGrid,
   Image as ImageIcon,
-  Settings as SettingsIcon,
   LogOut,
   Plus,
   Trash2,
@@ -17,8 +16,9 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { linkHref } from '@/lib/router';
-import { formatPerUnit, getWholesaleSlabs, DEFAULT_MOQ } from '@/lib/catalog';
+import { formatPerUnit, getWholesaleSlabs } from '@/lib/catalog';
 import { preloadImage } from '@/lib/image';
+import { LoadingDots } from '@/components/LoadingDots';
 import {
   adminFetchProducts,
   adminFetchHero,
@@ -35,18 +35,13 @@ import {
   uploadProductImage,
   uploadHeroImage,
   hasHeroCtaColumns,
-  hasOrderMinColumns,
-  adminFetchSiteSettings,
-  adminSaveSiteSettings,
-  toWholesaleErrorMessage,
+  describeSupabaseError,
   type ProductInput,
 } from '@/lib/admin';
 import { hasPublishColumns } from '@/lib/catalog';
-import type { SiteSettings } from '@/lib/settings';
-import { setCachedSettings, fetchSiteSettings } from '@/lib/settings';
 import type { CatalogProduct, HeroSlideRow, ProductColorRow } from '@/lib/types';
 
-type Tab = 'products' | 'hero' | 'settings';
+type Tab = 'products' | 'hero';
 
 const EXPECTED_RATIO = 4 / 5;
 const RATIO_TOLERANCE = 0.03;
@@ -85,11 +80,9 @@ export function AdminDashboard() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
   const [publishReady, setPublishReady] = useState(false);
   const [heroCtaReady, setHeroCtaReady] = useState(false);
-  const [orderMinReady, setOrderMinReady] = useState(false);
-  const [settings, setSettings] = useState<SiteSettings | null>(null);
-  const [settingsError, setSettingsError] = useState('');
 
   const loadProducts = useCallback(async () => {
     try {
@@ -97,7 +90,7 @@ export function AdminDashboard() {
       setProducts(await adminFetchProducts());
     } catch (err) {
       setProducts([]);
-      setLoadError(err instanceof Error ? err.message : 'Failed to load products');
+      setLoadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Failed to load products'));
     }
   }, []);
 
@@ -107,17 +100,7 @@ export function AdminDashboard() {
       setHeroSlides(await adminFetchHero());
     } catch (err) {
       setHeroSlides([]);
-      setLoadError(err instanceof Error ? err.message : 'Failed to load hero slides');
-    }
-  }, []);
-
-  const loadSettings = useCallback(async () => {
-    try {
-      setSettingsError('');
-      setSettings(await adminFetchSiteSettings());
-    } catch (err) {
-      setSettings(null);
-      setSettingsError(toWholesaleErrorMessage(err, 'Failed to load wholesale settings'));
+      setLoadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Failed to load hero slides'));
     }
   }, []);
 
@@ -130,21 +113,21 @@ export function AdminDashboard() {
     let cancelled = false;
     hasPublishColumns().then((ok) => { if (!cancelled) setPublishReady(ok); });
     hasHeroCtaColumns().then((ok) => { if (!cancelled) setHeroCtaReady(ok); });
-    hasOrderMinColumns().then((ok) => { if (!cancelled) setOrderMinReady(ok); });
     return () => { cancelled = true; };
-  }, []);
-
-  const loadSiteSettingsCache = useCallback(async () => {
-    try {
-      setCachedSettings(await fetchSiteSettings());
-    } catch {
-      // Storefront keeps its existing defaults if this fails.
-    }
   }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     window.location.hash = '#/';
+  };
+
+  const runAction = async (fn: () => Promise<void>, fallback: string) => {
+    setActionError('');
+    try {
+      await fn();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : describeSupabaseError(err, fallback));
+    }
   };
 
   const editingProduct = products?.find((p) => p.id === editingId) ?? null;
@@ -190,14 +173,6 @@ export function AdminDashboard() {
           >
             <ImageIcon size={13} strokeWidth={1.8} /> Homepage
           </button>
-          <button
-            onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); void loadSettings(); }}
-            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'settings' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <SettingsIcon size={13} strokeWidth={1.8} /> Wholesale Settings
-          </button>
         </div>
       </div>
 
@@ -227,14 +202,6 @@ export function AdminDashboard() {
           >
             <ImageIcon size={16} strokeWidth={1.8} /> Homepage
           </button>
-          <button
-            onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); void loadSettings(); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'settings' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <SettingsIcon size={16} strokeWidth={1.8} /> Wholesale Settings
-          </button>
         </nav>
 
         <div className="p-3 border-t border-line">
@@ -261,7 +228,7 @@ export function AdminDashboard() {
         {/* Top bar */}
         <header className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-line px-4 sm:px-6 h-12 sm:h-14 flex items-center justify-between gap-3">
           <h1 className="font-display text-lg sm:text-2xl tracking-wide-2 text-bone uppercase">
-            {tab === 'products' ? 'Products' : tab === 'hero' ? 'Homepage' : 'Wholesale Settings'}
+            {tab === 'products' ? 'Products' : 'Homepage'}
           </h1>
           {tab === 'products' && !creating && !editingProduct && (
             <button
@@ -287,18 +254,23 @@ export function AdminDashboard() {
               {loadError}
             </div>
           )}
+          {actionError && (
+            <div className="mb-6 bg-crimson/5 border border-crimson/20 text-crimson text-sm px-4 py-3 rounded">
+              {actionError}
+            </div>
+          )}
           {tab === 'products' && (
             creating ? (
               <ProductForm
                 publishReady={publishReady}
-                onSave={async (input) => { await adminCreateProduct(input); await loadProducts(); setCreating(false); }}
+                onSave={(input) => runAction(async () => { await adminCreateProduct(input); await loadProducts(); setCreating(false); }, 'Could not create this product.')}
                 onCancel={() => setCreating(false)}
               />
             ) : editingProduct ? (
               <ProductEditor
                 product={editingProduct}
                 publishReady={publishReady}
-                onSave={async (id, input) => { await adminUpdateProduct(id, input); await loadProducts(); setEditingId(null); }}
+                onSave={(id, input) => runAction(async () => { await adminUpdateProduct(id, input); await loadProducts(); setEditingId(null); }, 'Could not save this product.')}
                 onCancel={() => setEditingId(null)}
                 onChanged={loadProducts}
               />
@@ -306,7 +278,7 @@ export function AdminDashboard() {
               <ProductList
                 products={products}
                 onEdit={(id) => setEditingId(id)}
-                onDelete={async (id) => { await adminDeleteProduct(id); await loadProducts(); }}
+                onDelete={(id) => runAction(async () => { await adminDeleteProduct(id); await loadProducts(); }, 'Could not delete this product.')}
               />
             )
           )}
@@ -315,27 +287,17 @@ export function AdminDashboard() {
             creating ? (
               <HeroForm
                 ctaReady={heroCtaReady}
-                onSave={async (slide) => { await adminCreateHero(slide); await loadHero(); setCreating(false); }}
+                onSave={(slide) => runAction(async () => { await adminCreateHero(slide); await loadHero(); setCreating(false); }, 'Could not create this slide.')}
                 onCancel={() => setCreating(false)}
               />
             ) : (
               <HeroList
                 slides={heroSlides}
-                onUpdate={async (id, patch) => { await adminUpdateHero(id, patch); await loadHero(); }}
-                onDelete={async (id) => { await adminDeleteHero(id); await loadHero(); }}
+                onUpdate={(id, patch) => runAction(async () => { await adminUpdateHero(id, patch); await loadHero(); }, 'Could not save this slide.')}
+                onDelete={(id) => runAction(async () => { await adminDeleteHero(id); await loadHero(); }, 'Could not delete this slide.')}
                 ctaReady={heroCtaReady}
               />
             )
-          )}
-
-          {tab === 'settings' && (
-            <SettingsForm
-              settings={settings}
-              error={settingsError}
-              orderMinReady={orderMinReady}
-              onLoad={loadSettings}
-              onSave={async (s) => { await adminSaveSiteSettings(s); setSettings(s); await loadSiteSettingsCache(); }}
-            />
           )}
         </div>
       </div>
@@ -356,10 +318,8 @@ function ProductList({
 }) {
   if (products === null) {
     return (
-      <div className="space-y-3">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-20 bg-paper-3 border border-line rounded animate-pulse" />
-        ))}
+      <div className="min-h-[40vh] flex items-center justify-center">
+        <LoadingDots />
       </div>
     );
   }
@@ -378,6 +338,7 @@ function ProductList({
       {products.map((p) => {
         const primary = p.colors[0];
         const isPublished = p.published !== false;
+        const slabs = getWholesaleSlabs(p);
         return (
           <div
             key={p.id}
@@ -393,11 +354,11 @@ function ProductList({
                 <h3 className="text-sm font-semibold text-bone truncate">{p.name}</h3>
                 <p className="text-[11px] uppercase tracking-wide-2 text-grey mt-0.5">{p.code}</p>
                 <div className="mt-1 flex items-center gap-2 text-xs text-bone-soft flex-wrap">
-                  <span className="font-medium">{formatPerUnit(getWholesaleSlabs(p).price50)}</span>
-                  {getWholesaleSlabs(p).price100 > 0 && (
+                  <span className="font-medium">{formatPerUnit(slabs.price50)}</span>
+                  {slabs.price100 > 0 && (
                     <>
                       <span className="text-grey">·</span>
-                      <span>{formatPerUnit(getWholesaleSlabs(p).price100)}</span>
+                      <span>{formatPerUnit(slabs.price100)}</span>
                     </>
                   )}
                   <span className="text-grey">·</span>
@@ -455,7 +416,6 @@ function ProductForm({
     slug: '',
     name: '',
     code: '',
-    drop_label: '',
     category: 'tee',
     badge: null,
     featured: true,
@@ -463,8 +423,8 @@ function ProductForm({
     new_drop: false,
     sort_order: 99,
     moq: null,
-    price50: null,
-    price100: null,
+    wholesale_price_50: null,
+    wholesale_price_100: null,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -475,16 +435,20 @@ function ProductForm({
       setError('Slug, name, and code are required.');
       return;
     }
-    if (!(form.price50 && form.price50 > 0)) {
+    if (!(form.wholesale_price_50 && form.wholesale_price_50 > 0)) {
       setError('Set the wholesale price (50 PCS+ tier) to make this product orderable.');
       return;
     }
     setBusy(true);
     setError('');
     try {
+      console.log('[DSLANG wholesale save payload]', {
+        wholesale_price_50: form.wholesale_price_50,
+        wholesale_price_100: form.wholesale_price_100,
+      });
       await onSave(form);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create product');
+      setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Failed to create product'));
     } finally {
       setBusy(false);
     }
@@ -529,14 +493,11 @@ function ProductForm({
       <div>
         <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Wholesale Pricing</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          <Field label="Wholesale MOQ (PCS)" hint="Display only — blank uses the global default (50)">
-            <NumInput value={form.moq} onChange={(n) => setForm({ ...form, moq: n })} className={inputCls} placeholder="50" />
+          <Field label="Wholesale Price — 50 PCS+">
+            <NumInput value={form.wholesale_price_50} onChange={(n) => setForm({ ...form, wholesale_price_50: n })} className={inputCls} placeholder="—" />
           </Field>
-          <Field label="Wholesale Price — 50 PCS+" hint="₹ per piece, applied from the order minimum (48 PCS) up to 99 PCS">
-            <NumInput value={form.price50} onChange={(n) => setForm({ ...form, price50: n })} className={inputCls} placeholder="—" />
-          </Field>
-          <Field label="Wholesale Price — 100 PCS+" hint="₹ per piece, optional — better per-piece tier at 100+">
-            <NumInput value={form.price100} onChange={(n) => setForm({ ...form, price100: n })} className={inputCls} placeholder="—" />
+          <Field label="Wholesale Price — 100 PCS+">
+            <NumInput value={form.wholesale_price_100} onChange={(n) => setForm({ ...form, wholesale_price_100: n })} className={inputCls} placeholder="—" />
           </Field>
         </div>
       </div>
@@ -600,16 +561,14 @@ function ProductEditor({
     slug: product.slug,
     name: product.name,
     code: product.code,
-    drop_label: product.drop_label,
     category: product.category,
     badge: product.badge,
     featured: product.featured,
     published: product.published !== false,
     new_drop: product.new_drop === true,
     sort_order: product.sort_order,
-    moq: product.moq ?? null,
-    price50: product.price50 ?? null,
-    price100: product.price100 ?? null,
+    wholesale_price_50: product.wholesale_price_50 ?? null,
+    wholesale_price_100: product.wholesale_price_100 ?? null,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -617,15 +576,41 @@ function ProductEditor({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!form.slug || !form.name || !form.code) {
+      setError('Slug, name, and code are required.');
+      return;
+    }
+    if (!(form.wholesale_price_50 && form.wholesale_price_50 > 0)) {
+      setError('Set the wholesale price (50 PCS+ tier) to make this product orderable.');
+      return;
+    }
+    const p50 = Number(form.wholesale_price_50 ?? 0);
+    const p100 = form.wholesale_price_100 == null ? null : Number(form.wholesale_price_100);
+    if (p100 !== null && !Number.isFinite(p100)) {
+      setError('The 100+ PCS price must be a positive number.');
+      return;
+    }
+    if (p100 !== null && p100 < 0) {
+      setError('The 100+ PCS price cannot be negative.');
+      return;
+    }
+    if (p100 !== null && p100 > p50) {
+      setError('The 100+ PCS price cannot be higher than the 50 PCS+ price.');
+      return;
+    }
     setBusy(true);
     setError('');
     setSaved(false);
     try {
+      console.log('[DSLANG wholesale save payload]', {
+        wholesale_price_50: form.wholesale_price_50,
+        wholesale_price_100: form.wholesale_price_100,
+      });
       await onSave(product.id, form);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
+      setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Failed to save'));
     } finally {
       setBusy(false);
     }
@@ -668,14 +653,11 @@ function ProductEditor({
         <div>
           <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Wholesale Pricing</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-            <Field label="Wholesale MOQ (PCS)" hint={`Display only — blank uses the global default (${DEFAULT_MOQ})`}>
-              <NumInput value={form.moq ?? null} onChange={(n) => setForm({ ...form, moq: n })} className={inputCls} placeholder="—" />
+            <Field label="Wholesale Price — 50 PCS+">
+              <NumInput value={form.wholesale_price_50 ?? null} onChange={(n) => setForm({ ...form, wholesale_price_50: n })} className={inputCls} placeholder="—" />
             </Field>
-            <Field label="Wholesale Price — 50 PCS+" hint="₹ per piece, applied from the order minimum (48 PCS) up to 99 PCS">
-              <NumInput value={form.price50 ?? null} onChange={(n) => setForm({ ...form, price50: n })} className={inputCls} placeholder="—" />
-            </Field>
-            <Field label="Wholesale Price — 100 PCS+" hint="₹ per piece, optional — better per-piece tier at 100+">
-              <NumInput value={form.price100 ?? null} onChange={(n) => setForm({ ...form, price100: n })} className={inputCls} placeholder="—" />
+            <Field label="Wholesale Price — 100 PCS+">
+              <NumInput value={form.wholesale_price_100 ?? null} onChange={(n) => setForm({ ...form, wholesale_price_100: n })} className={inputCls} placeholder="—" />
             </Field>
           </div>
         </div>
@@ -755,7 +737,7 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
       const combined = [...new Set([...newImages.split('\n').map((s) => s.trim()).filter(Boolean), ...urls])].join('\n');
       setNewImages(combined);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+      setUploadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Upload failed'));
     } finally {
       setUploading(false);
     }
@@ -771,7 +753,7 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
       setNewName(''); setNewHex('#000000'); setNewImages(''); setAdding(false);
       await onChanged();
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Could not add this color.');
+      setUploadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not add this color.'));
     } finally {
       setBusy(false);
     }
@@ -779,13 +761,23 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
 
   const handleDeleteColor = async (id: string) => {
     if (!confirm('Delete this color and all its images?')) return;
-    await adminDeleteColor(id);
-    await onChanged();
+    setUploadError('');
+    try {
+      await adminDeleteColor(id);
+      await onChanged();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not delete this color.'));
+    }
   };
 
   const handleSaveColor = async (id: string, name: string, hex: string, images: string[]) => {
-    await adminUpdateColor(id, { name, hex, images });
-    await onChanged();
+    setUploadError('');
+    try {
+      await adminUpdateColor(id, { name, hex, images });
+      await onChanged();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not save this color.'));
+    }
   };
 
   return (
@@ -879,7 +871,7 @@ function ColorRow({ color, onDelete, onSave }: { color: ProductColorRow; onDelet
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Could not save image changes.');
+      setUploadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not save image changes.'));
     } finally {
       setSaving(false);
     }
@@ -901,7 +893,7 @@ function ColorRow({ color, onDelete, onSave }: { color: ProductColorRow; onDelet
       );
       setImages((current) => [...new Set([...current, ...uploadedUrls])]);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+      setUploadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Upload failed'));
     } finally {
       setUploading(false);
       event.target.value = '';
@@ -1103,7 +1095,7 @@ function ColorPriorityManager({ product, onChanged }: { product: CatalogProduct;
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save color order.');
+      setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not save color order.'));
     } finally {
       setBusy(false);
     }
@@ -1237,7 +1229,7 @@ function HeroRow({
       await preloadImage(url);
       setImageUrl(url);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+      setUploadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Upload failed'));
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -1381,7 +1373,7 @@ function HeroForm({
       await preloadImage(url);
       setForm((f) => ({ ...f, image_url: url }));
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+      setUploadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Upload failed'));
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -1399,7 +1391,7 @@ function HeroForm({
     try {
       await onSave(form);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create slide');
+      setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Failed to create slide'));
     } finally {
       setBusy(false);
     }
@@ -1483,206 +1475,6 @@ function HeroForm({
   );
 }
 
-/* ---- Wholesale Settings ---- */
-
-function SettingsForm({
-  settings,
-  error,
-  orderMinReady,
-  onLoad,
-  onSave,
-}: {
-  settings: SiteSettings | null;
-  error: string;
-  orderMinReady: boolean;
-  onLoad: () => Promise<void>;
-  onSave: (s: SiteSettings) => Promise<void>;
-}) {
-  const [form, setForm] = useState<SiteSettings | null>(settings);
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [localError, setLocalError] = useState('');
-
-  useEffect(() => {
-    setForm(settings);
-    setSaved(false);
-  }, [settings]);
-
-  useEffect(() => {
-    void onLoad();
-  }, [onLoad]);
-
-  if (settings === null || form === null) {
-    return (
-      <div className="max-w-2xl bg-white border border-line rounded p-6 text-center">
-        {error ? (
-          <>
-            <p className="font-label text-lg uppercase tracking-wide-2 text-grey mb-2">Wholesale settings unavailable</p>
-            <p className="text-sm text-grey">{error}</p>
-            <button
-              onClick={() => void onLoad()}
-              className="mt-5 inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors"
-            >
-              Try again
-            </button>
-          </>
-        ) : (
-          <div className="h-20 bg-paper-3 rounded animate-pulse" />
-        )}
-      </div>
-    );
-  }
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const whats = form.whatsapp_number.trim().replace(/^\+/, '');
-    if (!/^\d{10,15}$/.test(whats)) {
-      setLocalError('WhatsApp number must be a plain 10–15 digit number (international format, e.g. 919944676178).');
-      return;
-    }
-    if (!form.default_moq || form.default_moq < 1) {
-      setLocalError('Displayed MOQ must be at least 1 PCS.');
-      return;
-    }
-    if (!form.pack_size || form.pack_size < 1) {
-      setLocalError('Pieces per pack must be at least 1 PCS.');
-      return;
-    }
-    if (Math.floor(form.pack_m) < 0 || Math.floor(form.pack_l) < 0 || Math.floor(form.pack_xl) < 0) {
-      setLocalError('Pack size breakdown cannot be negative.');
-      return;
-    }
-    if (Math.floor(form.pack_m) + Math.floor(form.pack_l) + Math.floor(form.pack_xl) !== Math.floor(form.pack_size)) {
-      setLocalError('M + L + XL per pack must add up to the pieces per pack (e.g. 2 + 2 + 2 = 6).');
-      return;
-    }
-    if (!form.min_order_quantity || form.min_order_quantity < Math.floor(form.pack_size)) {
-      setLocalError(`Order minimum must be at least the pack size (${Math.floor(form.pack_size)} PCS).`);
-      return;
-    }
-    if (form.min_order_quantity % Math.floor(form.pack_size) !== 0) {
-      setLocalError('Order minimum must be a whole multiple of the pack size.');
-      return;
-    }
-    if (Number(form.wholesale_price_50 ?? 0) < 0 || Number(form.wholesale_price_100 ?? 0) < 0) {
-      setLocalError('Wholesale prices cannot be negative.');
-      return;
-    }
-    setBusy(true);
-    setLocalError('');
-    setSaved(false);
-    try {
-      await onSave({
-        ...form,
-        whatsapp_number: whats,
-        default_moq: Math.floor(form.default_moq),
-        min_order_quantity: Math.floor(form.min_order_quantity),
-        pack_size: Math.floor(form.pack_size),
-        pack_m: Math.floor(form.pack_m),
-        pack_l: Math.floor(form.pack_l),
-        pack_xl: Math.floor(form.pack_xl),
-        wholesale_price_50: Number(form.wholesale_price_50 ?? 0),
-        wholesale_price_100: Number(form.wholesale_price_100 ?? 0),
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    } catch (err) {
-      setLocalError(toWholesaleErrorMessage(err, 'Failed to save settings'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-white border border-line rounded p-4 sm:p-6">
-      <div>
-        <h2 className="font-display text-xl sm:text-2xl tracking-wide-2 text-bone uppercase">Wholesale Settings</h2>
-        <p className="mt-1 text-xs text-grey">
-          These values power the storefront — announcement bar, WhatsApp ordering, MOQ gates and delivery notes. Changes go live on save.
-        </p>
-      </div>
-
-      <div className="border-t border-line pt-4">
-        <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Announcement Bar</h3>
-        <Field label="Announcement Text">
-          <textarea value={form.announcement_text} onChange={(e) => setForm({ ...form, announcement_text: e.target.value })} rows={2} className={inputCls} />
-        </Field>
-        <label className="flex items-center gap-2 mt-2">
-          <input type="checkbox" checked={form.announcement_active} onChange={(e) => setForm({ ...form, announcement_active: e.target.checked })} className="w-4 h-4 accent-crimson" />
-          <span className="text-sm text-bone-dim">Show announcement bar on the site</span>
-        </label>
-      </div>
-
-      <div className="border-t border-line pt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-        <Field label="WhatsApp Number" hint="International format, no + or spaces">
-          <input value={form.whatsapp_number} onChange={(e) => setForm({ ...form, whatsapp_number: e.target.value })} className={inputCls} placeholder="919944676178" />
-        </Field>
-        <Field label="Displayed MOQ (PCS)" hint="Shown as the product MOQ">
-          <NumInput value={form.default_moq} onChange={(n) => setForm({ ...form, default_moq: n ?? 50 })} className={inputCls} placeholder="50" />
-        </Field>
-        <Field label="Dispatch Note" hint="Shown across the site">
-          <input value={form.dispatch_note} onChange={(e) => setForm({ ...form, dispatch_note: e.target.value })} className={inputCls} placeholder="Same Day Dispatch" />
-        </Field>
-        <Field label="Delivery Note" hint="Shown across the site">
-          <input value={form.delivery_note} onChange={(e) => setForm({ ...form, delivery_note: e.target.value })} className={inputCls} placeholder="Pan India" />
-        </Field>
-      </div>
-
-      {orderMinReady && (
-        <div className="border-t border-line pt-4">
-          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Wholesale Order Minimums &amp; Color Packs</h3>
-          <p className="text-xs text-grey mb-3">
-            Buyers order in whole color packs: 1 pack = fixed mix of sizes. Sizes are never sold separately.
-          </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
-            <Field label="Order Minimum (PCS)" hint="Hard acceptance floor for the total order">
-              <NumInput value={form.min_order_quantity} onChange={(n) => setForm({ ...form, min_order_quantity: n ?? 48 })} className={inputCls} placeholder="48" />
-            </Field>
-            <Field label="Pieces per Pack" hint="Total PCS in one color pack">
-              <NumInput value={form.pack_size} onChange={(n) => setForm({ ...form, pack_size: n ?? 6 })} className={inputCls} placeholder="6" />
-            </Field>
-          </div>
-          <div className="grid grid-cols-3 gap-3 sm:gap-4 mt-3">
-            <Field label="M per pack">
-              <NumInput value={form.pack_m} onChange={(n) => setForm({ ...form, pack_m: n ?? 2 })} className={inputCls} placeholder="2" />
-            </Field>
-            <Field label="L per pack">
-              <NumInput value={form.pack_l} onChange={(n) => setForm({ ...form, pack_l: n ?? 2 })} className={inputCls} placeholder="2" />
-            </Field>
-            <Field label="XL per pack">
-              <NumInput value={form.pack_xl} onChange={(n) => setForm({ ...form, pack_xl: n ?? 2 })} className={inputCls} placeholder="2" />
-            </Field>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mt-3">
-            <Field label="Global 50+ PCS Price (₹/PC)" hint="Fallback when a product has no per-product price">
-              <NumInput value={form.wholesale_price_50} onChange={(n) => setForm({ ...form, wholesale_price_50: n ?? 0 })} className={inputCls} placeholder="0" />
-            </Field>
-            <Field label="Global 100+ PCS Price (₹/PC)" hint="Fallback when a product has no per-product price">
-              <NumInput value={form.wholesale_price_100} onChange={(n) => setForm({ ...form, wholesale_price_100: n ?? 0 })} className={inputCls} placeholder="0" />
-            </Field>
-          </div>
-          <p className="mt-2 text-xs text-grey">
-            Pack sizes must add to the pieces per pack (2 + 2 + 2 = 6). The order minimum must be a whole multiple of the pack size. Product-level 50+/100+ prices override the globals.
-          </p>
-        </div>
-      )}
-
-      {localError && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{localError}</p>}
-
-      <div className="flex items-center gap-3 pt-2">
-        <button type="submit" disabled={busy} className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50">
-          <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Settings'}
-        </button>
-        {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Live on site</span>}
-      </div>
-
-      <p className="text-xs text-grey pt-2 border-t border-line">
-        Product-level MOQ overrides the displayed MOQ when set. Buyers order in whole color packs and can place orders from the order minimum (48 PCS by default). Changes go live on save.
-      </p>
-    </form>
-  );
-}
-
 /* ---- Shared UI helpers ---- */
 
 function NumInput({ value, onChange, className, placeholder, ...rest }: {
@@ -1701,17 +1493,36 @@ function NumInput({ value, onChange, className, placeholder, ...rest }: {
     }
   }, [value]);
 
+  const sync = (v: number | null) => {
+    lastRef.current = v;
+    onChange(v);
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    setRaw(v);
+    if (v === '' || v === '-') {
+      sync(null);
+      return;
+    }
+    const n = Number(v);
+    if (Number.isFinite(n) && n >= 0) sync(Math.floor(n));
+  };
+
   const commit = () => {
     if (raw === '' || raw === '-') {
-      lastRef.current = null;
       setRaw('');
-      onChange(null);
-    } else {
-      const n = Math.max(0, Math.floor(Number(raw)));
-      lastRef.current = n;
-      setRaw(String(n));
-      onChange(n);
+      sync(null);
+      return;
     }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setRaw(lastRef.current == null ? '' : String(lastRef.current));
+      return;
+    }
+    const n = Math.floor(parsed);
+    setRaw(String(n));
+    sync(n);
   };
 
   return (
@@ -1719,7 +1530,7 @@ function NumInput({ value, onChange, className, placeholder, ...rest }: {
       type="text"
       inputMode="numeric"
       value={raw}
-      onChange={(e) => setRaw(e.target.value)}
+      onChange={handleChange}
       onBlur={commit}
       onWheel={(e) => e.currentTarget.blur()}
       placeholder={placeholder}

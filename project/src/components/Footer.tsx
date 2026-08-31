@@ -17,7 +17,7 @@ export function Footer() {
   const { settings } = useSiteSettings();
   const whatNumber = settings.whatsapp_number;
   const wholesaleNotes = [
-    `MOQ ${settings.default_moq} PCS`,
+    `Min. order 8 packs (48 PCS)`,
     'Mixed Sizes & Colors',
     `${settings.delivery_note} Delivery`,
     settings.dispatch_note,
@@ -103,9 +103,6 @@ export function Footer() {
             <span className="font-label text-[10px] uppercase tracking-[0.2em] text-white/50">Wholesale Only</span>
             <a href={linkHref('/policies')} className="text-xs text-white/40 hover:text-white/70 transition-colors">
               Policies
-            </a>
-            <a href={linkHref('/admin')} className="text-xs text-white/25 hover:text-white/60 transition-colors" aria-label="Admin">
-              Admin
             </a>
           </div>
         </div>

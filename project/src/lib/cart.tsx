@@ -1,5 +1,25 @@
-import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
-import { formatPrice, packToQuantities, WHOLESALE_TIER_100 } from '@/lib/catalog';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { formatPrice, packToQuantities, getWholesaleUnitPrice } from '@/lib/catalog';
+
+const STORAGE_KEY = 'dslang_wholesale_cart_v1';
+
+function loadCart(): CartItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((i): i is CartItem =>
+      i && typeof i === 'object' &&
+      typeof i.productId === 'string' &&
+      typeof i.color === 'string' &&
+      typeof i.packs === 'number' && Number.isFinite(i.packs) && i.packs >= 0
+    );
+  } catch {
+    return [];
+  }
+}
 
 export interface CartItem {
   productId: string;
@@ -45,8 +65,18 @@ const CartContext = createContext<CartContextValue>({
 });
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<CartItem[]>([]);
+  const [items, setItems] = useState<CartItem[]>(() => loadCart());
   const [isOpen, setIsOpen] = useState(false);
+
+  // Persist cart across refreshes. Read-only keys stored, quantities are
+  // recomputed from the pack model so a stale/malformed cart is ever valid.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    } catch {
+      // Storage may be unavailable (private mode / quota); cart still works in-memory.
+    }
+  }, [items]);
 
   const addItem = useCallback((item: Omit<CartItem, 'packs' | 'm' | 'l' | 'xl' | 'qty'>, packs: number) => {
     const whole = Math.max(0, Math.floor(packs));
@@ -81,7 +111,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   /**
    * Wholesale subtotal — the per-piece tier is decided per product by that
-   * product's total quantity across all colors (100+ = 100 PCS slab).
+   * product's total quantity across all colors (102+ PCS = price100 slab,
+   * otherwise the 48–96 PCS slab).
    */
   const subtotal = useMemo(() => {
     const byProduct = new Map<string, { qty: number; price50: number; price100: number; amount: number }>();
@@ -92,7 +123,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
     let total = 0;
     for (const [groupId, group] of byProduct) {
-      const unit = group.qty >= WHOLESALE_TIER_100 && group.price100 > 0 ? group.price100 : group.price50;
+      const unit = getWholesaleUnitPrice(group.qty, group.price50, group.price100);
+      if (unit <= 0) continue;
       for (const item of items) {
         if (item.productId === groupId) total += unit * item.qty;
       }

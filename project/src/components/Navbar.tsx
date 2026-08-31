@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef } from 'react';
-import { Menu, X, Search, MessageCircle, ShoppingBag } from 'lucide-react';
-import { linkHref } from '@/lib/router';
+import { Menu, X, ShoppingBag } from 'lucide-react';
+import { linkHref, useRouter } from '@/lib/router';
 import { useCart } from '@/lib/cart';
-import { INSTAGRAM_URL, buildWhatsAppGeneralUrl } from '@/lib/catalog';
+import { INSTAGRAM_URL } from '@/lib/catalog';
 import { useSiteSettings } from '@/lib/settings';
+import { useAuth } from '@/lib/auth';
 import { Instagram } from '@/components/icons/Instagram';
-import { SearchModal } from '@/components/SearchModal';
 
 const NAV_LINKS = [
   { label: 'Collection', to: '/collection' },
@@ -15,12 +15,19 @@ const NAV_LINKS = [
   { label: 'About', to: '/stock-dslang' },
 ];
 
-export function Navbar({ currentPath }: { currentPath: string }) {
+export function Navbar({
+  currentPath,
+  onOpenLogin,
+}: {
+  currentPath: string;
+  onOpenLogin: (mode: 'signin' | 'signup') => void;
+}) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
   const { count, open: openCart, isOpen: isCartOpen } = useCart();
   const { settings } = useSiteSettings();
+  const { user, isAdmin } = useAuth();
+  const { navigate } = useRouter();
   const cartOpenRef = useRef(isCartOpen);
   cartOpenRef.current = isCartOpen;
 
@@ -47,6 +54,16 @@ export function Navbar({ currentPath }: { currentPath: string }) {
     };
   }, [menuOpen]);
 
+  // Close the mobile menu with the Escape key.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
+
   const isActive = (to: string) => {
     if (to === '/') return currentPath === '/';
     if (to === '/stock-dslang') {
@@ -57,10 +74,6 @@ export function Navbar({ currentPath }: { currentPath: string }) {
 
   const isProductPage = currentPath.startsWith('/product');
   const solid = scrolled || isProductPage || currentPath !== '/';
-
-  const wholesaleChat = buildWhatsAppGeneralUrl(
-    "Hi DSLANG! I'm interested in the wholesale collection. Please share the catalogue and pricing."
-  );
 
   return (
     <>
@@ -85,7 +98,7 @@ export function Navbar({ currentPath }: { currentPath: string }) {
             {/* Logo */}
             <a
               href={linkHref('/')}
-              className="font-brand text-2xl md:text-3xl tracking-[0.18em] leading-none select-none text-bone"
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-brand text-2xl md:text-3xl tracking-[0.18em] leading-none select-none text-bone lg:static lg:translate-x-0 lg:translate-y-0"
               aria-label="DSLANG home"
             >
               DSLANG<span className="text-crimson">.</span>
@@ -107,23 +120,13 @@ export function Navbar({ currentPath }: { currentPath: string }) {
             </div>
 
             {/* Right */}
-            <div className="ml-auto flex items-center gap-2 md:gap-3.5">
+            <div className="ml-auto flex items-center gap-2 md:gap-5">
               <button
-                onClick={() => setSearchOpen(true)}
-                className="text-bone-dim hover:text-crimson transition-colors p-1"
-                aria-label="Search catalogue"
+                onClick={() => user ? navigate(isAdmin ? '/admin' : '/account') : onOpenLogin('signin')}
+                className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-crimson transition-colors"
               >
-                <Search size={22} strokeWidth={1.6} />
+                {user ? (isAdmin ? 'Admin' : 'Account') : 'Sign In'}
               </button>
-              <a
-                href={wholesaleChat}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hidden sm:flex items-center gap-2 text-bone-dim hover:text-crimson transition-colors p-1"
-                aria-label="WhatsApp DSLANG wholesale"
-              >
-                <MessageCircle size={22} strokeWidth={1.6} />
-              </a>
               <button
                 onClick={openCart}
                 className="relative text-bone-dim hover:text-crimson transition-colors p-1"
@@ -131,7 +134,7 @@ export function Navbar({ currentPath }: { currentPath: string }) {
               >
                 <ShoppingBag size={22} strokeWidth={1.6} />
                 {count > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-crimson text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center leading-none">
+                  <span className="absolute -top-1.5 -right-1.5 bg-crimson text-white text-[9px] font-bold min-w-4 h-4 px-1 rounded-full flex items-center justify-center leading-none tabular-nums">
                     {count}
                   </span>
                 )}
@@ -140,9 +143,6 @@ export function Navbar({ currentPath }: { currentPath: string }) {
           </div>
         </nav>
       </header>
-
-      {/* Search overlay */}
-      <SearchModal isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
 
       {/* Menu drawer — always rendered, transform-based */}
       <div
@@ -170,7 +170,7 @@ export function Navbar({ currentPath }: { currentPath: string }) {
               <X size={22} strokeWidth={1.6} />
             </button>
           </div>
-          <div className="flex flex-col flex-1 min-h-0">
+          <div className="flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden" style={{ WebkitOverflowScrolling: 'touch' }}>
             <p className="px-5 pt-4 text-[10px] uppercase tracking-[0.2em] text-grey font-semibold">
               Wholesale Only
             </p>
@@ -199,6 +199,34 @@ export function Navbar({ currentPath }: { currentPath: string }) {
                   Contact
                 </a>
               </li>
+              <li className="mt-2">
+                <div className="px-5 pt-3 pb-1 text-[10px] uppercase tracking-[0.2em] text-grey font-semibold">
+                  Account
+                </div>
+                {user ? (
+                  <button
+                    onClick={() => { setMenuOpen(false); navigate(isAdmin ? '/admin' : '/account'); }}
+                    className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
+                  >
+                    {isAdmin ? 'Admin Panel' : 'Account'}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => { setMenuOpen(false); onOpenLogin('signin'); }}
+                      className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
+                    >
+                      Sign In
+                    </button>
+                    <button
+                      onClick={() => { setMenuOpen(false); onOpenLogin('signup'); }}
+                      className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
+                    >
+                      Create Account
+                    </button>
+                  </>
+                )}
+              </li>
             </ul>
             <div className="flex-1" />
           </div>
@@ -213,7 +241,7 @@ export function Navbar({ currentPath }: { currentPath: string }) {
               <Instagram size={20} strokeWidth={1.6} />
             </a>
             <span className="ml-auto text-[10px] uppercase tracking-wide-2 text-grey">
-              MOQ {settings.default_moq} PCS · {settings.delivery_note}
+              Min. order 8 packs (48 PCS) · {settings.delivery_note}
             </span>
           </div>
         </div>

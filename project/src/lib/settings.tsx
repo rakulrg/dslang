@@ -44,10 +44,6 @@ export function getSiteSettings(): SiteSettings {
   return cachedSettings ?? DEFAULT_SETTINGS;
 }
 
-export function setCachedSettings(s: SiteSettings) {
-  cachedSettings = s;
-}
-
 export async function fetchSiteSettings(): Promise<SiteSettings> {
   const { data, error } = await supabase
     .from('site_settings')

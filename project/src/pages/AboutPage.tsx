@@ -1,7 +1,7 @@
 import { ArrowRight, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { linkHref } from '@/lib/router';
-import { buildWhatsAppGeneralUrl } from '@/lib/catalog';
+import { buildWhatsAppGeneralUrl, MIN_PACKS, MIN_ORDER_PCS } from '@/lib/catalog';
 import { useSiteSettings } from '@/lib/settings';
 import { Instagram } from '@/components/icons/Instagram';
 import { INSTAGRAM_URL } from '@/lib/catalog';
@@ -10,7 +10,7 @@ export function AboutPage() {
   const { settings } = useSiteSettings();
   const SPECS = [
     { k: 'Wholesale Pricing', v: 'Clean slab pricing per design' },
-    { k: 'MOQ', v: `${settings.default_moq} PCS` },
+    { k: 'Min. Order', v: `${MIN_PACKS} packs / ${MIN_ORDER_PCS} PCS` },
     { k: 'Mix', v: 'Mixed Sizes & Colors' },
     { k: 'Curation', v: 'Original In-House Graphics' },
     { k: 'Colorways', v: 'Multiple per design' },

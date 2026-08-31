@@ -1,17 +1,17 @@
 import { ArrowRight, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { linkHref } from '@/lib/router';
-import { buildWhatsAppGeneralUrl } from '@/lib/catalog';
+import { buildWhatsAppGeneralUrl, MIN_PACKS, MIN_ORDER_PCS, TIER_100_PCS } from '@/lib/catalog';
 import { useSiteSettings } from '@/lib/settings';
 import { WholesaleEnquiryForm } from '@/components/WholesaleEnquiryForm';
 
 export function WholesalePage() {
   const { settings } = useSiteSettings();
   const OFFER = [
-    { k: `MOQ ${settings.default_moq} PCS`, v: 'Minimum order per design — no single-color pressure.' },
+    { k: `Minimum Order`, v: `Minimum wholesale order is ${MIN_PACKS} packs (${MIN_ORDER_PCS} PCS) per design — no single-color pressure.` },
     { k: 'Fixed Size Ratio', v: `Every color pack ships as ${settings.pack_m} M + ${settings.pack_l} L + ${settings.pack_xl} XL — sizes are never sold separately.` },
     { k: 'Mixed Colors', v: 'Split your quantity across every colorway of a design.' },
-    { k: 'Slab Pricing', v: `${settings.default_moq}+ PCS earns the wholesale rate; 100+ PCS unlocks the better per-piece rate.` },
+    { k: 'Slab Pricing', v: `${MIN_ORDER_PCS}–${TIER_100_PCS - 6} PCS earns the wholesale rate; ${TIER_100_PCS}+ PCS unlocks the better per-piece rate.` },
     { k: `${settings.delivery_note} Delivery`, v: 'Dispatched across India after WhatsApp confirmation.' },
     { k: 'WhatsApp Orders', v: 'Every order is confirmed personally by the DSLANG team.' },
   ];
@@ -24,7 +24,7 @@ export function WholesalePage() {
             Wholesale
           </h1>
           <p className="mt-4 text-bone-dim max-w-xl leading-relaxed text-sm md:text-base">
-            Premium streetwear for stores and resellers. Transparent MOQ, mixed colors &amp; sizes,
+            Premium streetwear for stores and resellers. Transparent pack-based minimums, mixed colors &amp; sizes,
             and wholesale pricing on every product.
           </p>
         </div>

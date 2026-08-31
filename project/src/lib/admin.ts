@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+﻿import { supabase } from '@/lib/supabase';
 import type {
   CatalogProduct,
   HeroSlideRow,
@@ -8,7 +8,6 @@ import type {
 } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
 import { hasPublishColumns } from '@/lib/catalog';
-import { DEFAULT_SETTINGS, type SiteSettings } from '@/lib/settings';
 
 export const PRODUCT_IMAGE_BUCKET = 'product-images';
 const PRODUCT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -33,7 +32,7 @@ export async function adminFetchProducts(): Promise<CatalogProduct[]> {
     .from('products')
     .select('*')
     .order('sort_order', { ascending: true });
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
   if (!products) return [];
 
   const ids = products.map((p) => p.id);
@@ -57,7 +56,7 @@ export async function adminFetchProducts(): Promise<CatalogProduct[]> {
 
 export async function adminFetchHero(): Promise<HeroSlideRow[]> {
   const { data, error } = await supabase.from('hero_slides').select('*').order('sort_order');
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
   return (data as HeroSlideRow[]) ?? [];
 }
 
@@ -65,7 +64,6 @@ export interface ProductInput {
   slug: string;
   name: string;
   code: string;
-  drop_label: string;
   category: string;
   badge: string | null;
   featured: boolean;
@@ -73,41 +71,127 @@ export interface ProductInput {
   new_drop: boolean;
   sort_order: number;
   moq: number | null;
-  price50: number | null;
-  price100: number | null;
+  wholesale_price_50: number | null;
+  wholesale_price_100: number | null;
 }
 
-export const WHOLESALE_COLUMNS = ['moq', 'price50', 'price100'] as const;
+export const WHOLESALE_COLUMNS = ['wholesale_price_50', 'wholesale_price_100'] as const;
 
 let wholesaleColumnsAvailable: boolean | null = null;
+let wholesaleProbeError: unknown = null;
 
 /**
- * Detects whether the products table has the wholesale columns yet.
- * This lets the admin panel work before (and after) the migration is applied.
+ * Detects whether the products table has the wholesale pricing columns
+ * (wholesale_price_50 / wholesale_price_100). Probes ONLY those two columns —
+ * an unrelated missing column (e.g. moq) must never make this report false.
  */
 export async function hasWholesaleColumns(): Promise<boolean> {
   if (wholesaleColumnsAvailable !== null) return wholesaleColumnsAvailable;
   const { error } = await supabase
     .from('products')
-    .select('moq, price50, price100')
+    .select('wholesale_price_50, wholesale_price_100')
     .limit(1);
   wholesaleColumnsAvailable = !error;
+  wholesaleProbeError = error ?? null;
   return wholesaleColumnsAvailable;
 }
 
+let moqColumnAvailable: boolean | null = null;
+
+/** Whether the products table has the optional moq column. */
+async function hasMoqColumn(): Promise<boolean> {
+  if (moqColumnAvailable !== null) return moqColumnAvailable;
+  const { error } = await supabase.from('products').select('moq').limit(1);
+  moqColumnAvailable = !error;
+  return moqColumnAvailable;
+}
+
+function firstString(...values: unknown[]): string {
+  for (const v of values) {
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return '';
+}
+
+function isNetworkFailure(err: unknown, technical: string): boolean {
+  if (err instanceof TypeError) return true;
+  return /fetch failed|failed to fetch|networkerror|network error|load failed|ENOTFOUND|ECONNREFUSED|FETCH_ERROR|timeout/i.test(technical);
+}
+
 /**
- * Builds a payload that only includes columns the schema actually has, so the
- * admin panel works before and after the migrations are applied.
+ * Turns a Supabase/PostgREST/Storage failure into a short, accurate message.
+ * Distinguishes: missing column, permission/RLS, authentication, network,
+ * invalid query and other errors — and always logs the full technical detail
+ * so the real Supabase error is visible in the console during development.
+ */
+export function describeSupabaseError(err: unknown, fallback: string): string {
+  const envelope = (err ?? {}) as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
+  const raw = firstString(envelope.message, envelope.details, envelope.hint, err instanceof Error ? err.message : null, typeof err === 'string' ? err : null);
+  const code = typeof envelope.code === 'string' ? envelope.code : '';
+  const technical = `${code} ${raw}`.trim();
+  const isDev = Boolean(import.meta.env.DEV);
+
+  console.error('[DSLANG] Supabase request failed:', err);
+
+  if (isNetworkFailure(err, technical)) {
+    return 'Network error — the database could not be reached. Check your connection and try again.';
+  }
+  if (/invalid api key|apikey|jwt|PGRST1012/i.test(technical)) {
+    return 'Authentication error — this session is not fully authenticated. Sign in and try again.';
+  }
+  if (/42501|permission denied|row.?level security|PGRST301|PGRST302|forbidden/i.test(technical)) {
+    return 'Permission denied — this account is not allowed to make that change.';
+  }
+  if (/42703|could not find the \w+ column|undefin\w* column|column \w+ does not exist|PGRST204/i.test(technical)) {
+    return isDev
+      ? `Missing database column — ${raw}.`
+      : `A database column is missing (${raw}). The product editor needs wholesale_price_50 and wholesale_price_100 on the products table.`;
+  }
+  if (/could not find the table|42P01|PGRST205/i.test(technical)) {
+    return `Table not found — ${raw}.`;
+  }
+  if (/could not find.*function|PGRST202/i.test(technical)) {
+    return `Database function missing — ${raw}.`;
+  }
+  if (/42601|syntax error|PGRST200|PGRST201/i.test(technical)) {
+    return `Invalid query — ${raw}.`;
+  }
+  if (isDev && technical) return technical.length > 220 ? `${technical.slice(0, 220)}…` : technical;
+  return raw || fallback;
+}
+
+/**
+ * Builds a product payload that only includes columns the live schema has, so
+ * the admin panel works before and after schema changes. Wholesale pricing is
+ * never silently dropped: if the wholesale columns are genuinely missing while
+ * pricing was entered, the real Supabase error is surfaced instead.
  */
 async function sanitizeProductPayload(input: Partial<ProductInput>): Promise<Partial<ProductInput>> {
   const clean = { ...input };
-  const wholesale = await hasWholesaleColumns();
-  if (!wholesale) for (const col of WHOLESALE_COLUMNS) delete clean[col as keyof ProductInput];
-  const publish = await hasPublishColumns();
-  if (!publish) {
+
+  if (!(await hasMoqColumn())) delete clean.moq;
+  if (!(await hasPublishColumns())) {
     delete clean.published;
     delete clean.new_drop;
   }
+
+  const wholesale = await hasWholesaleColumns();
+  const hasPricing =
+    (clean.wholesale_price_50 !== null && clean.wholesale_price_50 !== undefined) ||
+    (clean.wholesale_price_100 !== null && clean.wholesale_price_100 !== undefined);
+
+  if (!wholesale) {
+    if (hasPricing) {
+      throw new Error(
+        describeSupabaseError(
+          wholesaleProbeError,
+          'Could not save the wholesale price — the wholesale_price_50 / wholesale_price_100 fields could not be verified on the products table.'
+        )
+      );
+    }
+    for (const col of WHOLESALE_COLUMNS) delete clean[col];
+  }
+
   return clean;
 }
 
@@ -152,7 +236,7 @@ export async function uploadProductImage(file: File, productId: string, colorNam
       contentType: file.type || 'application/octet-stream',
     });
 
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
   const publicUrl = supabase.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(data.path).data.publicUrl;
   if (!publicUrl) {
     throw new Error('Failed to create the uploaded image URL.');
@@ -178,7 +262,7 @@ export async function adminCreateProduct(input: ProductInput): Promise<ProductRo
     .insert(payload)
     .select()
     .single();
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
 
   return data as ProductRow;
 }
@@ -186,13 +270,14 @@ export async function adminCreateProduct(input: ProductInput): Promise<ProductRo
 export async function adminUpdateProduct(id: string, input: Partial<ProductInput>): Promise<void> {
   const { slug: _slug, ...rest } = input;
   const payload = await sanitizeProductPayload(rest);
+  console.log('[DSLANG] product UPDATE payload:', payload);
   const { error } = await supabase.from('products').update(payload).eq('id', id);
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
 }
 
 export async function adminDeleteProduct(id: string): Promise<void> {
   const { error } = await supabase.from('products').delete().eq('id', id);
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
 }
 
 // Colors
@@ -215,19 +300,19 @@ export async function adminAddColor(
     .insert({ product_id: productId, name, hex, images, sort_order: maxSort + 1 })
     .select()
     .single();
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
 
   return data as ProductColorRow;
 }
 
 export async function adminUpdateColor(id: string, patch: Partial<Pick<ProductColorRow, 'name' | 'hex' | 'images' | 'sort_order'>>): Promise<void> {
   const { error } = await supabase.from('product_colors').update(patch).eq('id', id);
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
 }
 
 export async function adminDeleteColor(id: string): Promise<void> {
   const { error } = await supabase.from('product_colors').delete().eq('id', id);
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
 }
 
 export async function adminUpdateColorSortOrders(productId: string, orderedIds: string[]): Promise<void> {
@@ -236,7 +321,7 @@ export async function adminUpdateColorSortOrders(productId: string, orderedIds: 
   );
   const results = await Promise.all(updates);
   const firstError = results.find((r) => r.error);
-  if (firstError?.error) throw firstError.error;
+  if (firstError?.error) throw new Error(describeSupabaseError(firstError.error, 'Could not reorder colors.'));
 }
 
 export async function uploadHeroImage(file: File): Promise<string> {
@@ -266,7 +351,7 @@ export async function uploadHeroImage(file: File): Promise<string> {
       contentType: file.type || 'application/octet-stream',
     });
 
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
   const publicUrl = supabase.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(data.path).data.publicUrl;
   if (!publicUrl) {
     throw new Error('Failed to create the uploaded image URL.');
@@ -290,7 +375,7 @@ export async function adminCreateHero(input: Omit<HeroSlideRow, 'id' | 'created_
     insert.cta_url = input.cta_url ?? null;
   }
   const { error } = await supabase.from('hero_slides').insert(insert);
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
 }
 
 export async function adminUpdateHero(id: string, patch: Partial<Omit<HeroSlideRow, 'id' | 'created_at'>>): Promise<void> {
@@ -299,12 +384,12 @@ export async function adminUpdateHero(id: string, patch: Partial<Omit<HeroSlideR
     delete patch.cta_url;
   }
   const { error } = await supabase.from('hero_slides').update(patch).eq('id', id);
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
 }
 
 export async function adminDeleteHero(id: string): Promise<void> {
   const { error } = await supabase.from('hero_slides').delete().eq('id', id);
-  if (error) throw error;
+  if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
 }
 
 let heroCtaAvailable: boolean | null = null;
@@ -317,101 +402,3 @@ export async function hasHeroCtaColumns(): Promise<boolean> {
   return heroCtaAvailable;
 }
 
-let packSettingsColumnsAvailable: boolean | null = null;
-
-/** Whether site_settings has the color-pack/order columns yet (migration-gated). */
-export async function hasOrderMinColumns(): Promise<boolean> {
-  if (packSettingsColumnsAvailable !== null) return packSettingsColumnsAvailable;
-  const { error } = await supabase
-    .from('site_settings')
-    .select('min_order_quantity, pack_size, pack_m, pack_l, pack_xl, wholesale_price_50, wholesale_price_100')
-    .limit(1);
-  packSettingsColumnsAvailable = !error;
-  return packSettingsColumnsAvailable;
-}
-
-// Site settings (admin-controlled source of truth for storefront vitals)
-
-/**
- * Maps a Supabase/PostgREST failure into a short, friendly message for the
- * admin UI while logging the full technical detail to the console.
- */
-export function toWholesaleErrorMessage(err: unknown, fallback: string): string {
-  const raw = err instanceof Error ? err.message : String(err ?? '');
-  const technical =
-    raw ||
-    (typeof err === 'object' && err !== null ? JSON.stringify(err) : String(err ?? ''));
-  console.error('DSLANG wholesale request failed:', err);
-  if (/permission denied|row.?level security/i.test(technical)) {
-    return "You don't have permission to do that — check the admin account and try again.";
-  }
-  if (/does not exist|UndefinedTable|UndefinedColumn|42P0/i.test(technical)) {
-    return 'The database setup is incomplete — some wholesale tables or columns are missing. Details logged to the console.';
-  }
-  if (/could not find a function/i.test(technical)) {
-    return 'Wholesale ordering is not set up yet — the database function is missing. Details logged to the console.';
-  }
-  if (/new row violates|violates|check constraint/i.test(technical)) {
-    return 'That value is not allowed — please check the numbers and try again.';
-  }
-  return raw || fallback;
-}
-
-export async function adminFetchSiteSettings(): Promise<SiteSettings> {
-  const { data, error } = await supabase
-    .from('site_settings')
-    .select('*')
-    .eq('id', 1)
-    .maybeSingle();
-  if (error) throw error;
-
-  const row = (data as Record<string, unknown> | null) ?? null;
-  if (!row) return { ...DEFAULT_SETTINGS };
-
-  const pick = <T,>(key: string, fallback: T): T => {
-    const v = row[key];
-    return v === null || v === undefined || v === '' ? fallback : (v as T);
-  };
-
-  return {
-    announcement_text: pick('announcement_text', DEFAULT_SETTINGS.announcement_text),
-    announcement_active: pick('announcement_active', DEFAULT_SETTINGS.announcement_active),
-    whatsapp_number: String(pick('whatsapp_number', '')).trim() || DEFAULT_SETTINGS.whatsapp_number,
-    default_moq: Number(pick('default_moq', 0)) || DEFAULT_SETTINGS.default_moq,
-    dispatch_note: pick('dispatch_note', DEFAULT_SETTINGS.dispatch_note),
-    delivery_note: pick('delivery_note', DEFAULT_SETTINGS.delivery_note),
-    min_order_quantity: Number(pick('min_order_quantity', 0)) || DEFAULT_SETTINGS.min_order_quantity,
-    pack_size: Number(pick('pack_size', 0)) || DEFAULT_SETTINGS.pack_size,
-    pack_m: Number(pick('pack_m', 0)) || DEFAULT_SETTINGS.pack_m,
-    pack_l: Number(pick('pack_l', 0)) || DEFAULT_SETTINGS.pack_l,
-    pack_xl: Number(pick('pack_xl', 0)) || DEFAULT_SETTINGS.pack_xl,
-    wholesale_price_50: Number(pick('wholesale_price_50', 0)) || 0,
-    wholesale_price_100: Number(pick('wholesale_price_100', 0)) || 0,
-  };
-}
-
-export async function adminSaveSiteSettings(settings: SiteSettings): Promise<void> {
-  const patch: Record<string, unknown> = {
-    id: 1,
-    announcement_text: settings.announcement_text,
-    announcement_active: settings.announcement_active,
-    whatsapp_number: settings.whatsapp_number,
-    default_moq: settings.default_moq,
-    dispatch_note: settings.dispatch_note,
-    delivery_note: settings.delivery_note,
-    updated_at: new Date().toISOString(),
-  };
-  if (await hasOrderMinColumns()) {
-    patch.min_order_quantity = settings.min_order_quantity;
-    patch.pack_size = settings.pack_size;
-    patch.pack_m = settings.pack_m;
-    patch.pack_l = settings.pack_l;
-    patch.pack_xl = settings.pack_xl;
-    patch.wholesale_price_50 = settings.wholesale_price_50;
-    patch.wholesale_price_100 = settings.wholesale_price_100;
-  }
-  const { error } = await supabase
-    .from('site_settings')
-    .upsert(patch, { onConflict: 'id' });
-  if (error) throw error;
-}

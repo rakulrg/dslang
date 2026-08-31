@@ -1,18 +1,14 @@
 import { ArrowRight, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { linkHref } from '@/lib/router';
-import { buildWhatsAppGeneralUrl, getPackConfig } from '@/lib/catalog';
-import { useSiteSettings } from '@/lib/settings';
+import { buildWhatsAppGeneralUrl, getPackConfig, MIN_PACKS, MIN_ORDER_PCS } from '@/lib/catalog';
 
 export function HowItWorksPage() {
-  const { settings } = useSiteSettings();
-  const moq = settings.default_moq;
-  const minOrderQty = settings.min_order_quantity;
   const pack = getPackConfig();
   const STEPS = [
     { n: '01', t: 'Browse', d: 'Explore the DSLANG wholesale collection.', detail: 'Open /collection and search designs and colorways that fit your store.' },
     { n: '02', t: 'Select', d: 'Pick whole color packs.', detail: 'Each color pack ships as a fixed mix — 1 pack = 6 PCS (2 M · 2 L · 2 XL). Sizes are not sold separately.' },
-    { n: '03', t: 'Mix', d: `Mix color packs within the ${moq} PCS MOQ.`, detail: `Every included color starts at one full pack. Order acceptance starts from ${minOrderQty} PCS (${minOrderQty / pack.packSize} packs).` },
+    { n: '03', t: 'Mix', d: `Mix color packs up to the ${MIN_ORDER_PCS} PCS minimum.`, detail: `Every included color starts at one full pack. Minimum order is ${MIN_ORDER_PCS} PCS (${MIN_PACKS} packs).` },
     { n: '04', t: 'Order', d: 'Submit your wholesale order via WhatsApp.', detail: 'Use the wholesale order sheet on any product, then send it straight to our WhatsApp with the color-pack breakdown.' },
     { n: '05', t: 'Confirm', d: 'We confirm availability, pricing and delivery.', detail: 'Our team confirms your order, final pricing and the delivery timeline on WhatsApp.' },
     { n: '06', t: 'Dispatch', d: 'Order dispatched across India.', detail: 'Packed and dispatched pan-India with tracking once the order is confirmed.' },
@@ -53,7 +49,7 @@ export function HowItWorksPage() {
         {/* MOQ note */}
         <div className="mt-10 max-w-4xl border-t border-line pt-8 grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
           <div className="border border-line p-5">
-            <p className="font-display text-2xl uppercase tracking-wide-2 text-bone">MOQ {moq} PCS</p>
+            <p className="font-display text-2xl uppercase tracking-wide-2 text-bone">{MIN_PACKS} PACKS / {MIN_ORDER_PCS} PCS</p>
             <p className="mt-2 text-sm text-bone-soft">Minimum wholesale order per design.</p>
           </div>
           <div className="border border-line p-5">

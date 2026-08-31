@@ -14,6 +14,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { linkHref } from '@/lib/router';
 import { fetchProducts, formatPrice, type CatalogProduct } from '@/lib/catalog';
+import { LoadingDots } from '@/components/LoadingDots';
 
 interface Announcement {
   id: string;
@@ -106,7 +107,7 @@ export function SubscriberDashboard() {
   if (subscriber === undefined) {
     return (
       <div className="min-h-screen bg-paper-2 flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-crimson border-t-transparent rounded-full animate-spin" />
+        <LoadingDots />
       </div>
     );
   }

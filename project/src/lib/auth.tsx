@@ -29,16 +29,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getSession().then(async ({ data }) => {
-      const user = data.session?.user ?? null;
-      let isAdmin = false;
-      if (user) {
-        isAdmin = await checkIsAdmin(user.id);
-      }
-      if (mounted) {
-        setState({ session: data.session, user, loading: false, isAdmin });
-      }
-    });
+    supabase.auth
+      .getSession()
+      .then(async ({ data }) => {
+        const user = data.session?.user ?? null;
+        let isAdmin = false;
+        if (user) {
+          isAdmin = await checkIsAdmin(user.id);
+        }
+        if (mounted) {
+          setState({ session: data.session, user, loading: false, isAdmin });
+        }
+      })
+      // Never hang the boot loader if the session fetch itself throws.
+      .catch(() => {
+        if (mounted) setState({ session: null, user: null, loading: false, isAdmin: false });
+      });
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const user = session?.user ?? null;

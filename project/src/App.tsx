@@ -17,6 +17,7 @@ import { SubscriberDashboard } from '@/pages/SubscriberDashboard';
 import { useAuth } from '@/lib/auth';
 import { useSiteSettings } from '@/lib/settings';
 import { notFound } from '@/lib/notFound';
+import { LoadingDots } from '@/components/LoadingDots';
 
 // Lazy-load the admin dashboard (large, admin-only) to keep the main bundle small.
 const AdminDashboard = lazy(() =>
@@ -40,11 +41,40 @@ function getPageTitle(path: string): string {
   return DEFAULT_TITLE;
 }
 
+/** Full-screen overlay for the initial boot loading state. Fades out on resolve. */
+function FullscreenLoader({ visible }: { visible: boolean }) {
+  const [gone, setGone] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setGone(false);
+      return;
+    }
+    if (!gone) {
+      const t = window.setTimeout(() => setGone(true), 300);
+      return () => window.clearTimeout(t);
+    }
+  }, [visible, gone]);
+
+  if (gone) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center overflow-hidden bg-paper transition-opacity duration-300 ease-out"
+      style={visible ? { opacity: 1 } : { opacity: 0 }}
+      aria-hidden="true"
+    >
+      <LoadingDots />
+    </div>
+  );
+}
+
 function App() {
   const { route, navigate } = useRouter();
   const { path, segments } = route;
   const { user, loading, isAdmin } = useAuth();
   const [loginOpen, setLoginOpen] = useState(false);
+  const [loginMode, setLoginMode] = useState<'signin' | 'signup'>('signin');
 
   useEffect(() => {
     document.title = getPageTitle(path);
@@ -99,7 +129,7 @@ function App() {
       if (!user) return null; // Redirect handled by useEffect above
       if (!isAdmin) return null; // Redirect to /account handled by useEffect
       return (
-        <Suspense fallback={<div className="min-h-screen bg-paper-2 flex items-center justify-center"><div className="w-8 h-8 border-2 border-crimson border-t-transparent rounded-full animate-spin" /></div>}>
+          <Suspense fallback={<div className="min-h-screen w-full flex items-center justify-center"><LoadingDots /></div>}>
           <AdminDashboard />
         </Suspense>
       );
@@ -127,11 +157,15 @@ function App() {
           </div>
         </div>
       )}
-      <Navbar currentPath={path} />
+      <Navbar
+        currentPath={path}
+        onOpenLogin={(mode) => { setLoginMode(mode); setLoginOpen(true); }}
+      />
       <main className="flex-1 pt-[76px] md:pt-[88px] overflow-x-hidden">{isAdminPath ? <div className="min-h-screen bg-paper">{renderPage()}</div> : renderPage()}</main>
       <Footer />
       <CartDrawer />
-      <LoginModal isOpen={loginOpen} onClose={handleLoginClose} />
+      <LoginModal isOpen={loginOpen} onClose={handleLoginClose} initialMode={loginMode} />
+      <FullscreenLoader visible={loading} />
     </div>
   );
 }

@@ -1,52 +1,72 @@
 -- =============================================================================
--- DSLANG color-pack wholesale ordering (final migration).
+-- DSLANG wholesale final migration (single self-sufficient file).
 --
--- NOTE: superseded by 20260828000000_dslang_wholesale_final.sql. This file is
--- kept for reference; if you apply migrations on a fresh database, apply only
--- the final file (which uses column names consistent with the app:
--- wholesale_price_50 / wholesale_price_100).
+-- Apply this file (and only this file) in the Supabase SQL editor for the
+-- production database. It is idempotent and REPLACES the earlier wholesale
+-- migrations (20260827000000 -> 20260827030000).
 --
--- Makes the wholesale quantity model a COLOR PACK system:
---   * 1 pack of a color  =  pack_size pieces (6)
---   * split  =  pack_m M (2) + pack_l L (2) + pack_xl XL (2)  -> fixed ratio
---   * the customer only ever picks whole packs per color (M/L/XL never
---     independently editable)
---   * the real acceptance floor is min_order_quantity (48) while the site may
---     advertise default_moq (50)
---   * 50+ / 100+ per-piece pricing is admin-controlled (per product + global
---     site defaults)
---
--- Also adds an orders table and a SECURITY DEFINER RPC that VALIDATES every
--- wholesale order server-side (whole packs >= 0, product exists + published,
--- color belongs to the product, sizes derived from the ratio,
--- total >= min_order_quantity) and re-prices every line from the database
--- (product 50+/100+ price with global site fallbacks — never the client), so a
--- manipulated request cannot create an invalid or mispriced order. Orders store
--- the full color/size breakdown for the admin.
+-- What it changes:
+--   * products: adds the ONE wholesale pricing pair the app uses —
+--       wholesale_price_50 (50-99 PCS price) and wholesale_price_100 (100+
+--       PCS price) — plus published / new_drop / moq / gsm / wash / print_type /
+--       details / available_sizes. If a legacy price50 / price100 column ever
+--       exists, its values are copied over and the old columns are dropped so
+--       the live schema ends with only wholesale_price_50 / wholesale_price_100.
+--   * hero_slides: adds cta_text / cta_url.
+--   * site_settings: single-row admin control (announcement, WhatsApp number,
+--       MOQ, dispatch, pack sizing, global wholesale price fallbacks).
+--   * orders + create_wholesale_order RPC: server-side validated wholesale
+--       orders that re-price every line from the database using the product's
+--       wholesale_price_50 / wholesale_price_100 columns (never the client).
+--   * Ensures the first signed-up user is an admin so write access to
+--       products / site_settings / orders works from day one (writes require
+--       membership in admin_users).
 -- =============================================================================
 
 -- ----------------------------------------------------------------------------
--- 1. Products: idempotent superset of the wholesale columns.
+-- 1. Products: wholesale pricing + publishing + specs.
 -- ----------------------------------------------------------------------------
 alter table public.products
-  add column if not exists gsm integer,
-  add column if not exists wash text,
-  add column if not exists print_type text,
-  add column if not exists moq integer not null default 50,
   add column if not exists wholesale_price_50 integer,
   add column if not exists wholesale_price_100 integer,
   add column if not exists published boolean not null default true,
   add column if not exists new_drop boolean not null default false,
+  add column if not exists moq integer not null default 50,
+  add column if not exists gsm integer,
+  add column if not exists wash text,
+  add column if not exists print_type text,
   add column if not exists details text,
   add column if not exists available_sizes text[] not null default array['M','L','XL'];
 
-alter table public.hero_slides
-  add column if not exists cta_text text,
-  add column if not exists cta_url text;
+-- Migrate legacy price50/price100 columns (if any environment still has them)
+-- into the canonical wholesale_price_50 / wholesale_price_100 columns, then
+-- drop the legacy columns so the final schema has a single pricing pair.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'products' and column_name = 'price50'
+  ) then
+    update public.products
+    set wholesale_price_50 = price50
+    where wholesale_price_50 is null and price50 is not null;
+    alter table public.products drop column price50;
+  end if;
 
--- Backfill wholesale pricing from the legacy retail price so existing products
--- are orderable after migration. These are seed values only — the admin panel
--- is the only place pricing is edited.
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'products' and column_name = 'price100'
+  ) then
+    update public.products
+    set wholesale_price_100 = price100
+    where wholesale_price_100 is null and price100 is not null;
+    alter table public.products drop column price100;
+  end if;
+end $$;
+
+-- Seed wholesale pricing from the legacy retail price so existing products are
+-- orderable after migration. Seed values only — the admin panel is the only
+-- place pricing is edited from now on.
 update public.products
 set wholesale_price_50 = round((price * 0.3) / 5) * 5
 where coalesce(wholesale_price_50, 0) <= 0 and coalesce(price, 0) > 0;
@@ -55,8 +75,24 @@ update public.products
 set wholesale_price_100 = greatest(wholesale_price_50 - 10, round((wholesale_price_50 * 0.96) / 5) * 5)
 where coalesce(wholesale_price_100, 0) <= 0 and wholesale_price_50 is not null and wholesale_price_50 > 0;
 
+-- Ensure every product has usable spec values.
+update public.products
+set gsm = coalesce((regexp_match(coalesce(fabric, ''), '(\d+)\s*GSM'))[1]::integer, 240)
+where gsm is null;
+
+update public.products
+set wash = 'Optic Wash'
+where wash is null or wash = '';
+
 -- ----------------------------------------------------------------------------
--- 2. site_settings: single-row admin control of the wholesale system.
+-- 2. hero_slides: CTA fields read by the homepage hero.
+-- ----------------------------------------------------------------------------
+alter table public.hero_slides
+  add column if not exists cta_text text,
+  add column if not exists cta_url text;
+
+-- ----------------------------------------------------------------------------
+-- 3. site_settings: single-row admin control of the wholesale system.
 -- ----------------------------------------------------------------------------
 create table if not exists public.site_settings (
   id integer primary key check (id = 1),
@@ -105,7 +141,7 @@ create policy "site_settings_write_admin"
   with check (exists (select 1 from public.admin_users where user_id = auth.uid()));
 
 -- ----------------------------------------------------------------------------
--- 3. Orders: stored wholesale orders with the full color/size breakdown.
+-- 4. Orders: stored wholesale orders with the full color/size breakdown.
 -- ----------------------------------------------------------------------------
 create table if not exists public.orders (
   id uuid primary key default gen_random_uuid(),
@@ -136,14 +172,26 @@ create policy "orders_select_admin"
 create index if not exists idx_orders_created_at on public.orders (created_at desc);
 
 -- ----------------------------------------------------------------------------
--- 4. Server-side validated order creation RPC.
+-- 5. Products write access requires admin membership. Re-asserted here so this
+--    file is self-sufficient on a fresh schema.
+-- ----------------------------------------------------------------------------
+drop policy if exists "products_write_admin" on public.products;
+create policy "products_write_admin"
+  on public.products for all
+  to authenticated
+  using (exists (select 1 from public.admin_users where user_id = auth.uid()))
+  with check (exists (select 1 from public.admin_users where user_id = auth.uid()));
+
+-- ----------------------------------------------------------------------------
+-- 6. Server-side validated order creation RPC.
 --
--- The function is SECURITY DEFINER so it can read products/product_colors and
--- site_settings regardless of RLS. It IGNORES any client-supplied pricing and
--- instead re-prices every line from the database (product-level 50+/100+ price
--- falling back to the admin-controlled global site defaults), and validates
--- that the product exists, is published, the color really belongs to it, whole
--- packs are >= 0 and the total meets the order minimum.
+-- SECURITY DEFINER so it can read products / product_colors / site_settings
+-- regardless of RLS. It IGNORES any client-supplied pricing and re-prices every
+-- line from the database using the product's wholesale_price_50 /
+-- wholesale_price_100 columns (falling back to the admin-controlled global
+-- site defaults), and validates that the product exists, is published, the
+-- color really belongs to it, whole packs are >= 0 and the total meets the
+-- order minimum.
 -- ----------------------------------------------------------------------------
 create or replace function public.create_wholesale_order(
   p_lines jsonb,
@@ -310,14 +358,12 @@ $$;
 revoke all on function public.create_wholesale_order(jsonb, jsonb) from public;
 grant execute on function public.create_wholesale_order(jsonb, jsonb) to anon, authenticated, service_role;
 
--- ----------------------------------------------------------------------------
--- 5. Housekeeping so earlier migrations stay compatible if run before this one.
--- ----------------------------------------------------------------------------
-update public.products
-set new_drop = true
-where new_drop = false
-  and id in (
-    select id from public.products
-    order by created_at desc
-    limit 4
-  );
+-- Guarantee there is always at least one admin (the first signed-up user), so
+-- write access to products / site_settings / orders works after a fresh
+-- migration. Only runs when admin_users is completely empty.
+insert into public.admin_users (user_id)
+select u.id
+from auth.users u
+order by u.created_at asc
+limit 1
+where not exists (select 1 from public.admin_users);

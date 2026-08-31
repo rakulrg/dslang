@@ -4,10 +4,13 @@ import { useCart } from '@/lib/cart';
 import {
   buildWholesaleWhatsAppUrl,
   summarizeWholesale,
+  getWholesaleUnitPrice,
   formatPrice,
+  formatPerUnit,
+  MIN_PACKS,
+  MIN_ORDER_PCS,
   type WholesaleSkuLine,
 } from '@/lib/catalog';
-import { useSiteSettings } from '@/lib/settings';
 import { supabase } from '@/lib/supabase';
 import { linkHref } from '@/lib/router';
 
@@ -16,10 +19,8 @@ export function CartDrawer() {
   const [showForm, setShowForm] = useState(false);
   const [seller, setSeller] = useState({ businessName: '', phone: '', city: '' });
   const [submitting, setSubmitting] = useState(false);
+  const [priceNotice, setPriceNotice] = useState('');
   const autoCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { settings } = useSiteSettings();
-  const moq = settings.default_moq;
-  const minOrderQty = settings.min_order_quantity;
 
   const lines: WholesaleSkuLine[] = items.map((i) => ({
     productId: i.productId,
@@ -38,13 +39,14 @@ export function CartDrawer() {
     price100: i.price100,
   }));
   const summary = summarizeWholesale(lines);
-  const belowMoaq = summary.totalQty < minOrderQty;
+  const belowMoaq = summary.totalQty < MIN_ORDER_PCS;
 
   // Reset checkout state when drawer closes
   useEffect(() => {
     if (!isOpen) {
       setShowForm(false);
       setSubmitting(false);
+      setPriceNotice('');
       setSeller({ businessName: '', phone: '', city: '' });
     }
   }, [isOpen]);
@@ -70,6 +72,16 @@ export function CartDrawer() {
     };
   }, [isOpen]);
 
+  // Close the drawer with the Escape key.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, close]);
+
   // Auto-close cart after 3 seconds if empty
   useEffect(() => {
     if (isOpen && items.length === 0) {
@@ -90,9 +102,38 @@ export function CartDrawer() {
     if (items.length === 0 || belowMoaq) return;
     setSubmitting(true);
     let orderRef: string | undefined;
+
+    // Revalidate against the current database prices. Never trust a price
+    // computed purely in the browser — pull the authoritative wholesale prices
+    // for every product in the cart before generating the order/WhatsApp total.
+    let authoritative = lines;
+    try {
+      const productIds = Array.from(new Set(lines.map((l) => l.productId)));
+      const { data: rows, error } = await supabase
+        .from('products')
+        .select('id, wholesale_price_50, wholesale_price_100')
+        .in('id', productIds);
+      if (!error && rows) {
+        const byId = new Map<string, { price50: number; price100: number }>();
+        for (const row of rows as { id: string; wholesale_price_50: number | null; wholesale_price_100: number | null }[]) {
+          byId.set(row.id, {
+            price50: Number(row.wholesale_price_50 ?? 0),
+            price100: Number(row.wholesale_price_100 ?? 0),
+          });
+        }
+        authoritative = lines.map((l) => {
+          const p = byId.get(l.productId);
+          return p ? { ...l, price50: p.price50, price100: p.price100 } : l;
+        });
+      }
+    } catch {
+      // Fall back to cart values; still surface that prices could not be verified.
+      setPriceNotice('Could not verify current wholesale prices. The order will use the prices shown here.');
+    }
+
     try {
       const { data, error } = await supabase.rpc('create_wholesale_order', {
-        p_lines: lines.map((l) => ({
+        p_lines: authoritative.map((l) => ({
           product_id: l.productId,
           name: l.name,
           code: l.code,
@@ -105,8 +146,8 @@ export function CartDrawer() {
           l: l.l,
           xl: l.xl,
           qty: l.qty,
-          price50: l.price50,
-          price100: l.price100,
+          wholesale_price_50: l.price50,
+          wholesale_price_100: l.price100,
         })),
         p_seller:
           seller.businessName || seller.phone || seller.city
@@ -120,7 +161,7 @@ export function CartDrawer() {
       // Order logging is best-effort — WhatsApp ordering still proceeds.
     }
     const url = buildWholesaleWhatsAppUrl({
-      lines,
+      lines: authoritative,
       businessName: seller.businessName || undefined,
       phone: seller.phone || undefined,
       city: seller.city || undefined,
@@ -160,6 +201,9 @@ export function CartDrawer() {
         onClick={close}
       />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Wholesale order"
         className="absolute right-0 top-8 w-[85vw] max-w-lg bg-white border-l border-line flex flex-col overflow-hidden will-change-transform"
         style={{
           height: 'calc(100dvh - 2rem)',
@@ -187,7 +231,7 @@ export function CartDrawer() {
           <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
             <ShoppingBag size={48} className="text-line mb-4" strokeWidth={1} />
             <p className="font-label text-2xl uppercase tracking-wide-2 text-grey">No pieces selected</p>
-            <p className="mt-2 text-sm text-bone-soft">Build a wholesale mix of MOQ {moq} PCS — order acceptance from {minOrderQty} PCS.</p>
+            <p className="mt-2 text-sm text-bone-soft">Build a wholesale mix — minimum order {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS).</p>
             <a
               href={linkHref('/collection')}
               onClick={close}
@@ -205,7 +249,7 @@ export function CartDrawer() {
               {groups.map(({ productId, productItems, startIndex }) => {
                 const first = productItems[0];
                 const productQty = productItems.reduce((s, i) => s + i.qty, 0);
-                const unit = productQty >= 100 && first.price100 > 0 ? first.price100 : first.price50;
+                const unit = getWholesaleUnitPrice(productQty, first.price50, first.price100);
                 return (
                   <div key={productId} className="border-b border-line pb-4">
                     <div className="flex items-start gap-3">
@@ -219,7 +263,7 @@ export function CartDrawer() {
                           {first.name}
                         </a>
                         <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mt-0.5">
-                          {first.code} · {productQty} PCS · {formatPrice(unit)}/PC
+                          {first.code} · {productQty} PCS · {formatPerUnit(unit)}
                         </p>
                       </div>
                     </div>
@@ -227,7 +271,7 @@ export function CartDrawer() {
                     {productItems.map((item, itemIdx) => {
                       const globalIdx = startIndex + itemIdx;
                       return (
-                        <div key={`${item.color}`} className="mt-3 flex items-center justify-between gap-2">
+                        <div key={`${productId}-${item.color}`} className="mt-3 flex items-center justify-between gap-2">
                           <span className="flex items-center gap-2 min-w-0">
                             <span className="w-2.5 h-2.5 border border-line shrink-0" style={{ backgroundColor: item.colorHex }} />
                             <span className="text-xs text-bone-dim truncate">
@@ -273,7 +317,7 @@ export function CartDrawer() {
                       );
                     })}
                     <p className="mt-2 font-label text-[10px] uppercase tracking-wide-2 text-grey">
-                      {productQty} PCS → {formatPrice(unit)}/PC
+                      {productQty} PCS → {unit > 0 ? formatPerUnit(unit) : '—'}
                     </p>
                   </div>
                 );
@@ -308,11 +352,15 @@ export function CartDrawer() {
                 <span className="font-price text-2xl text-crimson">{formatPrice(summary.total)}</span>
               </div>
 
+              {priceNotice && (
+                <p className="text-xs text-bone-dim leading-relaxed">{priceNotice}</p>
+              )}
+
               {belowMoaq && (
                 <div className="flex items-start gap-2 rounded border border-crimson/30 bg-crimson/5 px-3 py-3">
                   <AlertTriangle size={16} className="text-crimson mt-0.5 shrink-0" strokeWidth={1.8} />
                   <p className="text-xs text-crimson leading-relaxed">
-                    Order acceptance starts from {minOrderQty} PCS (MOQ {moq} PCS). Add {minOrderQty - summary.totalQty} more PCS across colors to place your order.
+                    Minimum wholesale order is {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS). Add {MIN_ORDER_PCS - summary.totalQty} more PCS across colors to place your order.
                   </p>
                 </div>
               )}
@@ -329,7 +377,7 @@ export function CartDrawer() {
               <button
                 onClick={() => setShowForm((s) => !s)}
                 className="w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 rounded hover:bg-crimson-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                disabled={belowMoaq}
+                disabled={!showForm && belowMoaq}
               >
                 <MessageCircle size={18} strokeWidth={2} />
                 {showForm ? 'Back' : 'Request Wholesale Order'}
@@ -337,7 +385,7 @@ export function CartDrawer() {
               {showForm && (
                 <button
                   onClick={handleSubmit}
-                  disabled={submitting}
+                  disabled={submitting || belowMoaq}
                   className="w-full inline-flex items-center justify-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 rounded hover:bg-ink transition-colors disabled:opacity-60"
                 >
                   {submitting ? <Loader2 size={18} strokeWidth={2} className="animate-spin" /> : <MessageCircle size={18} strokeWidth={2} />}
