@@ -4,8 +4,8 @@ import { supabase } from '@/lib/supabase';
  * Payment abstraction layer — the only place payment-provider specifics live.
  *
  * Strategy: the frontend NEVER touches payment credentials. Credentials live
- * server-side only (Supabase Edge Functions: cashfree-order / cashfree-status /
- * cashfree-webhook) and this layer calls them. When no gateway is configured
+ * server-side only (Vercel serverless functions under /api, e.g.
+ * api/cashfree-order) and this layer calls them. When no gateway is configured
  * for the current deployment, the config flag is OFF: checkout records the
  * order as pending and surfaces an honest "payment configuration pending"
  * message instead of faking a success.
@@ -13,10 +13,18 @@ import { supabase } from '@/lib/supabase';
  * Activation (deployment step, NOT done in this local session):
  *   VITE_PAYMENT_PROVIDER=cashfree
  *   VITE_PAYMENT_CLIENT_CONFIGURED=true
- *   server env (Supabase Edge Function secrets): CASHFREE_APP_ID,
- *       CASHFREE_SECRET_KEY, CASHFREE_ENV (TEST|PRODUCTION),
- *       CASHFREE_WEBHOOK_URL, APP_ORIGIN (+ normal SUPABASE_*)
+ *   server env (Vercel project Environment Variables): CASHFREE_APP_ID,
+ *       CASHFREE_SECRET_KEY, CASHFREE_ENV (TEST|PRODUCTION), SUPABASE_URL,
+ *       SUPABASE_SERVICE_ROLE_KEY, APP_ORIGIN.
  */
+
+/** Base origin of the serverless API. Vercel serves the SPA and /api on the
+ *  same origin, so in production a relative path resolves correctly. For local
+ *  development, point VITE_API_BASE_URL at a deployed Vercel preview/prod. */
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+function apiUrl(path: string): string {
+  return API_BASE ? `${API_BASE}${path}` : `/api${path}`;
+}
 
 export type PaymentProvider = 'none' | 'cashfree';
 
@@ -90,13 +98,21 @@ export async function createPaymentSession(req: PaymentSessionRequest): Promise<
     };
   }
 
-  const { data, error } = await supabase.functions.invoke('cashfree-order', {
-    body: { orderId: req.orderId, orderRef: req.orderRef },
+  const response = await fetch(apiUrl('/cashfree-order'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderId: req.orderId, orderRef: req.orderRef }),
   });
-  if (error || !data?.success || !data.paymentSessionId) {
+  let data: any;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+  if (!response.ok || !data?.success || !data.paymentSessionId) {
     // Log the technical detail server/debug side; surface only a clean message.
     // eslint-disable-next-line no-console
-    console.error('[checkout] Payment session init failed:', error ?? data);
+    console.error('[checkout] Payment session init failed:', response.status, data ?? response.statusText);
     throw new Error('The online payment could not be started. Your order has not been charged.');
   }
   return {
