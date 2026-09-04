@@ -93,7 +93,8 @@ export default async function handler(req: any, res: any) {
     if (cd[k] === undefined) delete cd[k];
   }
 
-  const base = env.toUpperCase() === 'PRODUCTION' ? 'https://api.cashfree.com' : 'https://sandbox.cashfree.com';
+  const envKey = env.toUpperCase();
+  const base = envKey === 'PRODUCTION' ? 'https://api.cashfree.com' : 'https://sandbox.cashfree.com';
 
   let api: any;
   try {
@@ -108,12 +109,26 @@ export default async function handler(req: any, res: any) {
       },
       body: JSON.stringify(payload),
     });
-    api = await r.json();
+    api = await r.json().catch(() => ({}));
     if (!r.ok || !api || !api.payment_session_id) {
-      console.error('[cashfree-order] Create order failed', r.status, JSON.stringify(api));
+      // Log the FULL Cashfree response + which base URL/env was used. This is
+      // the exact line to find in Vercel function logs when tracing a 502.
+      // eslint-disable-next-line no-console
+      console.error('[cashfree-order] Create order FAILED', JSON.stringify({
+        httpStatus: r.status,
+        baseUrl: base,
+        env: envKey,
+        response: api,
+      }));
       return res.status(502).json({ success: false, error: 'Payment could not be initialized. Please try again.' });
     }
-  } catch {
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[cashfree-order] Create order threw', JSON.stringify({
+      baseUrl: base,
+      env: envKey,
+      error: err instanceof Error ? err.message : String(err),
+    }));
     return res.status(502).json({ success: false, error: 'Payment could not be initialized. Please try again.' });
   }
 
