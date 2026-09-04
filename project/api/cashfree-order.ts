@@ -32,9 +32,20 @@ export default async function handler(req: any, res: any) {
   const origin = (process.env.APP_ORIGIN || 'https://dslang.in').replace(/\/$/, '');
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!appId || !secretKey || !supabaseUrl || !serviceRole) {
-    return res.status(500).json({ success: false, error: 'Payment gateway is not configured on the server.' });
-  }
+ if (!appId || !secretKey || !supabaseUrl || !serviceRole) {
+  console.error('[cashfree-order] Missing environment variables', {
+    CASHFREE_APP_ID: !!appId,
+    CASHFREE_SECRET_KEY: !!secretKey,
+    CASHFREE_ENV: !!env,
+    SUPABASE_URL: !!supabaseUrl,
+    SUPABASE_SERVICE_ROLE_KEY: !!serviceRole,
+  });
+
+  return res.status(500).json({
+    success: false,
+    error: 'Server payment configuration is incomplete.',
+  });
+}
 
   let body: { orderId?: string; orderRef?: string };
   try {
@@ -46,15 +57,41 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ success: false, error: 'Missing order reference.' });
   }
 
-  const supabase = createClient(supabaseUrl, serviceRole);
+  console.log('[cashfree-order] Environment check passed', {
+  cashfreeEnv: env,
+  hasAppId: !!appId,
+  hasSecretKey: !!secretKey,
+  hasSupabaseUrl: !!supabaseUrl,
+  hasServiceRole: !!serviceRole,
+});
 
+const supabase = createClient(supabaseUrl, serviceRole);
   const { data: order, error } = await supabase
     .from('retail_orders')
     .select('id, ref, customer, total_amount, payment_status, payment_id, payment_provider')
     .eq('id', body.orderId)
     .eq('ref', body.orderRef)
     .maybeSingle();
-  if (error || !order) return res.status(404).json({ success: false, error: 'Order not found.' });
+  if (error || !order) {
+  console.error('[cashfree-order] Supabase order lookup failed', {
+    error: error?.message ?? null,
+    code: error?.code ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+    orderFound: !!order,
+  });
+
+  return res.status(404).json({
+    success: false,
+    error: 'Order not found.',
+  });
+}
+
+console.log('[cashfree-order] Order loaded successfully', {
+  orderId: order.id,
+  orderRef: order.ref,
+  amount: order.total_amount,
+});
   if (order.payment_status === 'success') {
     return res.status(409).json({ success: false, error: 'This order is already paid.' });
   }
