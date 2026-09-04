@@ -1,13 +1,31 @@
-import { getWholesaleSlabs, getPackConfig, formatPerUnit, type CatalogProduct } from '@/lib/catalog';
+import {
+  getRetailPrice,
+  getMrp,
+  formatPrice,
+  type CatalogProduct,
+} from '@/lib/catalog';
 import type { ProductColorRow } from '@/lib/types';
 import { linkHref } from '@/lib/router';
 
-export function ProductCard({ product, index = 0 }: { product: CatalogProduct; index?: number }) {
+/**
+ * Retail (D2C) product card — always links to /product/[slug] and shows the
+ * retail price with a compare-at strike-through. No pack/MOQ/wholesale copy.
+ */
+export function ProductCard({
+  product,
+  index = 0,
+}: {
+  product: CatalogProduct;
+  index?: number;
+}) {
   const primary = product.colors[0];
   const image = primary?.images[0];
   const hoverImage = primary?.images[1] ?? primary?.images[0];
-  const slabs = getWholesaleSlabs(product);
-  const packCfg = getPackConfig();
+
+  const retailPrice = getRetailPrice(product);
+  const mrp = getMrp(product);
+  const showMrp = mrp !== null && mrp > retailPrice;
+  const showPrice = retailPrice > 0;
 
   return (
     <a
@@ -16,7 +34,6 @@ export function ProductCard({ product, index = 0 }: { product: CatalogProduct; i
       style={{ animationDelay: `${index * 80}ms` }}
     >
       <div className="relative aspect-[4/5] overflow-hidden bg-paper-3 border border-line">
-        {/* Image with hover swap */}
         {image && <img
           src={image}
           alt={`${product.name} — ${primary?.name ?? ''}`}
@@ -35,7 +52,7 @@ export function ProductCard({ product, index = 0 }: { product: CatalogProduct; i
         {/* Hover bar */}
         <div className="absolute bottom-0 inset-x-0 translate-y-full group-hover:translate-y-0 transition-transform duration-200">
           <div className="bg-bone text-white text-center py-3 text-[11px] uppercase tracking-wide-2 font-semibold">
-            View Wholesale Details
+            View Details
           </div>
         </div>
       </div>
@@ -63,26 +80,22 @@ export function ProductCard({ product, index = 0 }: { product: CatalogProduct; i
         </div>
 
         <div className="mt-auto pt-3">
-          <div className="flex items-baseline gap-2">
-            <span className="font-label text-[12px] uppercase tracking-wide-2 font-bold text-bone">
-              MOQ {slabs.moq} PCS
-            </span>
-            <span className="font-label text-[10px] uppercase tracking-wide-2 text-grey">
-              · {packCfg.packSize} PCS / pack
-            </span>
-          </div>
-          <div className="mt-1.5">
-            <p className="font-price text-[13px] text-bone-dim">
-              From{' '}
-              <span className="text-crimson">
-                {slabs.price100 > 0
-                  ? formatPerUnit(slabs.price100)
-                  : slabs.price50 > 0
-                    ? formatPerUnit(slabs.price50)
-                    : '—'}
+          {showPrice ? (
+            <div className="flex items-baseline gap-2">
+              <span className="font-price text-[14px] font-semibold text-bone">
+                {formatPrice(retailPrice)}
               </span>
+              {showMrp && (
+                <span className="font-price text-[11px] text-grey line-through">
+                  {formatPrice(mrp)}
+                </span>
+              )}
+            </div>
+          ) : (
+            <p className="font-label text-[11px] uppercase tracking-wide-2 text-grey">
+              Sold out
             </p>
-          </div>
+          )}
         </div>
       </div>
     </a>

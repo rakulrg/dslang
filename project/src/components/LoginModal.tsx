@@ -206,7 +206,7 @@ export function LoginModal({
             onChange={(e) => setOptIn(e.target.checked)}
             className="w-4 h-4 accent-crimson"
           />
-          <span className="text-xs text-bone-soft">Email me wholesale drops, clearance lots & offers</span>
+          <span className="text-xs text-bone-soft">Email me new drops & offers</span>
         </label>
 
         <p className="mt-5 text-center text-xs text-grey">
@@ -217,6 +217,13 @@ export function LoginModal({
           >
             {mode === 'signin' ? 'Create one' : 'Sign in'}
           </button>
+        </p>
+
+        <p className="mt-4 text-center text-[10px] text-grey leading-relaxed">
+          By creating an account you agree to our{' '}
+          <a href="#/terms-and-conditions" className="underline hover:text-bone">Terms &amp; Conditions</a>{' '}
+          and{' '}
+          <a href="#/privacy-policy" className="underline hover:text-bone">Privacy Policy</a>.
         </p>
       </div>
     </div>

@@ -1,13 +1,7 @@
 import { MessageCircle, Mail, MapPin } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { linkHref } from '@/lib/router';
-import {
-  INSTAGRAM_URL,
-  EMAIL,
-  buildWhatsAppGeneralUrl,
-  MIN_PACKS,
-  MIN_ORDER_PCS,
-} from '@/lib/catalog';
+import { INSTAGRAM_URL, EMAIL, buildWhatsAppGeneralUrl } from '@/lib/catalog';
 import { useSiteSettings } from '@/lib/settings';
 import { Instagram } from '@/components/icons/Instagram';
 
@@ -26,7 +20,7 @@ export function ContactPage() {
       icon: Instagram,
       label: 'Instagram',
       value: '@dslang.in',
-      note: 'New drops, restocks, and the latest wholesale catalogue.',
+      note: 'New drops, restocks, and behind-the-scenes.',
       href: INSTAGRAM_URL,
     },
     {
@@ -45,9 +39,9 @@ export function ContactPage() {
         <h1 className="mt-6 font-display text-5xl md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
           Let's Talk
         </h1>
-        <p className="mt-4 text-bone-dim max-w-xl leading-relaxed">
-          A store, a reseller, or a bulk buyer — reach out and the DSLANG wholesale team replies fast. No bots, no call centres.
-        </p>
+<p className="mt-4 text-bone-dim max-w-xl leading-relaxed">
+            A store, a reseller, or just a question about an order — reach out and the DSLANG team replies fast. No bots, no call centres.
+          </p>
 
         {/* Channels */}
         <div className="mt-8 md:mt-10 grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-5">
@@ -77,7 +71,8 @@ export function ContactPage() {
             Wholesale Enquiry
           </h2>
           <p className="mt-4 text-bone-dim max-w-md mx-auto leading-relaxed">
-            Pick any product, build a mix of color packs (minimum {MIN_PACKS} packs / {MIN_ORDER_PCS} PCS), and request your wholesale order — it opens straight in WhatsApp. We confirm availability, pricing and dispatch in one chat.
+            Stores and resellers — send your store, city and rough quantity. It opens straight in WhatsApp and
+            the DSLANG team confirms wholesale pricing, availability and dispatch in one chat.
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             <Button

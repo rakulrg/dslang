@@ -1,408 +1,373 @@
-import { X, Minus, Plus, Trash2, MessageCircle, ShoppingBag, AlertTriangle, Loader2 } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
-import { useCart } from '@/lib/cart';
+import { useEffect, useRef, useState } from 'react';
+import { X, Minus, Plus, Trash2, ArrowRight, Check, Loader2, ShoppingBag, Tag } from 'lucide-react';
+import { useD2cCart } from '@/lib/d2cCart';
+import { useCartDrawer } from '@/lib/cartDrawer';
+import { useRouter } from '@/lib/router';
+import { formatPrice } from '@/lib/catalog';
+import { computeShipping } from '@/lib/settings';
 import {
-  buildWholesaleWhatsAppUrl,
-  summarizeWholesale,
-  getWholesaleUnitPrice,
-  formatPrice,
-  formatPerUnit,
-  MIN_PACKS,
-  MIN_ORDER_PCS,
-  type WholesaleSkuLine,
-} from '@/lib/catalog';
-import { supabase } from '@/lib/supabase';
-import { linkHref } from '@/lib/router';
+  validatePromo,
+  computeDiscount,
+  promoApplies,
+} from '@/lib/promo';
+import { fetchLiveVariantStock, reconcileCartWithLive, describeStockChanges } from '@/lib/cartStock';
 
+/**
+ * Bag drawer — slides in from the RIGHT, matching the premium visual language
+ * of the left-side navigation menu drawer in Navbar.tsx.
+ *
+ * Mobile: ~98vw width (small page/overlay visible behind).
+ * Desktop: 440px right panel.
+ * Both are full-height below the announcement bar / header.
+ *
+ * Auto-closes when the last line is removed. If opened while empty it
+ * auto-closes after 3 seconds. The timer is cancelled immediately if an item
+ * is added, and cleared on close/unmount. ESC / backdrop / X close it.
+ * Body scrolling is locked while open.
+ *
+ * Promo codes are validated server-side on APPLY and persisted through the
+ * cart/checkout flow.
+ *
+ * Every time the drawer opens the cart is re-validated against live DB stock;
+ * variants that went out of stock (or whose quantity now exceeds stock) are
+ * reconciled in the cart and a clear notice is shown.
+ */
 export function CartDrawer() {
-  const { items, isOpen, close, removeItem, updateQty, count, clear } = useCart();
-  const [showForm, setShowForm] = useState(false);
-  const [seller, setSeller] = useState({ businessName: '', phone: '', city: '' });
-  const [submitting, setSubmitting] = useState(false);
-  const [priceNotice, setPriceNotice] = useState('');
-  const autoCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { isOpen, closeCart } = useCartDrawer();
+  const { items, count, subtotal, setQuantity, removeItem, reconcileWithLiveStock, promo, applyPromo, removeAppliedPromo } = useD2cCart();
+  const { navigate } = useRouter();
+  const shipping = computeShipping(subtotal);
 
-  const lines: WholesaleSkuLine[] = items.map((i) => ({
-    productId: i.productId,
-    name: i.name,
-    code: i.code,
-    color: i.color,
-    colorHex: i.colorHex,
-    image: i.image,
-    slug: i.slug,
-    packs: i.packs,
-    m: i.m,
-    l: i.l,
-    xl: i.xl,
-    qty: i.qty,
-    price50: i.price50,
-    price100: i.price100,
-  }));
-  const summary = summarizeWholesale(lines);
-  const belowMoaq = summary.totalQty < MIN_ORDER_PCS;
+  const [promoInput, setPromoInput] = useState('');
+  const [applying, setApplying] = useState(false);
+  const [promoError, setPromoError] = useState('');
+  const [stockNotice, setStockNotice] = useState('');
 
-  // Reset checkout state when drawer closes
+  const prevItemsRef = useRef(items.length);
+
+  // Auto-close when the LAST item is removed (drawer was open with items).
   useEffect(() => {
-    if (!isOpen) {
-      setShowForm(false);
-      setSubmitting(false);
-      setPriceNotice('');
-      setSeller({ businessName: '', phone: '', city: '' });
-    }
+    if (isOpen && prevItemsRef.current > 0 && items.length === 0) closeCart();
+    prevItemsRef.current = items.length;
+  }, [isOpen, items.length, closeCart]);
+
+  // Auto-close an EMPTY drawer after 3 seconds.
+  useEffect(() => {
+    if (!isOpen || items.length > 0) return;
+    const t = window.setTimeout(() => closeCart(), 3000);
+    return () => window.clearTimeout(t);
+  }, [isOpen, items.length, closeCart]);
+
+  // Re-validate the cart against live DB stock each time the drawer opens.
+  useEffect(() => {
+    if (!isOpen || items.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const live = await fetchLiveVariantStock(items);
+        if (cancelled) return;
+        const { changes } = reconcileCartWithLive(items, live);
+        const notice = describeStockChanges(changes);
+        if (notice) {
+          setStockNotice(notice);
+          reconcileWithLiveStock(live);
+        } else {
+          setStockNotice('');
+        }
+      } catch {
+        // Ignore network failures here — the server still re-validates at
+        // checkout, so a transient fetch failure never endorses a bad order.
+        if (!cancelled) setStockNotice('');
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // Body scroll lock with scrollbar compensation
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
+
+  // Body scroll lock while the drawer is open.
   useEffect(() => {
     if (isOpen) {
       const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
       document.body.style.overflow = 'hidden';
-      document.documentElement.style.overflow = 'hidden';
-      if (scrollbarWidth > 0) {
-        document.body.style.paddingRight = `${scrollbarWidth}px`;
-      }
-    } else {
-      document.body.style.overflow = '';
-      document.documentElement.style.overflow = '';
-      document.body.style.paddingRight = '';
+      if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
     }
     return () => {
-      document.body.style.overflow = '';
-      document.documentElement.style.overflow = '';
-      document.body.style.paddingRight = '';
+      if (!isOpenRef.current) {
+        document.body.style.overflow = '';
+        document.body.style.paddingRight = '';
+      }
     };
   }, [isOpen]);
 
-  // Close the drawer with the Escape key.
+  // ESC closes the drawer (desktop).
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
+      if (e.key === 'Escape') closeCart();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, close]);
+  }, [isOpen, closeCart]);
 
-  // Auto-close cart after 3 seconds if empty
-  useEffect(() => {
-    if (isOpen && items.length === 0) {
-      autoCloseTimer.current = setTimeout(() => {
-        close();
-        autoCloseTimer.current = null;
-      }, 3000);
-    }
-    return () => {
-      if (autoCloseTimer.current) {
-        clearTimeout(autoCloseTimer.current);
-        autoCloseTimer.current = null;
-      }
-    };
-  }, [isOpen, items.length, close]);
-
-  const handleSubmit = async () => {
-    if (items.length === 0 || belowMoaq) return;
-    setSubmitting(true);
-    let orderRef: string | undefined;
-
-    // Revalidate against the current database prices. Never trust a price
-    // computed purely in the browser — pull the authoritative wholesale prices
-    // for every product in the cart before generating the order/WhatsApp total.
-    let authoritative = lines;
-    try {
-      const productIds = Array.from(new Set(lines.map((l) => l.productId)));
-      const { data: rows, error } = await supabase
-        .from('products')
-        .select('id, wholesale_price_50, wholesale_price_100')
-        .in('id', productIds);
-      if (!error && rows) {
-        const byId = new Map<string, { price50: number; price100: number }>();
-        for (const row of rows as { id: string; wholesale_price_50: number | null; wholesale_price_100: number | null }[]) {
-          byId.set(row.id, {
-            price50: Number(row.wholesale_price_50 ?? 0),
-            price100: Number(row.wholesale_price_100 ?? 0),
-          });
-        }
-        authoritative = lines.map((l) => {
-          const p = byId.get(l.productId);
-          return p ? { ...l, price50: p.price50, price100: p.price100 } : l;
-        });
-      }
-    } catch {
-      // Fall back to cart values; still surface that prices could not be verified.
-      setPriceNotice('Could not verify current wholesale prices. The order will use the prices shown here.');
-    }
-
-    try {
-      const { data, error } = await supabase.rpc('create_wholesale_order', {
-        p_lines: authoritative.map((l) => ({
-          product_id: l.productId,
-          name: l.name,
-          code: l.code,
-          color: l.color,
-          color_hex: l.colorHex,
-          image: l.image,
-          slug: l.slug,
-          packs: l.packs,
-          m: l.m,
-          l: l.l,
-          xl: l.xl,
-          qty: l.qty,
-          wholesale_price_50: l.price50,
-          wholesale_price_100: l.price100,
-        })),
-        p_seller:
-          seller.businessName || seller.phone || seller.city
-            ? { business_name: seller.businessName, phone: seller.phone, city: seller.city }
-            : {},
-      });
-      if (!error && data && typeof data.ref === 'string' && data.ref) {
-        orderRef = `DSLANG-W-${data.ref}`;
-      }
-    } catch {
-      // Order logging is best-effort — WhatsApp ordering still proceeds.
-    }
-    const url = buildWholesaleWhatsAppUrl({
-      lines: authoritative,
-      businessName: seller.businessName || undefined,
-      phone: seller.phone || undefined,
-      city: seller.city || undefined,
-      orderRef,
-    });
-    window.open(url, '_blank', 'noopener,noreferrer');
-    setSubmitting(false);
-    setShowForm(false);
-    close();
+  const goToCheckout = () => {
+    if (items.length === 0) return;
+    closeCart();
+    // Let the drawer's slide-out transition play, then navigate, so the panel
+    // visibly closes over the current page instead of snapping to a new page.
+    window.setTimeout(() => navigate('/checkout'), 250);
   };
 
-  // Group items per product for display, then per color. Each group records
-  // the global cart index of its first line so edits map back to the real item.
-  const groups: { productId: string; productItems: typeof items; startIndex: number }[] = [];
-  {
-    const byProduct = new Map<string, typeof items>();
-    for (const item of items) {
-      if (!byProduct.has(item.productId)) byProduct.set(item.productId, []);
-      byProduct.get(item.productId)!.push(item);
+  const goToCollection = () => {
+    closeCart();
+    navigate('/collection');
+  };
+
+  const handleApplyPromo = async () => {
+    if (applying) return;
+    setApplying(true);
+    setPromoError('');
+    const res = await validatePromo(promoInput, subtotal);
+    setApplying(false);
+    if (res.ok && res.promo) {
+      applyPromo(res.promo);
+      setPromoInput('');
+    } else {
+      setPromoError(res.reason ?? 'This code is invalid or expired.');
     }
-    let cursor = 0;
-    for (const [productId, productItems] of byProduct) {
-      groups.push({ productId, productItems, startIndex: cursor });
-      cursor += productItems.length;
-    }
-  }
+  };
+
+  const handleRemovePromo = () => {
+    removeAppliedPromo();
+    setPromoInput('');
+  };
+
+  const discount = promoApplies(subtotal, promo) ? computeDiscount(subtotal, promo) : 0;
+  const total = subtotal - discount + shipping;
 
   return (
-    <div
-      className="fixed inset-0 z-[70]"
-      style={{ pointerEvents: isOpen ? 'auto' : 'none' }}
-      aria-hidden={!isOpen}
-    >
+    <div className="fixed inset-0 z-[60]" style={{ pointerEvents: isOpen ? 'auto' : 'none' }} aria-hidden={!isOpen}>
+      {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity duration-200"
+        className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity duration-200"
         style={{ opacity: isOpen ? 1 : 0 }}
-        onClick={close}
+        onClick={closeCart}
       />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Wholesale order"
-        className="absolute right-0 top-8 w-[85vw] max-w-lg bg-white border-l border-line flex flex-col overflow-hidden will-change-transform"
+
+      {/* Panel — slides from RIGHT, full-height below the announcement bar / header */}
+      <aside
+        className="absolute right-0 top-8 h-[calc(100vh-2rem)] w-[98vw] md:w-[440px] bg-white border-l border-line flex flex-col will-change-transform"
         style={{
-          height: 'calc(100dvh - 2rem)',
-          maxHeight: 'calc(100dvh - 2rem)',
           transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 250ms cubic-bezier(0.16, 1, 0.3, 1)',
         }}
+        role="dialog"
+        aria-label="Shopping bag"
       >
         {/* Header */}
-        <div className="flex items-center justify-between h-16 px-5 border-b border-line shrink-0">
-          <div className="flex items-center gap-2">
-            <ShoppingBag size={18} className="text-bone" strokeWidth={1.8} />
-            <span className="font-display text-xl tracking-wide-2 text-bone uppercase">Wholesale Order</span>
-            {count > 0 && (
-              <span className="text-xs text-grey">({count} PCS)</span>
-            )}
-          </div>
-          <button onClick={close} className="text-bone-dim hover:text-bone transition-colors p-1" aria-label="Close wholesale order">
-            <X size={22} strokeWidth={1.8} />
+        <div className="flex items-center justify-between h-11 px-5 border-b border-line shrink-0">
+          <h2 className="font-display text-lg uppercase tracking-wide-2 text-bone">Your Bag</h2>
+          <button onClick={closeCart} className="text-bone p-1" aria-label="Close bag">
+            <X size={22} strokeWidth={1.6} />
           </button>
         </div>
 
-        {/* Items */}
         {items.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
-            <ShoppingBag size={48} className="text-line mb-4" strokeWidth={1} />
-            <p className="font-label text-2xl uppercase tracking-wide-2 text-grey">No pieces selected</p>
-            <p className="mt-2 text-sm text-bone-soft">Build a wholesale mix — minimum order {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS).</p>
-            <a
-              href={linkHref('/collection')}
-              onClick={close}
-              className="mt-6 inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold text-crimson hover:text-crimson-dark transition-colors"
+          /* ---- Empty state ---- */
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
+            <ShoppingBag size={30} strokeWidth={1.3} className="text-grey" />
+            <p className="mt-4 font-display text-2xl uppercase tracking-wide-2 text-bone">Your Bag Is Empty</p>
+            <button
+              onClick={goToCollection}
+              className="mt-6 inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5 hover:bg-crimson-dark transition-colors"
             >
-              Browse Wholesale Collection →
-            </a>
+              Explore Collection <ArrowRight size={14} strokeWidth={2} />
+            </button>
           </div>
         ) : (
           <>
-            <div
-              className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-5 py-4 space-y-5"
-              style={{ WebkitOverflowScrolling: 'touch' }}
-            >
-              {groups.map(({ productId, productItems, startIndex }) => {
-                const first = productItems[0];
-                const productQty = productItems.reduce((s, i) => s + i.qty, 0);
-                const unit = getWholesaleUnitPrice(productQty, first.price50, first.price100);
-                return (
-                  <div key={productId} className="border-b border-line pb-4">
-                    <div className="flex items-start gap-3">
-                      <div className="w-14 h-16 shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
-                        {first.image && (
-                          <img src={first.image} alt={first.name} className="w-full h-full object-cover" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <a href={linkHref(`/product/${first.slug}`)} onClick={close} className="text-sm font-semibold text-bone hover:text-crimson transition-colors leading-tight block">
-                          {first.name}
-                        </a>
-                        <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mt-0.5">
-                          {first.code} · {productQty} PCS · {formatPerUnit(unit)}
-                        </p>
-                      </div>
-                    </div>
-                    {/* Per color pack breakdown */}
-                    {productItems.map((item, itemIdx) => {
-                      const globalIdx = startIndex + itemIdx;
-                      return (
-                        <div key={`${productId}-${item.color}`} className="mt-3 flex items-center justify-between gap-2">
-                          <span className="flex items-center gap-2 min-w-0">
-                            <span className="w-2.5 h-2.5 border border-line shrink-0" style={{ backgroundColor: item.colorHex }} />
-                            <span className="text-xs text-bone-dim truncate">
-                              {item.color}
-                              {item.packs > 0 && (
-                                <span className="text-grey"> — {item.m} M · {item.l} L · {item.xl} XL</span>
-                              )}
-                            </span>
-                          </span>
-                          <div className="inline-flex items-center border border-line shrink-0">
-                            <button
-                              onClick={() => (item.packs <= 1 ? removeItem(globalIdx) : updateQty(globalIdx, item.packs - 1))}
-                              disabled={submitting}
-                              className="w-7 h-7 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                              aria-label="Decrease packs"
+            {/* Items */}
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+              {stockNotice && (
+                <div className="px-5 py-3 border-b border-line bg-amber-50">
+                  <p className="text-xs text-amber-800 whitespace-pre-line leading-relaxed">{stockNotice}</p>
+                </div>
+              )}
+              <div className="divide-y divide-line">
+                {items.map((item, idx) => {
+                  const capped = item.stock > 0 ? Math.min(item.quantity, item.stock) : item.quantity;
+                  return (
+                    <div key={`${item.productId}-${item.colorId}-${item.sizeLabel}`} className="flex gap-3 px-5 py-4">
+                      <a
+                        href={`#/product/${item.slug}`}
+                        onClick={closeCart}
+                        className="w-[76px] h-[96px] shrink-0 overflow-hidden bg-paper-3 border border-line"
+                      >
+                        {item.image && <img src={item.image} alt={item.name} className="w-full h-full object-cover" loading="lazy" />}
+                      </a>
+                      <div className="flex-1 min-w-0 flex flex-col">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <a
+                              href={`#/product/${item.slug}`}
+                              onClick={closeCart}
+                              className="block font-semibold text-[13px] text-bone line-clamp-2 hover:text-crimson transition-colors"
                             >
-                              <Minus size={12} strokeWidth={2} />
-                            </button>
-                            <span className="w-8 text-center text-sm font-medium tabular-nums">
-                              {item.packs}
-                            </span>
-                            <button
-                              onClick={() => updateQty(globalIdx, item.packs + 1)}
-                              disabled={submitting}
-                              className="w-7 h-7 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                              aria-label="Increase packs"
-                            >
-                              <Plus size={12} strokeWidth={2} />
-                            </button>
+                              {item.name}
+                            </a>
+                            <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mt-0.5">
+                              {item.color} · {item.sizeLabel}
+                            </p>
                           </div>
-                          <span className="w-12 text-right text-xs font-medium tabular-nums text-bone shrink-0">
-                            {item.qty} PCS
-                          </span>
                           <button
-                            onClick={() => removeItem(globalIdx)}
-                            disabled={submitting}
-                            className="text-grey hover:text-crimson transition-colors p-1 shrink-0 disabled:opacity-30"
-                            aria-label="Remove line"
+                            onClick={() => removeItem(idx)}
+                            className="text-grey/70 hover:text-crimson transition-colors p-0.5 mt-0.5"
+                            aria-label="Remove item"
                           >
-                            <Trash2 size={14} strokeWidth={1.6} />
+                            <Trash2 size={15} strokeWidth={1.8} />
                           </button>
                         </div>
-                      );
-                    })}
-                    <p className="mt-2 font-label text-[10px] uppercase tracking-wide-2 text-grey">
-                      {productQty} PCS → {unit > 0 ? formatPerUnit(unit) : '—'}
-                    </p>
-                  </div>
-                );
-              })}
-              <button
-                onClick={clear}
-                className="font-label text-[10px] uppercase tracking-wide-2 text-grey hover:text-crimson transition-colors"
-              >
-                Clear all
-              </button>
+
+                        <div className="mt-auto flex items-center justify-between gap-3 pt-2.5">
+                          <div className="inline-flex items-center border border-line">
+                            <button
+                              onClick={() => setQuantity(idx, Math.max(1, item.quantity - 1))}
+                              className="w-8 h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors"
+                              aria-label="Decrease quantity"
+                            >
+                              <Minus size={13} strokeWidth={2} />
+                            </button>
+                            <span className="w-7 text-center text-sm font-semibold tabular-nums text-bone select-none">
+                              {item.quantity}
+                            </span>
+                            <button
+                              onClick={() => setQuantity(idx, item.quantity + 1)}
+                              disabled={item.stock > 0 && capped >= item.stock}
+                              className="w-8 h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30"
+                              aria-label="Increase quantity"
+                            >
+                              <Plus size={13} strokeWidth={2} />
+                            </button>
+                          </div>
+                          <p className="font-price text-sm font-semibold text-bone tabular-nums whitespace-nowrap">
+                            {formatPrice(item.unitPrice * item.quantity)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* Footer */}
-            <div
-              className="border-t border-line px-5 pt-5 pb-5 space-y-4 shrink-0"
-              style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom, 0px))' }}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-label text-[11px] uppercase tracking-wide-2 text-grey">Total Quantity</span>
-                <span className="font-price text-lg text-bone tabular-nums">
-                  {summary.totalQty} PCS
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-label text-[11px] uppercase tracking-wide-2 text-grey">Wholesale Price</span>
-                <span className="font-price text-base text-bone-dim">
-                  {summary.tiers.length > 0 ? summary.tiers.map((t) => t.name).join(' / ') : '—'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-label text-[11px] uppercase tracking-wide-2 text-bone">Order Total</span>
-                <span className="font-price text-2xl text-crimson">{formatPrice(summary.total)}</span>
-              </div>
-
-              {priceNotice && (
-                <p className="text-xs text-bone-dim leading-relaxed">{priceNotice}</p>
-              )}
-
-              {belowMoaq && (
-                <div className="flex items-start gap-2 rounded border border-crimson/30 bg-crimson/5 px-3 py-3">
-                  <AlertTriangle size={16} className="text-crimson mt-0.5 shrink-0" strokeWidth={1.8} />
-                  <p className="text-xs text-crimson leading-relaxed">
-                    Minimum wholesale order is {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS). Add {MIN_ORDER_PCS - summary.totalQty} more PCS across colors to place your order.
+            {/* Footer: ORDER SUMMARY → PROMO CODE → CHECKOUT */}
+            <div className="border-t border-line shrink-0" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+              {/* ORDER SUMMARY */}
+              <div className="px-5 pt-4">
+                <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-2">Order Summary</p>
+                <dl className="space-y-1 text-sm">
+                  <div className="flex items-center justify-between">
+                    <dt className="text-grey">Subtotal</dt>
+                    <dd className="font-semibold text-bone tabular-nums">{formatPrice(subtotal)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <dt className="text-grey">Discount</dt>
+                    <dd className={`font-semibold tabular-nums ${discount > 0 ? 'text-green-700' : 'text-grey'}`}>
+                      {discount > 0 ? `−${formatPrice(discount)}` : '—'}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <dt className="text-grey">Shipping</dt>
+                    <dd className="font-semibold text-bone tabular-nums">
+                      {shipping > 0 ? formatPrice(shipping) : <span className="text-green-700">FREE</span>}
+                    </dd>
+                  </div>
+                  <p className="text-[10px] text-grey text-right">
+                    {shipping > 0
+                      ? `FREE shipping on orders ₹999+`
+                      : `You've unlocked FREE shipping`}
                   </p>
-                </div>
-              )}
+                  <div className="flex items-center justify-between border-t border-line pt-2 mt-2">
+                    <dt className="font-label text-xs uppercase tracking-wide-2 text-bone">Total</dt>
+                    <dd className="font-price text-xl text-crimson tabular-nums">
+                      {(total || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
 
-              {showForm && (
-                <div className="rounded border border-line bg-paper-2 p-3 space-y-3">
-                  <p className="text-[11px] uppercase tracking-wide-2 text-bone-dim">Seller details</p>
-                  <input value={seller.businessName} onChange={(e) => setSeller((p) => ({ ...p, businessName: e.target.value }))} placeholder="Shop / Business name" className="w-full rounded border border-line bg-white px-3 py-2 text-sm text-bone outline-none" />
-                  <input value={seller.phone} onChange={(e) => setSeller((p) => ({ ...p, phone: e.target.value }))} placeholder="WhatsApp number" className="w-full rounded border border-line bg-white px-3 py-2 text-sm text-bone outline-none" />
-                  <input value={seller.city} onChange={(e) => setSeller((p) => ({ ...p, city: e.target.value }))} placeholder="City" className="w-full rounded border border-line bg-white px-3 py-2 text-sm text-bone outline-none" />
+              {/* Promo code */}
+              <div className="px-5 pt-4">
+                <div className="flex items-center gap-2">
+                  <Tag size={13} strokeWidth={1.8} className="text-bone-dim" />
+                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold">Promo Code</p>
                 </div>
-              )}
+                {promo ? (
+                  <>
+                    <div className="mt-2 flex items-center justify-between border border-green-300 bg-green-50 px-3 py-2.5">
+                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-green-800">
+                        <Check size={14} strokeWidth={2.5} /> {promo.code} APPLIED
+                      </span>
+                      <button
+                        onClick={handleRemovePromo}
+                        className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-800 underline underline-offset-2 hover:text-green-900"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    {!promoApplies(subtotal, promo) && (
+                      <p className="mt-1.5 text-xs text-grey">
+                        Add {formatPrice((promo.min_order_value || 0) - subtotal)} more to use this code — it will
+                        not apply at checkout below that amount.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        value={promoInput}
+                        onChange={(e) => setPromoInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleApplyPromo(); }}
+                        placeholder="Enter promo code"
+                        autoCapitalize="characters"
+                        spellCheck={false}
+                        className="flex-1 min-w-0 border border-line px-3 py-2.5 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
+                      />
+                      <button
+                        onClick={handleApplyPromo}
+                        disabled={applying || !promoInput.trim()}
+                        className="inline-flex items-center gap-1.5 shrink-0 bg-bone text-white text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
+                      >
+                        {applying ? <Loader2 size={13} strokeWidth={2} className="animate-spin" /> : 'Apply'}
+                      </button>
+                    </div>
+                    {promoError && <p className="mt-1.5 text-xs text-crimson">{promoError}</p>}
+                  </>
+                )}
+              </div>
 
-              <button
-                onClick={() => setShowForm((s) => !s)}
-                className="w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 rounded hover:bg-crimson-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                disabled={!showForm && belowMoaq}
-              >
-                <MessageCircle size={18} strokeWidth={2} />
-                {showForm ? 'Back' : 'Request Wholesale Order'}
-              </button>
-              {showForm && (
+              {/* Actions */}
+              <div className="px-5 pt-4 pb-3 space-y-2">
                 <button
-                  onClick={handleSubmit}
-                  disabled={submitting || belowMoaq}
-                  className="w-full inline-flex items-center justify-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 rounded hover:bg-ink transition-colors disabled:opacity-60"
+                  onClick={goToCheckout}
+                  className="w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 hover:bg-crimson-dark transition-all duration-150"
                 >
-                  {submitting ? <Loader2 size={18} strokeWidth={2} className="animate-spin" /> : <MessageCircle size={18} strokeWidth={2} />}
-                  {submitting ? 'Logging order…' : 'Confirm & Send on WhatsApp'}
+                  Checkout <ArrowRight size={15} strokeWidth={2} />
                 </button>
-              )}
-              <a
-                href={linkHref('/collection')}
-                onClick={close}
-                className="block text-center text-[11px] uppercase tracking-wide-2 text-bone-dim hover:text-crimson transition-colors"
-              >
-                Continue Browsing →
-              </a>
+                <button
+                  onClick={closeCart}
+                  className="w-full font-label text-[11px] uppercase tracking-wide-2 text-grey hover:text-crimson transition-colors py-2.5"
+                >
+                  Continue Shopping
+                </button>
+              </div>
             </div>
           </>
         )}
-      </div>
+      </aside>
     </div>
   );
 }

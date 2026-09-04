@@ -298,6 +298,16 @@ export function SubscriberDashboard() {
           </div>
         )}
       </div>
+
+      <div className="mx-auto max-w-4xl px-5 md:px-8 pt-6 pb-10">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line pt-5 text-[11px] text-grey">
+          <a href={linkHref('/terms-and-conditions')} className="underline hover:text-bone transition-colors">Terms &amp; Conditions</a>
+          <a href={linkHref('/privacy-policy')} className="underline hover:text-bone transition-colors">Privacy Policy</a>
+          <a href={linkHref('/refund-and-cancellation')} className="underline hover:text-bone transition-colors">Refund &amp; Cancellation</a>
+          <a href={linkHref('/return-policy')} className="underline hover:text-bone transition-colors">Return Policy</a>
+          <a href={linkHref('/shipping-policy')} className="underline hover:text-bone transition-colors">Shipping Policy</a>
+        </div>
+      </div>
     </div>
   );
 }

@@ -149,6 +149,57 @@ export function formatPerUnit(n: number): string {
   return `₹\u2009${n.toLocaleString('en-IN')} / piece`;
 }
 
+/* ---- Retail / D2C helpers ---- */
+
+/** Retail (D2C) selling price for a product. The `products.price` column is the
+ * canonical retail price; `mrp` is the compare-at for strikethrough display. */
+export function getRetailPrice(product: ProductRow | CatalogProduct): number {
+  return Math.max(0, Number(product.price ?? 0));
+}
+
+export function getMrp(product: ProductRow | CatalogProduct): number | null {
+  const mrp = Number(product.mrp ?? 0);
+  return mrp > 0 ? mrp : null;
+}
+
+/** Whether a product is visible on the retail (D2C) channel. Requires the
+ * general published flag AND the retail-specific retail_visible gate. */
+export function isRetailVisible(product: ProductRow | CatalogProduct): boolean {
+  return (product.published !== false) && (product.retail_visible !== false);
+}
+
+/** Whether customers should see wholesale pricing anywhere. Central feature
+ * flag on site_settings (default OFF). Read synchronously via the cached
+ * settings so every component shares one decision point. */
+export function wholesalePricingEnabled(): boolean {
+  return getSiteSettings().wholesale_pricing_enabled === true;
+}
+
+/** Per-variant D2C stock for a color/size combination. Returns 0 when missing. */
+export function getVariantStock(
+  product: CatalogProduct,
+  colorId: string,
+  sizeLabel: string
+): number {
+  const size = product.sizes.find(
+    (s) => s.color_id === colorId && s.size_label === sizeLabel
+  );
+  return Math.max(0, Number(size?.stock ?? 0));
+}
+
+/** The sizes offered for a specific color on a product (M/L/XL by default),
+ * derived from the per-color size rows so stock/availability is per variant. */
+export function getSizesForColor(product: CatalogProduct, colorId: string): ProductSizeRow[] {
+  return product.sizes
+    .filter((s) => s.color_id === colorId && ALLOWED_SIZES.has(s.size_label))
+    .sort((a, b) => (SIZE_ORDER[a.size_label] ?? 99) - (SIZE_ORDER[b.size_label] ?? 99));
+}
+
+export interface RetailVariant {
+  color: ProductColorRow;
+  size: ProductSizeRow;
+}
+
 export interface ProductSpecs {
   // Raw admin-entered values only. Empty strings mean "not entered" and the
   // storefront hides those rows rather than showing invented defaults.
@@ -184,8 +235,8 @@ export interface WholesaleSlabs {
 export function getWholesaleSlabs(product: ProductRow | CatalogProduct): WholesaleSlabs {
   const settings = getSiteSettings();
   const moq = Number(product.moq ?? 0) || settings.default_moq;
-  const price50 = Number(product.wholesale_price_50 ?? 0) || settings.wholesale_price_50 || 0;
-  const price100 = Number(product.wholesale_price_100 ?? 0) || settings.wholesale_price_100 || 0;
+  const price50 = Number(product.wholesale_price_50 ?? 0) || settings.wholesale_price50 || 0;
+  const price100 = Number(product.wholesale_price_100 ?? 0) || settings.wholesale_price100 || 0;
   return { moq, price50, price100 };
 }
 
@@ -342,10 +393,15 @@ function packForLine(line: WholesaleSkuLine): string {
  * Message shape: header, product + code, per-color pack breakdown
  * (color, packs, M/L/XL split, PCS), total PCS, price per piece, total.
  * Includes the stored order reference when one exists.
+ *
+ * When wholesale pricing is disabled via the central feature flag, per-piece
+ * and total amounts are omitted from the message entirely — the customer only
+ * sends quantities (no wholesale prices leak to the customer-facing flow).
  */
 export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): string {
   const summary = summarizeWholesale(payload.lines);
   const settings = getSiteSettings();
+  const showPrice = settings.wholesale_pricing_enabled === true;
 
   const sellerDetails = [
     payload.businessName ? `Business: ${payload.businessName}` : null,
@@ -380,11 +436,15 @@ export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): st
         `${line.color}: ${line.packs} pack${line.packs > 1 ? 's' : ''} — ${packForLine(line)} = ${line.qty} PCS`
       );
     }
-    message.push('', `Price: ${unit > 0 ? formatPerUnit(unit) : '—'}`, '');
+    if (showPrice) {
+      message.push('', `Price: ${unit > 0 ? formatPerUnit(unit) : '—'}`, '');
+    }
   }
 
   message.push(`Total PCS: ${summary.totalQty}`);
-  message.push(`Total: ${orderable && summary.total > 0 ? formatPrice(summary.total) : formatPrice(0)}`);
+  if (showPrice) {
+    message.push(`Total: ${orderable && summary.total > 0 ? formatPrice(summary.total) : formatPrice(0)}`);
+  }
   if (!orderable) {
     message.push(`(Minimum wholesale order: ${MIN_PACKS} packs — ${MIN_ORDER_PCS} PCS.)`);
   }

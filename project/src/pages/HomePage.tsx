@@ -1,14 +1,12 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { ArrowRight, MessageCircle } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { ProductCard } from '@/components/ProductCard';
 import { linkHref } from '@/lib/router';
 import {
   fetchProducts,
   fetchHeroSlides,
-  buildWhatsAppGeneralUrl,
-  MIN_PACKS,
-  MIN_ORDER_PCS,
+  isRetailVisible,
   type CatalogProduct,
   type HeroSlideRow,
 } from '@/lib/catalog';
@@ -16,17 +14,17 @@ import { useSiteSettings } from '@/lib/settings';
 import { preloadImage } from '@/lib/image';
 
 const WHY_DSLANG = [
-  { title: 'Fast Dispatch', body: 'Orders confirmed on WhatsApp and dispatched fast.' },
-  { title: 'Wholesale Pricing', body: 'Clean slab pricing — no haggling, no retail noise.' },
-  { title: 'Color Pack System', body: 'Whole color packs only — fixed M, L and XL mix per pack.' },
-  { title: 'Pan India Delivery', body: 'Built for stores and resellers everywhere in India.' },
+  { title: 'Oversized Fit', body: 'Boxy, heavy-weight cuts that hold their shape wear after wear.' },
+  { title: 'Heavy Quality', body: 'Premium 240 GSM combed cotton — built to last, designed to flex.' },
+  { title: 'Fresh Drops', body: 'New colourways and graphics drop regularly — never stuck on repeat.' },
+  { title: 'Easy Delivery', body: 'Pan-India dispatch in 24–48 hrs with simple size exchanges.' },
 ];
 
 const STEPS = [
-  { n: '01', t: 'Browse', d: 'Explore the wholesale collection.' },
-  { n: '02', t: 'Select', d: 'Pick whole color packs.' },
-  { n: '03', t: 'Mix', d: 'Mix colors within the MOQ.' },
-  { n: '04', t: 'Order', d: 'Send the order on WhatsApp.' },
+  { n: '01', t: 'Browse', d: 'Explore the streetwear collection and new drops.' },
+  { n: '02', t: 'Pick', d: 'Choose your colour and M / L / XL size.' },
+  { n: '03', t: 'Checkout', d: 'Add to bag, enter delivery details and place the order.' },
+  { n: '04', t: 'Wear', d: 'Your piece ships in 24–48 hrs straight to your door.' },
 ];
 
 export function HomePage() {
@@ -41,12 +39,10 @@ export function HomePage() {
       .then((s) => setSlides(s))
       .catch(() => {});
     fetchProducts()
-      .then(setProducts)
+      .then((all) => setProducts(all.filter((p) => isRetailVisible(p))))
       .catch(() => {});
   }, []);
 
-  // Do not preload every slide up front — only the active one (and only on
-  // success) so a failed image never advances to a broken slide.
   useEffect(() => {
     if (slides.length === 0) return;
     setTarget((t) => Math.min(t, slides.length - 1));
@@ -58,7 +54,6 @@ export function HomePage() {
     let cancelled = false;
     preloadImage(url)
       .then(() => { if (!cancelled) setShown(target); })
-      // On failure keep showing whatever is current instead of a blank slide.
       .catch(() => {});
     return () => { cancelled = true; };
   }, [target, slides]);
@@ -84,17 +79,13 @@ export function HomePage() {
   }, [products]);
   const collection = useMemo(() => (featured.length > 0 ? featured : products.slice(0, 4)), [featured, products]);
 
-  // Hero content is admin-controlled via hero_slides; empty values fall back
-  // to the brand message without pulling in product specifications.
   const slide = slides[target];
   const heroEyebrow = slide?.eyebrow?.trim() || 'DSLANG';
   const heroTitle = slide?.title?.trim() || 'SLANG OF DESIGN';
-  const heroSubtitle = slide?.subtitle?.trim() || 'For Resellers & Wholesale';
-  const ctaText = slide?.cta_text?.trim() || 'View Collection';
+  const heroSubtitle = slide?.subtitle?.trim() || 'New Drops, Heavy Quality';
+  const ctaText = slide?.cta_text?.trim() || 'Shop The Collection';
   const ctaUrl = slide?.cta_url?.trim() || linkHref('/collection');
   const ctaExternal = ctaUrl.startsWith('http');
-
-  const whatsapp = (msg: string) => buildWhatsAppGeneralUrl(msg);
 
   return (
     <div>
@@ -143,12 +134,8 @@ export function HomePage() {
                     {ctaText} <ArrowRight size={15} strokeWidth={2} />
                   </Button>
                 )}
-                <Button
-                  href={whatsapp("Hi DSLANG! I'd like to place a wholesale order.")}
-                  external
-                  variant="outline-light"
-                >
-                  <MessageCircle size={15} strokeWidth={2} /> WhatsApp
+                <Button href={linkHref('/stock-dslang')} variant="outline-light">
+                  Explore DSLANG
                 </Button>
               </div>
               </div>
@@ -171,21 +158,21 @@ export function HomePage() {
           </div>
       </section>
 
-      {/* ============ WHOLESALE COLLECTION ============ */}
+      {/* ============ COLLECTION ============ */}
       {collection.length > 0 && (
         <section className="mx-auto px-2 md:px-12 lg:px-20 xl:px-28 pt-10 md:pt-16 pb-2">
           <div className="flex items-end justify-between px-2 md:px-0 mb-4 md:mb-8">
             <div>
-              <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">Wholesale Collection</p>
+              <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">The Collection</p>
               <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone leading-none">
-                Stock The Slang
+                New In
               </h2>
             </div>
             <a
               href={linkHref('/collection')}
               className="font-label text-[11px] uppercase tracking-wide-2 font-semibold text-crimson hover:text-crimson-dark transition-colors"
             >
-              View Collection →
+              View All →
             </a>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8">
@@ -200,9 +187,12 @@ export function HomePage() {
       {newDrops.length > 0 && (
         <section className="mx-auto px-2 md:px-12 lg:px-20 xl:px-28 pt-10 md:pt-16 pb-8 md:pb-12">
           <div className="flex items-end justify-between px-2 md:px-0 mb-4 md:mb-8">
-            <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone leading-none">
-              New Drops
-            </h2>
+            <div>
+              <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">Latest Drops</p>
+              <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone leading-none">
+                Fresh Off The Print Table
+              </h2>
+            </div>
             <a
               href={linkHref('/new-drops')}
               className="font-label text-[11px] uppercase tracking-wide-2 font-semibold text-crimson hover:text-crimson-dark transition-colors"
@@ -220,9 +210,9 @@ export function HomePage() {
 
       {/* ============ WHY DSLANG ============ */}
       <section className="py-12 md:py-20 mx-auto px-5 md:px-12 lg:px-20 xl:px-28 bg-concrete border-y border-line">
-        <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">Why Wholesale With DSLANG</p>
+        <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">Why DSLANG</p>
         <h2 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-[0.9] max-w-3xl">
-          Built For Stores And Resellers
+          Made For The Spot
         </h2>
         <div className="mt-8 md:mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
           {WHY_DSLANG.map((w) => (
@@ -263,27 +253,23 @@ export function HomePage() {
       {/* ============ FINAL CTA ============ */}
       <section className="bg-ink py-14 md:py-20">
         <div className="mx-auto px-5 md:px-12 lg:px-20 xl:px-28 max-w-5xl text-center">
-          <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-3">Wholesale Only</p>
+          <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-3">New Drops Weekly</p>
           <h2 className="font-display text-4xl md:text-7xl uppercase tracking-wide-2 text-white leading-[0.9]">
-            Ready To Stock DSLANG?
+            Ready To Wear The Slang?
           </h2>
           <p className="mt-5 text-sm md:text-base text-white/70 max-w-2xl mx-auto leading-relaxed">
-            Place a wholesale order on WhatsApp. We confirm availability, pricing and dispatch in one chat.
+            Shop the latest streetwear drops — oversized fits, heavy quality, shipped pan-India in 24–48 hrs.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Button href={linkHref('/collection')} variant="primary">
-              Order Wholesale <ArrowRight size={15} strokeWidth={2} />
+              Shop Now <ArrowRight size={15} strokeWidth={2} />
             </Button>
-            <Button
-              href={whatsapp("Hi DSLANG! I run a retail store and I'd like to stock DSLANG.")}
-              external
-              variant="outline-light"
-            >
-              <MessageCircle size={15} strokeWidth={2} /> Talk To The Team
+            <Button href={linkHref('/contact')} variant="outline-light">
+              Talk To Us
             </Button>
           </div>
           <p className="mt-8 text-[11px] uppercase tracking-[0.2em] text-white/50">
-            Min. order {MIN_PACKS} packs ({MIN_ORDER_PCS} PCS) · {settings.delivery_note} Delivery · {settings.dispatch_note}
+            Pan-India delivery · {settings.delivery_note} Dispatch · Easy size exchanges
           </p>
         </div>
       </section>

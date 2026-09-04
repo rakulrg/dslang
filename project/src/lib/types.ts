@@ -26,9 +26,56 @@ export interface ProductRow {
   // Storefront visibility (added via migration; optional for older rows)
   published?: boolean;
   new_drop?: boolean;
+  // Retail / D2C channel (added via migration; optional for older rows)
+  retail_visible?: boolean;
   // Wholesale rebuild (added via migration; optional for older rows)
   details?: string | null;
   available_sizes?: string[] | null;
+}
+
+export interface RetailOrderItem {
+  product_id: string;
+  name: string;
+  code: string;
+  color_id: string;
+  color: string;
+  color_hex: string;
+  size_label: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+}
+
+export interface RetailOrder {
+  id: string;
+  ref: string;
+  order_type: 'retail';
+  customer: {
+    name: string;
+    phone: string;
+    email?: string;
+    address: string;
+    city: string;
+    state: string;
+    pincode: string;
+  };
+  items: RetailOrderItem[];
+  total_qty: number;
+  subtotal: number;
+  discount: number;
+  shipping: number;
+  total_amount: number;
+  payment_status: string;
+  order_status: string;
+  promo_code: string | null;
+  currency?: string;
+  payment_provider?: string;
+  payment_id?: string;
+  txn_id?: string;
+  paid_at?: string | null;
+  referral: string | null;
+  created_at: string;
+  updated_at?: string;
 }
 
 export interface ProductColorRow {

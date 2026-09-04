@@ -1,0 +1,38 @@
+-- ============================================================================
+-- Migration: 20260909000000_dslang_drop_retail_orders_insert_public.sql
+-- Purpose:   Close a security / integrity gap in the retail checkout.
+--
+-- Problem:
+--   retail_orders_insert_public (created in 20260904000000) was:
+--       TO anon, authenticated  WITH CHECK (true)
+--   This lets ANY anonymous or signed-in user INSERT rows directly into
+--   retail_orders through the PostgREST REST API / supabase-js, completely
+--   bypassing public.create_retail_order — i.e. no server-side re-pricing, no
+--   per-line stock validation/decrement, no promo validation, and no payment
+--   session creation. Direct inserts could fabricate orders and diverge
+--   inventory from reality.
+--
+-- Why it is SAFE to remove (nothing that legitimately creates orders depends
+-- on this policy):
+--   * Order creation ALWAYS goes through public.create_retail_order, which is
+--     SECURITY DEFINER (see 20260904000000_line 387). A SECURITY DEFINER
+--     function executes as ITS OWNER (the migration-runner role = table owner /
+--     superuser in Supabase), NOT as the calling role, and therefore BYPASSES
+--     row-level security for statements made inside it. Its
+--     "INSERT INTO public.retail_orders (...) VALUES (...)" (line 564) keeps
+--     working with or without any INSERT policy.
+--   * The payment Edge Functions (cashfree-order / cashfree-status /
+--     cashfree-webhook)
+--     all connect with SUPABASE_SERVICE_ROLE_KEY, which also bypasses RLS, and
+--     they only SELECT / UPDATE retail_orders — they never INSERT into it.
+--   * No frontend code inserts into retail_orders directly (order creation
+--     routes through create_retail_order).
+--
+-- Scope: only DROPs the INSERT policy. The SELECT and UPDATE admin policies on
+-- retail_orders are deliberately left untouched (already admin-only).
+-- ============================================================================
+
+DROP POLICY IF EXISTS "retail_orders_insert_public" ON public.retail_orders;
+
+-- No NOTIFY pgrst is required: dropping a row-level-security policy does not
+-- change the PostgREST schema cache (it is not a table/function DDL).

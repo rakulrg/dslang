@@ -16,12 +16,19 @@ export interface SiteSettings {
   pack_l: number;
   pack_xl: number;
   // Global per-piece wholesale prices (per-product values override these)
-  wholesale_price_50: number;
-  wholesale_price_100: number;
+  // NOTE: these map to the site_settings columns wholesale_price50 / 100 (NO
+  // underscore), which differ from the products table's wholesale_price_50/100.
+  wholesale_price50: number;
+  wholesale_price100: number;
+  // Central feature flag: when false, wholesale prices are hidden from
+  // customers even in Wholesale mode. Admin controls it (default false).
+  wholesale_pricing_enabled: boolean;
+  // Flat shipping charged on retail (D2C) orders.
+  shipping_flat_rate: number;
 }
 
 export const DEFAULT_SETTINGS: SiteSettings = {
-  announcement_text: 'SAME DAY DISPATCH • FOR RESELLERS & WHOLESALE ONLY • PAN INDIA DELIVERY',
+  announcement_text: 'NEW DROP · SAME DAY DISPATCH · PAN INDIA DELIVERY',
   announcement_active: true,
   whatsapp_number: '919944676178',
   default_moq: 50,
@@ -32,8 +39,10 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   pack_m: 2,
   pack_l: 2,
   pack_xl: 2,
-  wholesale_price_50: 0,
-  wholesale_price_100: 0,
+  wholesale_price50: 0,
+  wholesale_price100: 0,
+  wholesale_pricing_enabled: false,
+  shipping_flat_rate: 0,
 };
 
 // Module-level cache so synchronous builders (WhatsApp URLs, MOQ gates) can
@@ -42,6 +51,17 @@ let cachedSettings: SiteSettings | null = null;
 
 export function getSiteSettings(): SiteSettings {
   return cachedSettings ?? DEFAULT_SETTINGS;
+}
+
+// Merchandise subtotal at or above which retail shipping becomes FREE (₹0).
+// Kept in one place so Cart, Checkout, and the server-side order totals match.
+export const FREE_SHIPPING_THRESHOLD = 999;
+
+/** Retail shipping cost for a given merchandise subtotal (before discount).
+ * >= FREE_SHIPPING_THRESHOLD => ₹0; otherwise the configured flat rate. */
+export function computeShipping(subtotal: number): number {
+  const base = getSiteSettings().shipping_flat_rate || 0;
+  return subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : base;
 }
 
 export async function fetchSiteSettings(): Promise<SiteSettings> {
@@ -68,8 +88,10 @@ export async function fetchSiteSettings(): Promise<SiteSettings> {
         pack_m?: number | null;
         pack_l?: number | null;
         pack_xl?: number | null;
-        wholesale_price_50?: number | null;
-        wholesale_price_100?: number | null;
+        wholesale_price50?: number | null;
+        wholesale_price100?: number | null;
+        wholesale_pricing_enabled?: boolean | null;
+        shipping_flat_rate?: number | null;
       }
     | null;
 
@@ -87,10 +109,46 @@ export async function fetchSiteSettings(): Promise<SiteSettings> {
     pack_m: Number(row.pack_m ?? 0) || DEFAULT_SETTINGS.pack_m,
     pack_l: Number(row.pack_l ?? 0) || DEFAULT_SETTINGS.pack_l,
     pack_xl: Number(row.pack_xl ?? 0) || DEFAULT_SETTINGS.pack_xl,
-    wholesale_price_50: Number(row.wholesale_price_50 ?? 0) || 0,
-    wholesale_price_100: Number(row.wholesale_price_100 ?? 0) || 0,
+    wholesale_price50: Number(row.wholesale_price50 ?? 0) || 0,
+    wholesale_price100: Number(row.wholesale_price100 ?? 0) || 0,
+    wholesale_pricing_enabled: row.wholesale_pricing_enabled ?? DEFAULT_SETTINGS.wholesale_pricing_enabled,
+    shipping_flat_rate: Number(row.shipping_flat_rate ?? 0) || 0,
   };
 
+  cachedSettings = settings;
+  return settings;
+}
+
+/** Persists an admin edit of the single site_settings row (id = 1). The row is
+ * admin-writable via RLS (site_settings_write_admin); updates never touch
+ * wholesale or retail pricing (those live on products). */
+export async function saveSiteSettings(patch: Partial<SiteSettings>): Promise<SiteSettings> {
+  const payload: Record<string, unknown> = {};
+  const keys: (keyof SiteSettings)[] = [
+    'announcement_text',
+    'announcement_active',
+    'whatsapp_number',
+    'default_moq',
+    'dispatch_note',
+    'delivery_note',
+    'min_order_quantity',
+    'pack_size',
+    'pack_m',
+    'pack_l',
+    'pack_xl',
+    'wholesale_price50',
+    'wholesale_price100',
+    'wholesale_pricing_enabled',
+    'shipping_flat_rate',
+  ];
+  for (const key of keys) {
+    if (patch[key] !== undefined) payload[key] = patch[key] as unknown;
+  }
+
+  const { error } = await supabase.from('site_settings').update(payload).eq('id', 1);
+  if (error) throw error;
+
+  const settings = await fetchSiteSettings();
   cachedSettings = settings;
   return settings;
 }
@@ -99,12 +157,14 @@ interface SiteSettingsContextValue {
   settings: SiteSettings;
   loaded: boolean;
   reload: () => Promise<void>;
+  save: (patch: Partial<SiteSettings>) => Promise<SiteSettings>;
 }
 
 const SiteSettingsContext = createContext<SiteSettingsContextValue>({
   settings: DEFAULT_SETTINGS,
   loaded: false,
   reload: async () => {},
+  save: async (patch) => patch as SiteSettings,
 });
 
 export function SiteSettingsProvider({ children }: { children: ReactNode }) {
@@ -122,6 +182,12 @@ export function SiteSettingsProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const save = useCallback(async (patch: Partial<SiteSettings>) => {
+    const next = await saveSiteSettings(patch);
+    setSettings(next);
+    return next;
+  }, []);
+
   useEffect(() => {
     void reload();
   }, [reload]);
@@ -133,7 +199,7 @@ export function SiteSettingsProvider({ children }: { children: ReactNode }) {
   }, [settings]);
 
   return (
-    <SiteSettingsContext.Provider value={{ settings, loaded, reload }}>
+    <SiteSettingsContext.Provider value={{ settings, loaded, reload, save }}>
       {children}
     </SiteSettingsContext.Provider>
   );

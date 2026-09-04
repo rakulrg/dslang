@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { MessageCircle } from 'lucide-react';
 import { ProductCard } from '@/components/ProductCard';
-import { fetchProducts, buildWhatsAppGeneralUrl, type CatalogProduct } from '@/lib/catalog';
+import { fetchProducts, buildWhatsAppGeneralUrl, isRetailVisible, type CatalogProduct } from '@/lib/catalog';
 import { LoadingDots } from '@/components/LoadingDots';
 
 export function NewDropsPage() {
@@ -13,7 +13,7 @@ export function NewDropsPage() {
     setProducts(null);
     setError(false);
     fetchProducts()
-      .then((p) => { setProducts(p); setError(false); })
+      .then((all) => { setProducts(all.filter((p) => isRetailVisible(p))); setError(false); })
       .catch(() => setError(true));
   }, [loadKey]);
 
@@ -30,13 +30,13 @@ export function NewDropsPage() {
       <div className="mx-auto px-2 md:px-12 lg:px-20 xl:px-28">
         <div className="px-2 md:px-0 border-b border-line pb-4 md:pb-8">
           <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">
-            Latest For Wholesale
+            DSLANG · Fresh Off The Press
           </p>
           <h1 className="font-display text-[1.75rem] md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
             New Drops
           </h1>
           <p className="mt-3 text-bone-dim max-w-xl leading-relaxed text-sm md:text-base">
-            The newest designs available wholesale for stores and resellers.
+            The newest colourways and graphics — before they sell out.
           </p>
         </div>
 
@@ -62,9 +62,11 @@ export function NewDropsPage() {
         ) : (
           <div className="py-16 text-center">
             <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">Nothing Here Yet</p>
-            <p className="mt-2 text-sm text-grey">New designs land soon. Reach out on WhatsApp for the latest arrival list.</p>
+            <p className="mt-2 text-sm text-grey">
+              New designs land soon. Stay close.
+            </p>
             <a
-              href={buildWhatsAppGeneralUrl("Hi DSLANG! What are the latest wholesale drops available?")}
+              href={buildWhatsAppGeneralUrl('Hi DSLANG! When is the next drop coming?')}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-6 inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold text-crimson hover:text-crimson-dark transition-colors"

@@ -1,28 +1,28 @@
 import { ArrowRight, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { linkHref } from '@/lib/router';
-import { buildWhatsAppGeneralUrl, getPackConfig, MIN_PACKS, MIN_ORDER_PCS } from '@/lib/catalog';
+import { buildWhatsAppGeneralUrl } from '@/lib/catalog';
+
+const STEPS = [
+  { n: '01', t: 'Browse', d: 'Browse the collection and new drops.', detail: 'The retail store runs on the full catalog — heavy quality, oversized fits.' },
+  { n: '02', t: 'Pick', d: 'Choose colour, size and quantity.', detail: 'Pick from M / L / XL per colour. Stock is live per size.' },
+  { n: '03', t: 'Checkout', d: 'Add to bag and place the order.', detail: 'Add to bag, enter delivery details and place your order in seconds.' },
+  { n: '04', t: 'Confirm', d: 'We confirm on WhatsApp.', detail: 'You get an order reference and we confirm dispatch details quickly.' },
+  { n: '05', t: 'Dispatch', d: 'We ship in 24–48 hrs.', detail: 'Packed and dispatched pan-India with tracking.' },
+  { n: '06', t: 'Wear', d: 'Join the slang.', detail: 'Easy size exchanges within 7 days of delivery.' },
+];
 
 export function HowItWorksPage() {
-  const pack = getPackConfig();
-  const STEPS = [
-    { n: '01', t: 'Browse', d: 'Explore the DSLANG wholesale collection.', detail: 'Open /collection and search designs and colorways that fit your store.' },
-    { n: '02', t: 'Select', d: 'Pick whole color packs.', detail: 'Each color pack ships as a fixed mix — 1 pack = 6 PCS (2 M · 2 L · 2 XL). Sizes are not sold separately.' },
-    { n: '03', t: 'Mix', d: `Mix color packs up to the ${MIN_ORDER_PCS} PCS minimum.`, detail: `Every included color starts at one full pack. Minimum order is ${MIN_ORDER_PCS} PCS (${MIN_PACKS} packs).` },
-    { n: '04', t: 'Order', d: 'Submit your wholesale order via WhatsApp.', detail: 'Use the wholesale order sheet on any product, then send it straight to our WhatsApp with the color-pack breakdown.' },
-    { n: '05', t: 'Confirm', d: 'We confirm availability, pricing and delivery.', detail: 'Our team confirms your order, final pricing and the delivery timeline on WhatsApp.' },
-    { n: '06', t: 'Dispatch', d: 'Order dispatched across India.', detail: 'Packed and dispatched pan-India with tracking once the order is confirmed.' },
-  ];
   return (
     <div className="pb-12 md:pb-20 pt-3">
       <div className="mx-auto px-5 md:px-12 lg:px-20 xl:px-28">
         <div className="border-b border-line pb-4 md:pb-8">
           <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">The Process</p>
           <h1 className="font-display text-4xl md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
-            How Wholesale Works
+            How It Works
           </h1>
           <p className="mt-4 text-bone-dim max-w-xl leading-relaxed text-sm md:text-base">
-            From browsing to dispatch — a simple wholesale process built for retail stores and resellers.
+            From browsing to doorstep — how ordering your DSLANG piece works.
           </p>
         </div>
 
@@ -46,28 +46,28 @@ export function HowItWorksPage() {
           ))}
         </div>
 
-        {/* MOQ note */}
+        {/* Highlights */}
         <div className="mt-10 max-w-4xl border-t border-line pt-8 grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
           <div className="border border-line p-5">
-            <p className="font-display text-2xl uppercase tracking-wide-2 text-bone">{MIN_PACKS} PACKS / {MIN_ORDER_PCS} PCS</p>
-            <p className="mt-2 text-sm text-bone-soft">Minimum wholesale order per design.</p>
+            <p className="font-display text-2xl uppercase tracking-wide-2 text-bone">M / L / XL</p>
+            <p className="mt-2 text-sm text-bone-soft">Live per-colour size stock.</p>
           </div>
           <div className="border border-line p-5">
-            <p className="font-display text-2xl uppercase tracking-wide-2 text-bone">Mixed Sizes &amp; Colors</p>
-            <p className="mt-2 text-sm text-bone-soft">Any combination across M, L and XL.</p>
+            <p className="font-display text-2xl uppercase tracking-wide-2 text-bone">24–48 HRS</p>
+            <p className="mt-2 text-sm text-bone-soft">Dispatch across India.</p>
           </div>
           <div className="border border-line p-5">
-            <p className="font-display text-2xl uppercase tracking-wide-2 text-bone">Pan India</p>
-            <p className="mt-2 text-sm text-bone-soft">Dispatched across India on confirmation.</p>
+            <p className="font-display text-2xl uppercase tracking-wide-2 text-bone">7-DAY SWAP</p>
+            <p className="mt-2 text-sm text-bone-soft">Easy size exchanges.</p>
           </div>
         </div>
 
         <div className="mt-10 max-w-4xl flex flex-wrap gap-3">
           <Button href={linkHref('/collection')} variant="primary">
-            Browse Collection <ArrowRight size={15} strokeWidth={2} />
+            Shop The Collection <ArrowRight size={15} strokeWidth={2} />
           </Button>
           <Button
-            href={buildWhatsAppGeneralUrl("Hi DSLANG! I want to understand the wholesale process and place my first order.")}
+            href={buildWhatsAppGeneralUrl('Hi DSLANG! I have a question about ordering.')}
             external
             variant="outline"
           >

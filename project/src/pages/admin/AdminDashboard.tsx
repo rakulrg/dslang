@@ -12,11 +12,18 @@ import {
   Check,
   ExternalLink,
   Upload,
+  Settings as SettingsIcon,
+  ShoppingBag,
+  Copy,
+  Phone,
+  Ticket,
+  Loader2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
+import { useSiteSettings, type SiteSettings } from '@/lib/settings';
 import { linkHref } from '@/lib/router';
-import { formatPerUnit, getWholesaleSlabs } from '@/lib/catalog';
+import { formatPrice, getMrp, getRetailPrice, getSizesForColor } from '@/lib/catalog';
 import { preloadImage } from '@/lib/image';
 import { LoadingDots } from '@/components/LoadingDots';
 import {
@@ -29,6 +36,9 @@ import {
   adminUpdateColor,
   adminDeleteColor,
   adminUpdateColorSortOrders,
+  adminSetSizeStock,
+  adminFetchRetailOrders,
+  adminDeleteRetailOrder,
   adminCreateHero,
   adminUpdateHero,
   adminDeleteHero,
@@ -39,9 +49,10 @@ import {
   type ProductInput,
 } from '@/lib/admin';
 import { hasPublishColumns } from '@/lib/catalog';
-import type { CatalogProduct, HeroSlideRow, ProductColorRow } from '@/lib/types';
+import type { CatalogProduct, HeroSlideRow, ProductColorRow, ProductSizeRow, RetailOrder } from '@/lib/types';
+import { SIZE_LABELS } from '@/lib/types';
 
-type Tab = 'products' | 'hero';
+type Tab = 'products' | 'hero' | 'settings' | 'orders' | 'promos';
 
 const EXPECTED_RATIO = 4 / 5;
 const RATIO_TOLERANCE = 0.03;
@@ -173,6 +184,30 @@ export function AdminDashboard() {
           >
             <ImageIcon size={13} strokeWidth={1.8} /> Homepage
           </button>
+          <button
+            onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); }}
+            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
+              tab === 'settings' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+            }`}
+          >
+            <SettingsIcon size={13} strokeWidth={1.8} /> Settings
+          </button>
+          <button
+            onClick={() => { setTab('orders'); setEditingId(null); setCreating(false); }}
+            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
+              tab === 'orders' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+            }`}
+          >
+            <ShoppingBag size={13} strokeWidth={1.8} /> Orders
+          </button>
+          <button
+            onClick={() => { setTab('promos'); setEditingId(null); setCreating(false); }}
+            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
+              tab === 'promos' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+            }`}
+          >
+            <Ticket size={13} strokeWidth={1.8} /> Promo Codes
+          </button>
         </div>
       </div>
 
@@ -202,6 +237,30 @@ export function AdminDashboard() {
           >
             <ImageIcon size={16} strokeWidth={1.8} /> Homepage
           </button>
+          <button
+            onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
+              tab === 'settings' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+            }`}
+          >
+            <SettingsIcon size={16} strokeWidth={1.8} /> Settings
+          </button>
+          <button
+            onClick={() => { setTab('orders'); setEditingId(null); setCreating(false); }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
+              tab === 'orders' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+            }`}
+          >
+            <ShoppingBag size={16} strokeWidth={1.8} /> Orders
+          </button>
+          <button
+            onClick={() => { setTab('promos'); setEditingId(null); setCreating(false); }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
+              tab === 'promos' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+            }`}
+          >
+            <Ticket size={16} strokeWidth={1.8} /> Promo Codes
+          </button>
         </nav>
 
         <div className="p-3 border-t border-line">
@@ -228,7 +287,7 @@ export function AdminDashboard() {
         {/* Top bar */}
         <header className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-line px-4 sm:px-6 h-12 sm:h-14 flex items-center justify-between gap-3">
           <h1 className="font-display text-lg sm:text-2xl tracking-wide-2 text-bone uppercase">
-            {tab === 'products' ? 'Products' : 'Homepage'}
+            {tab === 'products' ? 'Products' : tab === 'hero' ? 'Homepage' : tab === 'settings' ? 'Settings' : tab === 'orders' ? 'Orders' : 'Promo Codes'}
           </h1>
           {tab === 'products' && !creating && !editingProduct && (
             <button
@@ -299,6 +358,12 @@ export function AdminDashboard() {
               />
             )
           )}
+
+          {tab === 'settings' && <SettingsPanel />}
+
+          {tab === 'orders' && <RetailOrdersPanel />}
+
+          {tab === 'promos' && <PromoPanel />}
         </div>
       </div>
     </div>
@@ -338,7 +403,8 @@ function ProductList({
       {products.map((p) => {
         const primary = p.colors[0];
         const isPublished = p.published !== false;
-        const slabs = getWholesaleSlabs(p);
+        const retailPrice = getRetailPrice(p);
+        const mrp = getMrp(p);
         return (
           <div
             key={p.id}
@@ -354,12 +420,9 @@ function ProductList({
                 <h3 className="text-sm font-semibold text-bone truncate">{p.name}</h3>
                 <p className="text-[11px] uppercase tracking-wide-2 text-grey mt-0.5">{p.code}</p>
                 <div className="mt-1 flex items-center gap-2 text-xs text-bone-soft flex-wrap">
-                  <span className="font-medium">{formatPerUnit(slabs.price50)}</span>
-                  {slabs.price100 > 0 && (
-                    <>
-                      <span className="text-grey">·</span>
-                      <span>{formatPerUnit(slabs.price100)}</span>
-                    </>
+                  <span className="font-medium">{formatPrice(retailPrice)}</span>
+                  {mrp !== null && mrp > retailPrice && (
+                    <span className="text-grey line-through">{formatPrice(mrp)}</span>
                   )}
                   <span className="text-grey">·</span>
                   <span>{p.colors.length} colors</span>
@@ -425,6 +488,9 @@ function ProductForm({
     moq: null,
     wholesale_price_50: null,
     wholesale_price_100: null,
+    price: null,
+    mrp: null,
+    retail_visible: true,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -435,17 +501,17 @@ function ProductForm({
       setError('Slug, name, and code are required.');
       return;
     }
-    if (!(form.wholesale_price_50 && form.wholesale_price_50 > 0)) {
-      setError('Set the wholesale price (50 PCS+ tier) to make this product orderable.');
+    if (form.price !== null && form.price !== undefined && (!Number.isFinite(form.price) || form.price < 0)) {
+      setError('Price must be a non-negative number.');
+      return;
+    }
+    if (!(Number(form.price ?? 0) > 0)) {
+      setError('Set a retail price to make a product sellable online.');
       return;
     }
     setBusy(true);
     setError('');
     try {
-      console.log('[DSLANG wholesale save payload]', {
-        wholesale_price_50: form.wholesale_price_50,
-        wholesale_price_100: form.wholesale_price_100,
-      });
       await onSave(form);
     } catch (err) {
       setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Failed to create product'));
@@ -491,13 +557,13 @@ function ProductForm({
       </div>
 
       <div>
-        <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Wholesale Pricing</h3>
+        <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Pricing</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          <Field label="Wholesale Price — 50 PCS+">
-            <NumInput value={form.wholesale_price_50} onChange={(n) => setForm({ ...form, wholesale_price_50: n })} className={inputCls} placeholder="—" />
+          <Field label="MRP" hint="Original / strikethrough price">
+            <NumInput value={form.mrp} onChange={(n) => setForm({ ...form, mrp: n })} className={inputCls} placeholder="—" />
           </Field>
-          <Field label="Wholesale Price — 100 PCS+">
-            <NumInput value={form.wholesale_price_100} onChange={(n) => setForm({ ...form, wholesale_price_100: n })} className={inputCls} placeholder="—" />
+          <Field label="Offer Price" hint="Online selling price per piece">
+            <NumInput value={form.price} onChange={(n) => setForm({ ...form, price: n })} className={inputCls} placeholder="—" />
           </Field>
         </div>
       </div>
@@ -511,7 +577,7 @@ function ProductForm({
           {publishReady && (
             <label className="flex items-end gap-2">
               <input type="checkbox" checked={form.published} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
-              <span className="text-sm text-bone-dim">Available (visible on the wholesale storefront)</span>
+              <span className="text-sm text-bone-dim">Published (visible to shoppers)</span>
             </label>
           )}
           <label className="flex items-end gap-2">
@@ -536,7 +602,7 @@ function ProductForm({
         </button>
       </div>
       <p className="text-xs text-grey pt-2 border-t border-line">
-        After creating, add colors with images. Buyers order whole color packs (6 PCS each: 2 M + 2 L + 2 XL) and the whole order must reach the order minimum (48 PCS by default).
+        After creating, add colors with images, then sizes with stock. Buyers shop retail per piece (M / L / XL).
       </p>
     </form>
   );
@@ -567,8 +633,8 @@ function ProductEditor({
     published: product.published !== false,
     new_drop: product.new_drop === true,
     sort_order: product.sort_order,
-    wholesale_price_50: product.wholesale_price_50 ?? null,
-    wholesale_price_100: product.wholesale_price_100 ?? null,
+    price: Number(product.price ?? 0) > 0 ? Number(product.price ?? 0) : null,
+    mrp: Number(product.mrp ?? 0) > 0 ? Number(product.mrp ?? 0) : null,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -580,32 +646,14 @@ function ProductEditor({
       setError('Slug, name, and code are required.');
       return;
     }
-    if (!(form.wholesale_price_50 && form.wholesale_price_50 > 0)) {
-      setError('Set the wholesale price (50 PCS+ tier) to make this product orderable.');
-      return;
-    }
-    const p50 = Number(form.wholesale_price_50 ?? 0);
-    const p100 = form.wholesale_price_100 == null ? null : Number(form.wholesale_price_100);
-    if (p100 !== null && !Number.isFinite(p100)) {
-      setError('The 100+ PCS price must be a positive number.');
-      return;
-    }
-    if (p100 !== null && p100 < 0) {
-      setError('The 100+ PCS price cannot be negative.');
-      return;
-    }
-    if (p100 !== null && p100 > p50) {
-      setError('The 100+ PCS price cannot be higher than the 50 PCS+ price.');
+    if (form.price !== null && form.price !== undefined && (!Number.isFinite(form.price) || form.price < 0)) {
+      setError('Price must be a non-negative number.');
       return;
     }
     setBusy(true);
     setError('');
     setSaved(false);
     try {
-      console.log('[DSLANG wholesale save payload]', {
-        wholesale_price_50: form.wholesale_price_50,
-        wholesale_price_100: form.wholesale_price_100,
-      });
       await onSave(product.id, form);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -650,30 +698,30 @@ function ProductEditor({
           </div>
         </div>
 
-        <div>
-          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Wholesale Pricing</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-            <Field label="Wholesale Price — 50 PCS+">
-              <NumInput value={form.wholesale_price_50 ?? null} onChange={(n) => setForm({ ...form, wholesale_price_50: n })} className={inputCls} placeholder="—" />
-            </Field>
-            <Field label="Wholesale Price — 100 PCS+">
-              <NumInput value={form.wholesale_price_100 ?? null} onChange={(n) => setForm({ ...form, wholesale_price_100: n })} className={inputCls} placeholder="—" />
-            </Field>
-          </div>
-        </div>
-
-        <div>
-          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Status</h3>
-          <Field label="Sort Order">
-            <NumInput value={form.sort_order ?? 0} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
+      <div>
+        <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Pricing</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <Field label="MRP" hint="Original / strikethrough price">
+            <NumInput value={form.mrp ?? null} onChange={(n) => setForm({ ...form, mrp: n })} className={inputCls} placeholder="—" />
           </Field>
-          <div className="flex items-end gap-4 flex-wrap mt-3">
-            {publishReady && (
-              <label className="flex items-end gap-2">
-                <input type="checkbox" checked={form.published ?? true} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
-                <span className="text-sm text-bone-dim">Available (visible on the wholesale storefront)</span>
-              </label>
-            )}
+          <Field label="Offer Price" hint="Online selling price per piece">
+            <NumInput value={form.price ?? null} onChange={(n) => setForm({ ...form, price: n })} className={inputCls} placeholder="—" />
+          </Field>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Status</h3>
+        <Field label="Sort Order">
+          <NumInput value={form.sort_order ?? 0} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
+        </Field>
+        <div className="flex items-end gap-4 flex-wrap mt-3">
+          {publishReady && (
+            <label className="flex items-end gap-2">
+              <input type="checkbox" checked={form.published ?? true} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
+              <span className="text-sm text-bone-dim">Published (visible to shoppers)</span>
+            </label>
+          )}
           <label className="flex items-end gap-2">
             <input type="checkbox" checked={form.featured ?? false} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
             <span className="text-sm text-bone-dim">Featured</span>
@@ -700,6 +748,9 @@ function ProductEditor({
 
       {/* Colors section */}
       <ColorManager product={product} onChanged={onChanged} />
+
+      {/* Inventory / Stock */}
+      <InventoryManager product={product} onChanged={onChanged} />
 
       {/* Color priority */}
       <ColorPriorityManager product={product} onChanged={onChanged} />
@@ -819,7 +870,12 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
 
       <div className="space-y-4">
         {colors.map((c) => (
-          <ColorRow key={c.id} color={c} onDelete={() => handleDeleteColor(c.id)} onSave={(name, hex, images) => handleSaveColor(c.id, name, hex, images)} />
+          <ColorRow
+            key={c.id}
+            color={c}
+            onDelete={() => handleDeleteColor(c.id)}
+            onSave={(name, hex, images) => handleSaveColor(c.id, name, hex, images)}
+          />
         ))}
         {colors.length === 0 && <p className="text-sm text-grey">No colors yet. Add one with images.</p>}
       </div>
@@ -827,7 +883,11 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
   );
 }
 
-function ColorRow({ color, onDelete, onSave }: { color: ProductColorRow; onDelete: () => void; onSave: (name: string, hex: string, images: string[]) => Promise<void> }) {
+function ColorRow({ color, onDelete, onSave }: {
+  color: ProductColorRow;
+  onDelete: () => void;
+  onSave: (name: string, hex: string, images: string[]) => Promise<void>;
+}) {
   const [name, setName] = useState(color.name);
   const [hex, setHex] = useState(color.hex);
   const [images, setImages] = useState<string[]>(color.images);
@@ -975,6 +1035,137 @@ function ColorRow({ color, onDelete, onSave }: { color: ProductColorRow; onDelet
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ---- Inventory / Stock Manager ---- */
+
+function InventoryManager({ product, onChanged }: { product: CatalogProduct; onChanged: () => Promise<void> }) {
+  const colors = product.colors;
+
+  const buildDrafts = (p: CatalogProduct): Record<string, Record<string, number>> => {
+    const out: Record<string, Record<string, number>> = {};
+    for (const c of p.colors) {
+      const row: Record<string, number> = {};
+      for (const s of getSizesForColor(p, c.id)) {
+        row[s.size_label] = Math.max(0, Math.floor(Number(s.stock ?? 0)));
+      }
+      out[c.id] = row;
+    }
+    return out;
+  };
+
+  const [drafts, setDrafts] = useState<Record<string, Record<string, number>>>(() => buildDrafts(product));
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setDrafts(buildDrafts(product));
+    setSaved(false);
+    setError('');
+  }, [product]);
+
+  const sizeOrderIndex = (label: string): number => {
+    const i = SIZE_LABELS.indexOf(label as (typeof SIZE_LABELS)[number]);
+    return i === -1 ? 999 : i;
+  };
+
+  const sizeLabels = Array.from(
+    new Set<string>(colors.flatMap((c) => getSizesForColor(product, c.id).map((s) => s.size_label)))
+  ).sort((a, b) => sizeOrderIndex(a) - sizeOrderIndex(b));
+
+  const hasSizes = sizeLabels.length > 0 && colors.length > 0;
+
+  const handleSave = async () => {
+    setBusy(true);
+    setError('');
+    setSaved(false);
+    try {
+      const jobs: Promise<void>[] = [];
+      for (const c of colors) {
+        const sizes = getSizesForColor(product, c.id);
+        for (const s of sizes) {
+          jobs.push(adminSetSizeStock(product.id, c.id, s.size_label, drafts[c.id]?.[s.size_label] ?? 0));
+        }
+      }
+      await Promise.all(jobs);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not update stock.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="max-w-2xl bg-white border border-line rounded p-4 sm:p-6">
+      <div className="mb-4">
+        <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase">Inventory</h3>
+        <p className="text-xs text-grey mt-0.5">Manage stock by color and size.</p>
+      </div>
+
+      {!hasSizes ? (
+        <p className="text-sm text-grey">Add sizes to your colors in the database (or check the product's size chart) to manage stock.</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line">
+                  <th className="text-left text-[10px] font-semibold uppercase tracking-wide-2 text-grey py-2 pr-3">Color</th>
+                  {sizeLabels.map((label) => (
+                    <th key={label} className="text-center text-[10px] font-semibold uppercase tracking-wide-2 text-grey py-2 px-2">{label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {colors.map((c) => (
+                  <tr key={c.id} className="border-b border-line last:border-b-0">
+                    <td className="py-2 pr-3">
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        <span className="w-5 h-5 rounded border border-line shrink-0" style={{ backgroundColor: c.hex }} />
+                        <span className="text-sm font-medium text-bone">{c.name}</span>
+                      </div>
+                    </td>
+                    {sizeLabels.map((label) => (
+                      <td key={label} className="py-2 px-2">
+                        <NumInput
+                          value={drafts[c.id]?.[label] ?? 0}
+                          onChange={(n) =>
+                            setDrafts((prev) => ({
+                              ...prev,
+                              [c.id]: { ...(prev[c.id] ?? {}), [label]: Math.max(0, Math.floor(Number(n ?? 0))) },
+                            }))
+                          }
+                          min={0}
+                          className="w-full max-w-[4.5rem] bg-white border border-line px-2.5 py-2 text-sm text-center text-bone focus:border-crimson focus:outline-none rounded"
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-grey mt-2">0 means sold out. Stock is tracked separately for every product color and size.</p>
+          <div className="flex items-center gap-3 pt-3">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-2.5 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50"
+            >
+              <Save size={14} /> {busy ? 'Saving…' : 'Save Stock'}
+            </button>
+            {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+            {error && <span className="text-sm text-crimson">{error}</span>}
+          </div>
+        </>
       )}
     </div>
   );
@@ -1553,3 +1744,688 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
     </div>
   );
 }
+
+/* ---- Settings ---- */
+
+function SettingsPanel() {
+  const { settings, loaded, save } = useSiteSettings();
+  const [form, setForm] = useState<SiteSettings>(settings);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setForm(settings);
+  }, [settings]);
+
+  const patch = (p: Partial<SiteSettings>) => setForm((f) => ({ ...f, ...p }));
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    setSaved(false);
+    try {
+      await save(form);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not save settings.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="max-w-3xl space-y-5">
+      {!loaded && <div className="h-24 bg-paper-3 border border-line rounded animate-pulse" />}
+
+      <div className="bg-white border border-line rounded p-4 sm:p-6 space-y-4">
+        <h3 className="font-display text-lg tracking-wide-2 text-bone uppercase">Store Settings</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <Field label="Flat Shipping (₹)" hint="Charged on retail orders">
+            <NumInput value={form.shipping_flat_rate} onChange={(n) => patch({ shipping_flat_rate: n ?? 0 })} className={inputCls} />
+          </Field>
+        </div>
+      </div>
+
+      <div className="bg-white border border-line rounded p-4 sm:p-6 space-y-4">
+        <h3 className="font-display text-lg tracking-wide-2 text-bone uppercase">Contact & Storefront</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <Field label="WhatsApp Number" hint="Digits only, country code first (e.g. 9199...)">
+            <input value={form.whatsapp_number} onChange={(e) => patch({ whatsapp_number: e.target.value })} className={inputCls} />
+          </Field>
+          <Field label="Dispatch Note">
+            <input value={form.dispatch_note} onChange={(e) => patch({ dispatch_note: e.target.value })} className={inputCls} />
+          </Field>
+          <Field label="Delivery Note">
+            <input value={form.delivery_note} onChange={(e) => patch({ delivery_note: e.target.value })} className={inputCls} />
+          </Field>
+          <Field label="Announcement Text">
+            <input value={form.announcement_text} onChange={(e) => patch({ announcement_text: e.target.value })} className={inputCls} />
+          </Field>
+        </div>
+        <label className="flex items-end gap-2">
+          <input type="checkbox" checked={form.announcement_active} onChange={(e) => patch({ announcement_active: e.target.checked })} className="w-4 h-4 accent-crimson" />
+          <span className="text-sm text-bone-dim">Show announcement bar</span>
+        </label>
+      </div>
+
+      {error && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{error}</p>}
+
+      <div className="flex items-center gap-3">
+        <button type="submit" disabled={busy || !loaded} className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50">
+          <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Settings'}
+        </button>
+        {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+        <span className="text-xs text-grey ml-auto">These apply instantly on the live storefront.</span>
+      </div>
+    </form>
+  );
+}
+
+/* ---- Retail Orders ---- */
+
+const PAYMENT_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
+  success: { label: 'Success', cls: 'bg-green-600/10 text-green-700' },
+  paid: { label: 'Paid', cls: 'bg-green-600/10 text-green-700' },
+  failed: { label: 'Failed', cls: 'bg-crimson/10 text-crimson' },
+  cancelled: { label: 'Cancelled', cls: 'bg-grey/15 text-grey' },
+  refunded: { label: 'Refunded', cls: 'bg-grey/15 text-grey' },
+};
+
+const ORDER_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
+  processing: { label: 'Processing', cls: 'bg-sky-100 text-sky-700' },
+  shipped: { label: 'Shipped', cls: 'bg-indigo-100 text-indigo-700' },
+  delivered: { label: 'Delivered', cls: 'bg-green-600/10 text-green-700' },
+  cancelled: { label: 'Cancelled', cls: 'bg-crimson/10 text-crimson' },
+  refunded: { label: 'Refunded', cls: 'bg-grey/15 text-grey' },
+};
+
+const ORDER_STATUS_FLOW = ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'] as const;
+
+function formatOrderDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return iso;
+  }
+}
+
+function RetailOrdersPanel() {
+  const [orders, setOrders] = useState<RetailOrder[] | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const { settings } = useSiteSettings();
+
+  const load = useCallback(async () => {
+    setLoadError('');
+    try {
+      setOrders(await adminFetchRetailOrders());
+    } catch (err) {
+      setOrders([]);
+      setLoadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not load retail orders.'));
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const copyRef = async (ref: string) => {
+    try {
+      await navigator.clipboard.writeText(ref);
+    } catch {
+      /* clipboard unavailable — the ref is still visible in the UI */
+    }
+  };
+
+  const whatsappLink = (order: RetailOrder) => {
+    const number = (settings.whatsapp_number ?? '').replace(/\D/g, '') || '919944676178';
+    const lines = [
+      `DSLANG Order ${order.ref}`,
+      `Total ${order.total_qty} items — ${formatPrice(order.total_amount)}`,
+      '',
+      ...order.items.map((it) => `${it.name} ${it.color} ${it.size_label} × ${it.quantity} (${formatPrice(it.line_total)})`),
+      '',
+      `Name: ${order.customer.name} · ${order.customer.phone}`,
+      `Address: ${order.customer.address}, ${order.customer.city}, ${order.customer.state} ${order.customer.pincode}`,
+      `Payment: ${PAYMENT_STATUS_LABEL[order.payment_status]?.label ?? order.payment_status}`,
+    ];
+    return `https://wa.me/${number}?text=${encodeURIComponent(lines.join('\n'))}`;
+  };
+
+  const [confirmDelete, setConfirmDelete] = useState<RetailOrder | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const [actionMessage, setActionMessage] = useState('');
+
+  const performDelete = async () => {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await adminDeleteRetailOrder(confirmDelete.id);
+      setOrders((prev) => (prev ?? []).filter((x) => x.id !== confirmDelete.id));
+      setExpanded((cur) => (cur === confirmDelete.id ? null : cur));
+      setConfirmDelete(null);
+      setActionMessage('Order deleted.');
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Could not delete the order.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Auto-dismiss the brief success message.
+  useEffect(() => {
+    if (!actionMessage) return;
+    const t = window.setTimeout(() => setActionMessage(''), 3000);
+    return () => window.clearTimeout(t);
+  }, [actionMessage]);
+
+  if (orders === null) {
+    return <div className="min-h-[40vh] flex items-center justify-center"><LoadingDots /></div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-grey">
+          {orders.length === 0 ? 'No retail orders yet.' : `${orders.length} retail order${orders.length === 1 ? '' : 's'} — newest first.`}
+        </p>
+        <button
+          onClick={load}
+          className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson border border-line rounded px-3 py-2 transition-colors"
+        >
+          <ShoppingBag size={13} strokeWidth={1.8} /> Refresh
+        </button>
+      </div>
+
+      {loadError && <div className="bg-crimson/5 border border-crimson/20 text-crimson text-sm px-4 py-3 rounded">{loadError}</div>}
+
+      {actionMessage && (
+        <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 text-sm px-4 py-3 rounded">
+          <Check size={14} strokeWidth={2.5} /> {actionMessage}
+        </div>
+      )}
+
+      {orders.length === 0 && !loadError && (
+        <div className="text-center py-24 border border-line rounded bg-white">
+          <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No retail orders</p>
+          <p className="mt-3 text-sm text-grey">Orders placed on the retail storefront will appear here.</p>
+        </div>
+      )}
+
+      {orders.map((o) => {
+        const isOpen = expanded === o.id;
+        const pay = PAYMENT_STATUS_LABEL[o.payment_status];
+        return (
+          <div key={o.id} className="bg-white border border-line rounded overflow-hidden">
+            <button
+              onClick={() => setExpanded(isOpen ? null : o.id)}
+              className="w-full text-left flex items-center gap-3 sm:gap-4 p-3 sm:p-4"
+            >
+              <div className="w-11 h-11 shrink-0 rounded bg-paper-3 border border-line flex items-center justify-center text-bone">
+                <ShoppingBag size={18} strokeWidth={1.8} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-bone">{o.ref}</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); copyRef(o.ref); }}
+                    className="text-grey hover:text-bone p-0.5"
+                    aria-label="Copy order reference"
+                  >
+                    <Copy size={13} />
+                  </button>
+                  {pay && <span className={`text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-0.5 rounded ${pay.cls}`}>{pay.label}</span>}
+                </div>
+                <p className="text-xs text-grey mt-0.5 truncate">{o.customer.name} · {o.customer.phone}</p>
+                <p className="text-[11px] text-grey/70 mt-0.5">{formatOrderDate(o.created_at)}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-sm font-semibold text-bone">{formatPrice(o.total_amount)}</p>
+                <p className="text-[11px] text-grey">{o.total_qty} items</p>
+              </div>
+              <ChevronDown size={16} className={`text-grey shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isOpen && (
+              <div className="border-t border-line p-3 sm:p-4 space-y-4 bg-paper-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="bg-white border border-line rounded p-3 sm:p-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Customer</p>
+                    <div className="space-y-1.5 text-sm text-bone">
+                      <p className="flex items-center gap-2"><Phone size={13} className="text-grey" /> {o.customer.name} · {o.customer.phone}</p>
+                      {o.customer.email && <p className="text-grey text-xs">{o.customer.email}</p>}
+                      <p className="text-grey text-xs">{o.customer.address}, {o.customer.city}, {o.customer.state} — {o.customer.pincode}</p>
+                    </div>
+                  </div>
+                  <div className="bg-white border border-line rounded p-3 sm:p-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Totals</p>
+                    <div className="space-y-1 text-sm">
+                      <div className="flex justify-between"><span className="text-bone-dim">Subtotal</span><span className="font-medium text-bone">{formatPrice(o.subtotal)}</span></div>
+                      {Number(o.discount) > 0 && (
+                        <div className="flex justify-between"><span className="text-bone-dim">Discount</span><span className="font-medium text-green-700">−{formatPrice(o.discount)}</span></div>
+                      )}
+                      <div className="flex justify-between"><span className="text-bone-dim">Shipping</span><span className="font-medium text-bone">{formatPrice(o.shipping)}</span></div>
+                      <div className="flex justify-between border-t border-line pt-1"><span className="text-bone">Total</span><span className="font-semibold text-bone">{formatPrice(o.total_amount)}</span></div>
+                      <div className="flex justify-between text-xs text-grey"><span>Qty</span><span>{o.total_qty}</span></div>
+                      {o.promo_code && <div className="flex justify-between text-xs text-grey"><span>Promo</span><span>{o.promo_code}</span></div>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-line rounded p-3 sm:p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Items ({o.items.length})</p>
+                  <div className="divide-y divide-line">
+                    {o.items.map((it, i) => (
+                      <div key={`${it.product_id}-${it.color_id}-${it.size_label}-${i}`} className="flex items-center gap-3 py-2">
+                        <div className="w-6 h-6 rounded border border-line shrink-0" style={{ backgroundColor: it.color_hex }} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-bone truncate">{it.name}</p>
+                          <p className="text-[11px] text-grey">{it.code} · {it.color} · {it.size_label}</p>
+                        </div>
+                        <span className="text-sm text-bone-dim">× {it.quantity}</span>
+                        <span className="text-sm font-medium text-bone">{formatPrice(it.line_total)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 flex-wrap">
+                  <a
+                    href={whatsappLink(o)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 bg-green-600 text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-green-700 transition-colors"
+                  >
+                    <Phone size={14} strokeWidth={2} /> Confirm on WhatsApp
+                  </a>
+                </div>
+
+                <div className="flex items-start justify-between gap-3 flex-wrap border-t border-line pt-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Payment</span>
+                    <span className={`text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-1 rounded ${pay ? pay.cls : 'bg-grey/15 text-grey'}`}>
+                      {pay ? pay.label : o.payment_status}
+                    </span>
+                    {o.paid_at && <span className="text-[11px] text-grey">verified {formatOrderDate(o.paid_at)}</span>}
+                  </div>
+                  <label className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Order Status</span>
+                    <select
+                      value={o.order_status}
+                      onChange={async (e) => {
+                        const next = e.target.value;
+                        const { error } = await supabase
+                          .from('retail_orders')
+                          .update({ order_status: next })
+                          .eq('id', o.id);
+                        if (error) {
+                          setLoadError(describeSupabaseError(error, 'Could not update order status.'));
+                          return;
+                        }
+                        load();
+                      }}
+                      className="border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-crimson focus:outline-none"
+                    >
+                      {ORDER_STATUS_FLOW.map((s) => (
+                        <option key={s} value={s}>
+                          {ORDER_STATUS_LABEL[s].label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="flex justify-end border-t border-line pt-3">
+                  <button
+                    type="button"
+                    onClick={() => { setDeleteError(''); setConfirmDelete(o); }}
+                    className="inline-flex items-center gap-2 border border-crimson/40 text-crimson bg-white hover:bg-crimson/5 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded transition-colors"
+                  >
+                    <Trash2 size={14} strokeWidth={2} /> Delete Order
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !deleting && setConfirmDelete(null)} />
+          <div className="relative w-full max-w-sm bg-white border border-line rounded-lg p-5 sm:p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-label text-sm uppercase tracking-wide-2 text-bone font-semibold">Delete this order?</h3>
+              <button type="button" aria-label="Close" onClick={() => !deleting && setConfirmDelete(null)} className="text-grey hover:text-bone">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-sm text-grey mt-2">
+              This will permanently remove the order and its associated order data.
+            </p>
+            {deleteError && (
+              <p className="mt-3 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-2 rounded">{deleteError}</p>
+            )}
+            <div className="flex justify-end gap-3 mt-5">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setConfirmDelete(null)}
+                className="inline-flex items-center gap-2 border border-line text-bone-dim hover:border-bone-dim hover:text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={performDelete}
+                className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-crimson/90 transition-colors disabled:opacity-50"
+              >
+                {deleting ? <Loader2 size={14} strokeWidth={2.5} className="animate-spin" /> : <Trash2 size={14} strokeWidth={2} />} Delete Order
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---- Promo Codes ---- */
+
+interface PromoRow {
+  id: string;
+  code: string;
+  label: string;
+  discount_type: 'percent' | 'flat';
+  discount_value: number;
+  active: boolean;
+  max_uses: number | null;
+  used_count: number;
+  starts_at: string | null;
+  expires_at: string | null;
+  min_order_value: number | null;
+  max_discount: number | null;
+  per_customer_limit: number | null;
+  note: string | null;
+  created_at: string;
+}
+
+function PromoPanel() {
+  const [promos, setPromos] = useState<PromoRow[] | null>(null);
+  const [error, setError] = useState('');
+  const [editing, setEditing] = useState<PromoRow | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const { data, error } = await supabase
+        .from('promo_codes')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setPromos((data as PromoRow[]) ?? []);
+    } catch (err) {
+      setPromos([]);
+      setError(describeSupabaseError(err, 'Could not load promo codes.'));
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const toggleActive = async (p: PromoRow) => {
+    setError('');
+    const { error } = await supabase.from('promo_codes').update({ active: !p.active }).eq('id', p.id);
+    if (error) { setError(describeSupabaseError(error, 'Could not update promo code.')); return; }
+    setPromos((prev) => prev?.map((x) => (x.id === p.id ? { ...x, active: !p.active } : x)) ?? null);
+  };
+
+  const remove = async (p: PromoRow) => {
+    if (!confirm(`Delete promo "${p.code}"? This cannot be undone.`)) return;
+    setError('');
+    const { error } = await supabase.from('promo_codes').delete().eq('id', p.id);
+    if (error) { setError(describeSupabaseError(error, 'Could not delete promo code.')); return; }
+    setPromos((prev) => prev?.filter((x) => x.id !== p.id) ?? null);
+    if (editing?.id === p.id) setEditing(null);
+  };
+
+  if (promos === null) {
+    return <div className="min-h-[40vh] flex items-center justify-center"><LoadingDots /></div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-grey">
+          {promos.length === 0 ? 'No promo codes yet.' : `${promos.length} promo code${promos.length === 1 ? '' : 's'}.`}
+        </p>
+        <button
+          onClick={() => { setCreating(true); setEditing(null); }}
+          className="inline-flex items-center gap-1.5 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-3 py-2 rounded hover:bg-crimson-dark transition-colors"
+        >
+          <Plus size={13} strokeWidth={2} /> New Promo
+        </button>
+      </div>
+
+      {error && <div className="bg-crimson/5 border border-crimson/20 text-crimson text-sm px-4 py-3 rounded">{error}</div>}
+
+      {(creating || editing) && (
+        <PromoForm
+          initial={editing}
+          onCancel={() => { setCreating(false); setEditing(null); }}
+          onSaved={() => { setCreating(false); setEditing(null); load(); }}
+        />
+      )}
+
+      {promos.length === 0 && !creating && !editing && !error && (
+        <div className="text-center py-24 border border-line rounded bg-white">
+          <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No promo codes</p>
+          <p className="mt-3 text-sm text-grey">Create a code like WELCOME10 to offer shoppers a discount.</p>
+        </div>
+      )}
+
+      {promos.map((p) => {
+        const expired = p.expires_at && new Date(p.expires_at).getTime() < Date.now();
+        const usable = p.active && !expired && (p.max_uses === null || p.used_count < p.max_uses);
+        return (
+          <div key={p.id} className="bg-white border border-line rounded p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
+            <div className="w-11 h-11 shrink-0 rounded bg-paper-3 border border-line flex items-center justify-center text-bone">
+              <Ticket size={18} strokeWidth={1.8} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-bone">{p.code}</span>
+                {p.label && <span className="text-xs text-grey truncate">{p.label}</span>}
+              </div>
+              <p className="text-[11px] text-grey mt-0.5">
+                {p.discount_type === 'percent' ? `${p.discount_value}% off` : `${formatPrice(p.discount_value)} off`}
+                {Number(p.min_order_value) > 0 && <> · min {formatPrice(Number(p.min_order_value))}</>}
+                {Number(p.max_discount) > 0 && <> · max {formatPrice(Number(p.max_discount))}</>}
+                {' · '}{p.used_count}{p.max_uses !== null ? ` / ${p.max_uses} uses` : ' uses'}
+                {p.per_customer_limit !== null && p.per_customer_limit !== undefined && (
+                  <> · {p.per_customer_limit} per customer</>
+                )}
+              </p>
+              <p className="text-[11px] text-grey mt-0.5">
+                {p.starts_at && <>Valid from {formatOrderDate(p.starts_at).split(',')[0]}</>}
+                {p.starts_at && p.expires_at && ' · '}
+                {p.expires_at ? `valid till ${formatOrderDate(p.expires_at).split(',')[0]}` : 'No expiry'}
+              </p>
+              {p.note && <p className="text-[11px] text-bone-dim mt-0.5 italic truncate">Note: {p.note}</p>}
+            </div>
+            <span className={`shrink-0 text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-1 rounded ${
+              usable ? 'bg-green-600/10 text-green-700' : 'bg-grey/15 text-grey'
+            }`}>
+              {usable ? 'Active' : expired ? 'Expired' : 'Disabled'}
+            </span>
+            <button
+              onClick={() => toggleActive(p)}
+              className="shrink-0 inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson border border-line rounded px-2.5 py-1.5 transition-colors"
+            >
+              {p.active ? 'Disable' : 'Enable'}
+            </button>
+            <button
+              onClick={() => { setEditing(p); setCreating(false); }}
+              className="shrink-0 text-[10px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson px-2 py-1.5 border border-line rounded hover:border-crimson transition-colors"
+            >
+              Edit
+            </button>
+            <button onClick={() => remove(p)} className="text-grey hover:text-crimson p-1.5" aria-label="Delete promo code">
+              <Trash2 size={15} strokeWidth={1.8} />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PromoForm({
+  initial,
+  onCancel,
+  onSaved,
+}: {
+  initial: PromoRow | null;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [form, setForm] = useState({
+    code: initial?.code ?? '',
+    label: initial?.label ?? '',
+    discount_type: initial?.discount_type ?? 'percent',
+    discount_value: String(initial?.discount_value ?? 10),
+    max_uses: initial?.max_uses !== null && initial?.max_uses !== undefined ? String(initial.max_uses) : '',
+    min_order_value:
+      initial?.min_order_value !== null && initial?.min_order_value !== undefined
+        ? String(initial.min_order_value)
+        : '',
+    max_discount:
+      initial?.max_discount !== null && initial?.max_discount !== undefined
+        ? String(initial.max_discount)
+        : '',
+    per_customer_limit:
+      initial?.per_customer_limit !== null && initial?.per_customer_limit !== undefined
+        ? String(initial.per_customer_limit)
+        : '',
+    starts_at: initial?.starts_at ? new Date(initial.starts_at).toISOString().slice(0, 10) : '',
+    expires_at:
+      initial?.expires_at ? new Date(initial.expires_at).toISOString().slice(0, 10) : '',
+    note: initial?.note ?? '',
+    active: initial?.active ?? true,
+  });
+
+  const inputCls = 'w-full border border-line bg-white px-2.5 py-2 text-sm text-bone focus:border-crimson focus:outline-none rounded';
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    const value = Math.max(0, Number(form.discount_value) || 0);
+    const minOrder = Math.max(0, Number(form.min_order_value) || 0);
+    const maxDisc = form.max_discount !== '' ? Math.max(0, Number(form.max_discount) || 0) : null;
+    const perCustomer =
+      form.per_customer_limit !== '' ? Math.max(1, parseInt(form.per_customer_limit, 10)) : null;
+    const payload = {
+      code: form.code.toUpperCase().trim().slice(0, 32),
+      label: form.label.trim(),
+      discount_type: form.discount_type,
+      discount_value: value,
+      max_uses: form.max_uses ? Math.max(1, parseInt(form.max_uses, 10)) : null,
+      min_order_value: minOrder,
+      max_discount: maxDisc,
+      per_customer_limit: perCustomer,
+      starts_at: form.starts_at ? `${form.starts_at}T00:00:00.000` : null,
+      expires_at: form.expires_at ? `${form.expires_at}T23:59:59.999` : null,
+      note: form.note.trim(),
+      active: form.active,
+    };
+    if (!payload.code) { setError('Promo code is required.'); setSaving(false); return; }
+    if (value <= 0) { setError('Discount value must be greater than zero.'); setSaving(false); return; }
+    try {
+      const op = initial
+        ? supabase.from('promo_codes').update(payload).eq('id', initial.id)
+        : supabase.from('promo_codes').insert(payload);
+      const { error } = await op;
+      if (error) throw error;
+      onSaved();
+    } catch (err) {
+      setError(describeSupabaseError(err, 'Could not save promo code.'));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="bg-white border border-line rounded p-4 sm:p-5 space-y-4">
+      <h3 className="font-display text-lg uppercase tracking-wide-2 text-bone">
+        {initial ? `Edit ${initial.code}` : 'New Promo Code'}
+      </h3>
+      {error && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-2 rounded">{error}</p>}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+        <Field label="Code" hint="e.g. WELCOME10 — auto-uppercased">
+          <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} className={inputCls} placeholder="WELCOME10" maxLength={32} autoCapitalize="characters" spellCheck={false} />
+        </Field>
+        <Field label="Label" hint="Optional short title (internal)">
+          <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className={inputCls} placeholder="Welcome offer" maxLength={80} />
+        </Field>
+        <Field label="Discount Type">
+          <select value={form.discount_type} onChange={(e) => setForm({ ...form, discount_type: e.target.value as 'percent' | 'flat' })} className={inputCls}>
+            <option value="percent">Percentage (%)</option>
+            <option value="flat">Flat amount (₹)</option>
+          </select>
+        </Field>
+        <Field label={form.discount_type === 'percent' ? 'Discount (%)' : 'Discount (₹)'}>
+          <input type="number" min={0} step="1" value={form.discount_value} onChange={(e) => setForm({ ...form, discount_value: e.target.value })} className={inputCls} />
+        </Field>
+        <Field label="Max Uses" hint="Leave empty for unlimited">
+          <input type="number" min={1} step={1} value={form.max_uses} onChange={(e) => setForm({ ...form, max_uses: e.target.value })} className={inputCls} placeholder="Unlimited" />
+        </Field>
+        <Field label="Min Order Value (₹)" hint="Leave 0 for any basket">
+          <input type="number" min={0} step="1" value={form.min_order_value} onChange={(e) => setForm({ ...form, min_order_value: e.target.value })} className={inputCls} placeholder="0" />
+        </Field>
+        <Field label="Max Discount (₹)" hint="Cap the discount; leave empty for no cap">
+          <input type="number" min={0} step="1" value={form.max_discount} onChange={(e) => setForm({ ...form, max_discount: e.target.value })} className={inputCls} placeholder="No cap" />
+        </Field>
+        <Field label="Per-Customer Limit" hint="Max orders per phone number; leave empty for unlimited">
+          <input type="number" min={1} step={1} value={form.per_customer_limit} onChange={(e) => setForm({ ...form, per_customer_limit: e.target.value })} className={inputCls} placeholder="Unlimited" />
+        </Field>
+        <Field label="Valid From" hint="Optional start date">
+          <input type="date" value={form.starts_at} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} className={inputCls} />
+        </Field>
+        <Field label="Expires" hint="Optional expiry date">
+          <input type="date" value={form.expires_at} onChange={(e) => setForm({ ...form, expires_at: e.target.value })} className={inputCls} />
+        </Field>
+      </div>
+      <Field label="Internal Note" hint="Admin-only — never shown to shoppers">
+        <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className={inputCls} placeholder="e.g. Winter sale, saturday email code" maxLength={240} />
+      </Field>
+      <label className="flex items-center gap-2 text-sm text-bone">
+        <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 accent-crimson" />
+        Active — redeemable at checkout
+      </label>
+      <div className="flex items-center gap-2 pt-1">
+        <button type="submit" disabled={saving} className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-60">
+          {saving ? <Loader2 size={14} strokeWidth={2} className="animate-spin" /> : null}
+          {saving ? 'Saving…' : 'Save Promo'}
+        </button>
+        <button type="button" onClick={onCancel} className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson border border-line rounded px-5 py-3 transition-colors">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+
+

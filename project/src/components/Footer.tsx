@@ -4,28 +4,33 @@ import { linkHref } from '@/lib/router';
 import { INSTAGRAM_URL, EMAIL } from '@/lib/catalog';
 import { useSiteSettings } from '@/lib/settings';
 
-const QUICK_LINKS = [
+const SHOP_LINKS = [
   { label: 'Collection', to: '/collection' },
   { label: 'New Drops', to: '/new-drops' },
   { label: 'How It Works', to: '/how-it-works' },
-  { label: 'Stock DSLANG', to: '/stock-dslang' },
-  { label: 'Wholesale', to: '/wholesale' },
+];
+
+const INFO_LINKS = [
+  { label: 'About DSLANG', to: '/stock-dslang' },
+  { label: 'Track Order', to: '/track-order' },
   { label: 'Contact', to: '/contact' },
+];
+
+const POLICY_LINKS = [
+  { label: 'Terms & Conditions', to: '/terms-and-conditions' },
+  { label: 'Privacy Policy', to: '/privacy-policy' },
+  { label: 'Refund & Cancellation', to: '/refund-and-cancellation' },
+  { label: 'Return Policy', to: '/return-policy' },
+  { label: 'Shipping Policy', to: '/shipping-policy' },
 ];
 
 export function Footer() {
   const { settings } = useSiteSettings();
   const whatNumber = settings.whatsapp_number;
-  const wholesaleNotes = [
-    `Min. order 8 packs (48 PCS)`,
-    'Mixed Sizes & Colors',
-    `${settings.delivery_note} Delivery`,
-    settings.dispatch_note,
-  ];
   return (
     <footer className="border-t border-line bg-ink text-white">
       <div className="mx-auto px-6 md:px-12 lg:px-20 xl:px-28 py-10 md:py-14">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_1fr] gap-8 md:gap-10">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr_1fr] gap-8 md:gap-10">
           <div>
             <a href={linkHref('/')} className="font-brand text-3xl tracking-[0.03em] text-white leading-none">
               DSLANG<span className="text-crimson">.</span>
@@ -34,7 +39,7 @@ export function Footer() {
               Slang of Design
             </p>
             <p className="mt-4 max-w-xs text-sm text-white/70 leading-relaxed">
-              Premium oversized streetwear. Wholesale for stores, resellers and multi-brand retailers.
+              Premium oversized streetwear. Made to be worn, not just seen.
             </p>
             <div className="mt-5 flex items-center gap-3">
               <a href={INSTAGRAM_URL} target="_blank" rel="noopener noreferrer" className="w-10 h-10 flex items-center justify-center border border-white/20 text-white/70 hover:border-crimson hover:text-crimson transition-colors duration-150" aria-label="Instagram">
@@ -50,9 +55,9 @@ export function Footer() {
           </div>
 
           <div>
-            <h4 className="font-label text-[11px] uppercase tracking-wide-2 text-white/40 mb-4">Quick Links</h4>
+            <h4 className="font-label text-[11px] uppercase tracking-wide-2 text-white/40 mb-4">Shop</h4>
             <ul className="space-y-3">
-              {QUICK_LINKS.map((l) => (
+              {SHOP_LINKS.map((l) => (
                 <li key={l.to}>
                   <a href={linkHref(l.to)} className="text-sm text-white/70 hover:text-crimson transition-colors duration-150">
                     {l.label}
@@ -63,10 +68,27 @@ export function Footer() {
           </div>
 
           <div>
-            <h4 className="font-label text-[11px] uppercase tracking-wide-2 text-white/40 mb-4">Wholesale</h4>
+            <h4 className="font-label text-[11px] uppercase tracking-wide-2 text-white/40 mb-4">Info</h4>
             <ul className="space-y-3">
-              {wholesaleNotes.map((n) => (
-                <li key={n} className="text-sm text-white/70">{n}</li>
+              {INFO_LINKS.map((l) => (
+                <li key={l.to}>
+                  <a href={linkHref(l.to)} className="text-sm text-white/70 hover:text-crimson transition-colors duration-150">
+                    {l.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="font-label text-[11px] uppercase tracking-wide-2 text-white/40 mb-4">Legal</h4>
+            <ul className="space-y-3">
+              {POLICY_LINKS.map((l) => (
+                <li key={l.to}>
+                  <a href={linkHref(l.to)} className="text-sm text-white/70 hover:text-crimson transition-colors duration-150">
+                    {l.label}
+                  </a>
+                </li>
               ))}
             </ul>
           </div>
@@ -100,9 +122,11 @@ export function Footer() {
         <div className="mt-10 pt-6 border-t border-white/10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <p className="text-xs text-white/40">© 2026 DSLANG. All rights reserved.</p>
           <div className="flex items-center gap-5">
-            <span className="font-label text-[10px] uppercase tracking-[0.2em] text-white/50">Wholesale Only</span>
-            <a href={linkHref('/policies')} className="text-xs text-white/40 hover:text-white/70 transition-colors">
-              Policies
+            <a href={linkHref('/terms-and-conditions')} className="text-xs text-white/40 hover:text-white/70 transition-colors">
+              Terms & Conditions
+            </a>
+            <a href={linkHref('/privacy-policy')} className="text-xs text-white/40 hover:text-white/70 transition-colors">
+              Privacy
             </a>
           </div>
         </div>

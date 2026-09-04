@@ -5,6 +5,7 @@ import type {
   ProductColorRow,
   ProductRow,
   ProductSizeRow,
+  RetailOrder,
 } from '@/lib/types';
 import { SIZE_LABELS } from '@/lib/types';
 import { hasPublishColumns } from '@/lib/catalog';
@@ -73,6 +74,10 @@ export interface ProductInput {
   moq: number | null;
   wholesale_price_50: number | null;
   wholesale_price_100: number | null;
+  // Retail / D2C fields
+  price: number | null;
+  mrp: number | null;
+  retail_visible: boolean;
 }
 
 export const WHOLESALE_COLUMNS = ['wholesale_price_50', 'wholesale_price_100'] as const;
@@ -96,6 +101,16 @@ export async function hasWholesaleColumns(): Promise<boolean> {
   return wholesaleColumnsAvailable;
 }
 
+let retailColumnsAvailable: boolean | null = null;
+
+/** Whether the products table has the retail_visible column (migration-gated). */
+export async function hasRetailColumns(): Promise<boolean> {
+  if (retailColumnsAvailable !== null) return retailColumnsAvailable;
+  const { error } = await supabase.from('products').select('retail_visible').limit(1);
+  retailColumnsAvailable = !error;
+  return retailColumnsAvailable;
+}
+
 let moqColumnAvailable: boolean | null = null;
 
 /** Whether the products table has the optional moq column. */
@@ -104,6 +119,21 @@ async function hasMoqColumn(): Promise<boolean> {
   const { error } = await supabase.from('products').select('moq').limit(1);
   moqColumnAvailable = !error;
   return moqColumnAvailable;
+}
+
+let newDropColumnAvailable: boolean | null = null;
+
+/**
+ * Whether the products table actually has the new_drop column. Checked
+ * independently of published so the admin write path never sends a new_drop
+ * value to PostgREST when the column is absent (which would throw a
+ * schema-cache/42703 error).
+ */
+async function hasNewDropColumn(): Promise<boolean> {
+  if (newDropColumnAvailable !== null) return newDropColumnAvailable;
+  const { error } = await supabase.from('products').select('new_drop').limit(1);
+  newDropColumnAvailable = !error;
+  return newDropColumnAvailable;
 }
 
 function firstString(...values: unknown[]): string {
@@ -170,10 +200,10 @@ async function sanitizeProductPayload(input: Partial<ProductInput>): Promise<Par
   const clean = { ...input };
 
   if (!(await hasMoqColumn())) delete clean.moq;
-  if (!(await hasPublishColumns())) {
-    delete clean.published;
-    delete clean.new_drop;
-  }
+  if (!(await hasPublishColumns())) delete clean.published;
+  if (!(await hasNewDropColumn())) delete clean.new_drop;
+  if (!(await hasRetailColumns())) delete clean.retail_visible;
+  if (clean.price === null || clean.price === undefined) delete clean.price;
 
   const wholesale = await hasWholesaleColumns();
   const hasPricing =
@@ -247,12 +277,20 @@ export async function uploadProductImage(file: File, productId: string, colorNam
 
 export async function adminCreateProduct(input: ProductInput): Promise<ProductRow> {
   const clean = await sanitizeProductPayload(input);
-  // The retail price fields are no longer edited by the admin panel; they are
-  // kept only so legacy NOT NULL columns are satisfied on insert.
+  // moq is a NOT NULL column with a DB default (50). Sending an explicit null
+  // would override that default and violate the not-null constraint, so drop it
+  // whenever it is unset and let the database supply a valid integer.
+  if (clean.moq === null || clean.moq === undefined) delete clean.moq;
+  // The retail price is admin-editable (products.price); fabric/fit/care are
+  // legacy NOT NULL columns satisfied with empty strings on insert.
+  const priceValue = Number(clean.price ?? 0);
+  if (!Number.isFinite(priceValue) || priceValue < 0) {
+    throw new Error('Price must be a non-negative number.');
+  }
   const payload: Record<string, unknown> = {
     ...clean,
-    price: 0,
-    mrp: null,
+    price: Math.floor(priceValue),
+    mrp: clean.mrp !== null && clean.mrp !== undefined ? Number(clean.mrp) : null,
     fabric: '',
     fit: '',
     care: '',
@@ -270,7 +308,9 @@ export async function adminCreateProduct(input: ProductInput): Promise<ProductRo
 export async function adminUpdateProduct(id: string, input: Partial<ProductInput>): Promise<void> {
   const { slug: _slug, ...rest } = input;
   const payload = await sanitizeProductPayload(rest);
-  console.log('[DSLANG] product UPDATE payload:', payload);
+  // Never send an explicit null for the NOT NULL moq column (would override the
+  // DB default / trip the not-null constraint on an existing row).
+  if (payload.moq === null || payload.moq === undefined) delete payload.moq;
   const { error } = await supabase.from('products').update(payload).eq('id', id);
   if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
 }
@@ -278,6 +318,50 @@ export async function adminUpdateProduct(id: string, input: Partial<ProductInput
 export async function adminDeleteProduct(id: string): Promise<void> {
   const { error } = await supabase.from('products').delete().eq('id', id);
   if (error) throw new Error(describeSupabaseError(error, 'The request failed.'));
+}
+
+/** Admin updates the D2C stock for one variant (color/size) via the existing
+ * security-defined set_product_size_stock RPC (admin-gated in the database). */
+export async function adminSetSizeStock(
+  productId: string,
+  colorId: string,
+  sizeLabel: string,
+  stock: number
+): Promise<void> {
+  const whole = Math.max(0, Math.floor(Number(stock) || 0));
+  const { error } = await supabase.rpc('set_product_size_stock', {
+    p_product_id: productId,
+    p_color_id: colorId,
+    p_size_label: sizeLabel,
+    p_stock: whole,
+  });
+  if (error) throw new Error(describeSupabaseError(error, 'Could not update stock.'));
+}
+
+export async function adminFetchRetailOrders(): Promise<RetailOrder[]> {
+  const { data, error } = await supabase
+    .from('retail_orders')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (error) throw new Error(describeSupabaseError(error, 'Could not load retail orders.'));
+  return (data as RetailOrder[]) ?? [];
+}
+
+/**
+ * Permanently deletes a single retail order via the admin-only
+ * `delete_retail_order` RPC. The RPC authorizes against admin_users and
+ * reverses any promo-code usage the order consumed. Throws if the order does
+ * not exist (so the UI never pretends a delete happened).
+ */
+export async function adminDeleteRetailOrder(orderId: string): Promise<void> {
+  const { data, error } = await supabase.rpc('delete_retail_order', {
+    p_order_id: orderId,
+  });
+  if (error) throw new Error(describeSupabaseError(error, 'Could not delete the order.'));
+  if ((data as number) !== 1) {
+    throw new Error('The order could not be found and was not deleted.');
+  }
 }
 
 // Colors

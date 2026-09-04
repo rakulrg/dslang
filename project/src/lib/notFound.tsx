@@ -1,3 +1,5 @@
+import { linkHref } from '@/lib/router';
+
 export function notFound(): import('react').ReactElement {
   return (
     <div className="min-h-[70vh] flex flex-col items-center justify-center text-center px-5">
@@ -8,10 +10,10 @@ export function notFound(): import('react').ReactElement {
         This page sold out.
       </p>
       <a
-        href="#/collection"
+        href={linkHref('/collection')}
         className="mt-8 inline-flex items-center text-[11px] uppercase tracking-wide-2 font-semibold bg-crimson text-white px-6 py-4 hover:bg-crimson-dark transition-colors"
       >
-        Browse Wholesale Collection
+        Shop The Collection
       </a>
     </div>
   );

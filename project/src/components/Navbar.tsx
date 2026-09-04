@@ -1,16 +1,17 @@
 import { useEffect, useState, useRef } from 'react';
-import { Menu, X, ShoppingBag } from 'lucide-react';
+import { Menu, X, ShoppingBag, Search } from 'lucide-react';
 import { linkHref, useRouter } from '@/lib/router';
-import { useCart } from '@/lib/cart';
+import { useD2cCart } from '@/lib/d2cCart';
+import { useCartDrawer } from '@/lib/cartDrawer';
 import { INSTAGRAM_URL } from '@/lib/catalog';
-import { useSiteSettings } from '@/lib/settings';
 import { useAuth } from '@/lib/auth';
 import { Instagram } from '@/components/icons/Instagram';
+import { SearchDialog } from '@/components/SearchDialog';
 
 const NAV_LINKS = [
   { label: 'Collection', to: '/collection' },
   { label: 'New Drops', to: '/new-drops' },
-  { label: 'Wholesale', to: '/wholesale' },
+  { label: 'Track Order', to: '/track-order' },
   { label: 'How It Works', to: '/how-it-works' },
   { label: 'About', to: '/stock-dslang' },
 ];
@@ -24,12 +25,14 @@ export function Navbar({
 }) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const { count, open: openCart, isOpen: isCartOpen } = useCart();
-  const { settings } = useSiteSettings();
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const { count: retailCount } = useD2cCart();
+  const { openCart } = useCartDrawer();
   const { user, isAdmin } = useAuth();
   const { navigate } = useRouter();
-  const cartOpenRef = useRef(isCartOpen);
-  cartOpenRef.current = isCartOpen;
+  const menuOpenRef = useRef(menuOpen);
+  menuOpenRef.current = menuOpen;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -47,14 +50,13 @@ export function Navbar({
       }
     }
     return () => {
-      if (!cartOpenRef.current) {
+      if (!menuOpenRef.current) {
         document.body.style.overflow = '';
         document.body.style.paddingRight = '';
       }
     };
   }, [menuOpen]);
 
-  // Close the mobile menu with the Escape key.
   useEffect(() => {
     if (!menuOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -65,15 +67,14 @@ export function Navbar({
   }, [menuOpen]);
 
   const isActive = (to: string) => {
-    if (to === '/') return currentPath === '/';
+    if (to === '/') return currentPath === '/' || currentPath === '';
     if (to === '/stock-dslang') {
       return currentPath.startsWith('/stock-dslang') || currentPath.startsWith('/about');
     }
     return currentPath.startsWith(to);
   };
 
-  const isProductPage = currentPath.startsWith('/product');
-  const solid = scrolled || isProductPage || currentPath !== '/';
+  const solid = scrolled || currentPath !== '/';
 
   return (
     <>
@@ -121,21 +122,38 @@ export function Navbar({
 
             {/* Right */}
             <div className="ml-auto flex items-center gap-2 md:gap-5">
+              {!user && (
+                <button
+                  onClick={() => onOpenLogin('signin')}
+                  className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-crimson transition-colors"
+                >
+                  Sign In
+                </button>
+              )}
+              {user && (
+                <button
+                  onClick={() => navigate(isAdmin ? '/admin' : '/account')}
+                  className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-crimson transition-colors"
+                >
+                  {isAdmin ? 'Admin' : 'Account'}
+                </button>
+              )}
               <button
-                onClick={() => user ? navigate(isAdmin ? '/admin' : '/account') : onOpenLogin('signin')}
-                className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-crimson transition-colors"
+                onClick={() => { setSearchOpen(true); setMenuOpen(false); }}
+                className="relative text-bone-dim hover:text-crimson transition-colors p-1"
+                aria-label="Search products"
               >
-                {user ? (isAdmin ? 'Admin' : 'Account') : 'Sign In'}
+                <Search size={22} strokeWidth={1.6} />
               </button>
               <button
-                onClick={openCart}
+                onClick={() => { openCart(); setMenuOpen(false); }}
                 className="relative text-bone-dim hover:text-crimson transition-colors p-1"
-                aria-label="Wholesale order"
+                aria-label="Shopping bag"
               >
                 <ShoppingBag size={22} strokeWidth={1.6} />
-                {count > 0 && (
+                {retailCount > 0 && (
                   <span className="absolute -top-1.5 -right-1.5 bg-crimson text-white text-[9px] font-bold min-w-4 h-4 px-1 rounded-full flex items-center justify-center leading-none tabular-nums">
-                    {count}
+                    {retailCount}
                   </span>
                 )}
               </button>
@@ -172,7 +190,7 @@ export function Navbar({
           </div>
           <div className="flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden" style={{ WebkitOverflowScrolling: 'touch' }}>
             <p className="px-5 pt-4 text-[10px] uppercase tracking-[0.2em] text-grey font-semibold">
-              Wholesale Only
+              DSLANG · Slang Of Design
             </p>
             <ul className="flex flex-col py-2">
               {NAV_LINKS.map((l) => (
@@ -241,11 +259,13 @@ export function Navbar({
               <Instagram size={20} strokeWidth={1.6} />
             </a>
             <span className="ml-auto text-[10px] uppercase tracking-wide-2 text-grey">
-              Min. order 8 packs (48 PCS) · {settings.delivery_note}
+              Pan-India delivery · Easy exchanges
             </span>
           </div>
         </div>
       </div>
+
+      <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
     </>
   );
 }

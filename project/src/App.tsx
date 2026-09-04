@@ -7,15 +7,22 @@ import { LoginModal } from '@/components/LoginModal';
 import { HomePage } from '@/pages/HomePage';
 import { CollectionPage } from '@/pages/CollectionPage';
 import { NewDropsPage } from '@/pages/NewDropsPage';
-import { WholesalePage } from '@/pages/WholesalePage';
 import { HowItWorksPage } from '@/pages/HowItWorksPage';
 import { AboutPage } from '@/pages/AboutPage';
-import { ProductPage } from '@/pages/ProductPage';
+import { RetailProductPage } from '@/pages/RetailProductPage';
+import { CheckoutPage } from '@/pages/CheckoutPage';
 import { ContactPage } from '@/pages/ContactPage';
 import { PoliciesPage } from '@/pages/PoliciesPage';
+import { TermsPage } from '@/pages/TermsConditionsPage';
+import { PrivacyPolicyPage } from '@/pages/PrivacyPolicyPage';
+import { RefundCancellationPage } from '@/pages/RefundCancellationPage';
+import { ReturnPolicyPage } from '@/pages/ReturnPolicyPage';
+import { ShippingPolicyPage } from '@/pages/ShippingPolicyPage';
+import { TrackOrderPage } from '@/pages/TrackOrderPage';
 import { SubscriberDashboard } from '@/pages/SubscriberDashboard';
 import { useAuth } from '@/lib/auth';
 import { useSiteSettings } from '@/lib/settings';
+import { useCartDrawer } from '@/lib/cartDrawer';
 import { notFound } from '@/lib/notFound';
 import { LoadingDots } from '@/components/LoadingDots';
 
@@ -24,20 +31,27 @@ const AdminDashboard = lazy(() =>
   import('@/pages/admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
 );
 
-const DEFAULT_TITLE = 'DSLANG — Premium Streetwear Wholesale for Resellers';
+const DEFAULT_TITLE = 'DSLANG — Premium Streetwear | Slang of Design';
 
 function getPageTitle(path: string): string {
   if (path === '/' || path === '') return DEFAULT_TITLE;
-  if (path.startsWith('/collection') || path.startsWith('/shop')) return 'Wholesale Collection — DSLANG';
+  if (path.startsWith('/collection') || path.startsWith('/shop')) return 'Shop The Collection — DSLANG';
   if (path.startsWith('/new-drops')) return 'New Drops — DSLANG';
-  if (path.startsWith('/wholesale')) return 'Wholesale — DSLANG';
+  if (path.startsWith('/product') || path.startsWith('/products') || path.startsWith('/p/')) return 'Product — DSLANG';
+  if (path.startsWith('/cart')) return 'Your Bag — DSLANG';
+  if (path.startsWith('/checkout')) return 'Checkout — DSLANG';
   if (path.startsWith('/how-it-works')) return 'How It Works — DSLANG';
   if (path.startsWith('/stock-dslang') || path.startsWith('/about')) return 'Stock DSLANG — DSLANG';
   if (path.startsWith('/contact')) return 'Contact — DSLANG';
   if (path.startsWith('/policies')) return 'Policies — DSLANG';
+  if (path.startsWith('/terms-and-conditions')) return 'Terms & Conditions — DSLANG';
+  if (path.startsWith('/privacy-policy')) return 'Privacy Policy — DSLANG';
+  if (path.startsWith('/refund-and-cancellation')) return 'Refund & Cancellation — DSLANG';
+  if (path.startsWith('/return-policy')) return 'Return Policy — DSLANG';
+  if (path.startsWith('/shipping-policy')) return 'Shipping Policy — DSLANG';
+  if (path.startsWith('/track-order')) return 'Track Order — DSLANG';
   if (path.startsWith('/account')) return 'Account — DSLANG';
   if (path.startsWith('/admin')) return 'Admin — DSLANG';
-  if (path.startsWith('/product/')) return 'Wholesale Product — DSLANG';
   return DEFAULT_TITLE;
 }
 
@@ -73,12 +87,21 @@ function App() {
   const { route, navigate } = useRouter();
   const { path, segments } = route;
   const { user, loading, isAdmin } = useAuth();
+  const { openCart } = useCartDrawer();
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginMode, setLoginMode] = useState<'signin' | 'signup'>('signin');
 
   useEffect(() => {
     document.title = getPageTitle(path);
   }, [path]);
+
+  // Legacy /cart links open the bag drawer instead of a separate page.
+  useEffect(() => {
+    if (segments[0] === 'cart') {
+      openCart();
+      navigate('/');
+    }
+  }, [segments, openCart, navigate]);
 
   // Handle redirects for protected routes - MUST BE IN useEffect, NOT in renderPage
   useEffect(() => {
@@ -112,12 +135,21 @@ function App() {
     if (segments.length === 0) return <HomePage />;
     if (segments[0] === 'collection' || segments[0] === 'shop') return <CollectionPage />;
     if (segments[0] === 'new-drops') return <NewDropsPage />;
-    if (segments[0] === 'wholesale') return <WholesalePage />;
+    if (segments[0] === 'product' && segments[1]) return <RetailProductPage slug={segments[1]} />;
+    if (segments[0] === 'products' && segments[1]) return <RetailProductPage slug={segments[1]} />;
+    if (segments[0] === 'p' && segments[1]) return <RetailProductPage slug={segments[1]} />;
+    if (segments[0] === 'cart') return <HomePage />;
+    if (segments[0] === 'checkout') return <CheckoutPage />;
     if (segments[0] === 'how-it-works') return <HowItWorksPage />;
     if (segments[0] === 'stock-dslang' || segments[0] === 'about') return <AboutPage />;
-    if (segments[0] === 'product' && segments[1]) return <ProductPage slug={segments[1]} />;
     if (segments[0] === 'contact') return <ContactPage />;
     if (segments[0] === 'policies') return <PoliciesPage />;
+    if (segments[0] === 'terms-and-conditions') return <TermsPage />;
+    if (segments[0] === 'privacy-policy') return <PrivacyPolicyPage />;
+    if (segments[0] === 'refund-and-cancellation') return <RefundCancellationPage />;
+    if (segments[0] === 'return-policy') return <ReturnPolicyPage />;
+    if (segments[0] === 'shipping-policy') return <ShippingPolicyPage />;
+    if (segments[0] === 'track-order') return <TrackOrderPage refFromRoute={segments[1] ?? ''} />;
     if (segments[0] === 'account') {
       if (loading) return null;
       if (!user) return null; // Redirect handled by useEffect above
