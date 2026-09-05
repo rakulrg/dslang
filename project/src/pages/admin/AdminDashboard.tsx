@@ -146,7 +146,7 @@ export function AdminDashboard() {
   return (
     <div className="min-h-screen bg-paper-2 flex flex-col lg:flex-row">
       {/* Mobile header */}
-      <div className="lg:hidden w-full shrink-0 bg-white border-b border-line">
+      <div className="lg:hidden w-full shrink-0 bg-paper-2 border-b border-line">
         <div className="flex items-center justify-between px-4 py-3">
           <a href={linkHref('/')} className="font-brand text-xl tracking-[0.03em] text-bone leading-none">
             DSLANG<span className="text-crimson">.</span>
@@ -212,7 +212,7 @@ export function AdminDashboard() {
       </div>
 
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-60 shrink-0 border-r border-line bg-white flex-col sticky top-0 h-screen">
+      <aside className="hidden lg:flex w-60 shrink-0 border-r border-line bg-paper-2 flex-col sticky top-0 h-screen">
         <div className="px-5 py-6 border-b border-line">
           <a href={linkHref('/')} className="font-brand text-2xl tracking-[0.03em] text-bone leading-none">
             DSLANG<span className="text-crimson">.</span>
@@ -285,7 +285,7 @@ export function AdminDashboard() {
       {/* Main */}
       <div className="flex-1 min-w-0">
         {/* Top bar */}
-        <header className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-line px-4 sm:px-6 h-12 sm:h-14 flex items-center justify-between gap-3">
+        <header className="sticky top-0 z-10 bg-paper-2/95 backdrop-blur-md border-b border-line px-4 sm:px-6 h-12 sm:h-14 flex items-center justify-between gap-3">
           <h1 className="font-display text-lg sm:text-2xl tracking-wide-2 text-bone uppercase">
             {tab === 'products' ? 'Products' : tab === 'hero' ? 'Homepage' : tab === 'settings' ? 'Settings' : tab === 'orders' ? 'Orders' : 'Promo Codes'}
           </h1>
@@ -391,7 +391,7 @@ function ProductList({
 
   if (products.length === 0) {
     return (
-      <div className="text-center py-24 border border-line rounded bg-white">
+      <div className="text-center py-24 border border-line rounded bg-paper-2">
         <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No products yet</p>
         <p className="mt-3 text-sm text-grey">Create your first product to get started.</p>
       </div>
@@ -408,7 +408,7 @@ function ProductList({
         return (
           <div
             key={p.id}
-            className={`bg-white border border-line rounded hover:border-line-2 transition-colors overflow-hidden ${!isPublished ? 'opacity-70' : ''}`}
+            className={`bg-paper-2 border border-line rounded hover:border-line-2 transition-colors overflow-hidden ${!isPublished ? 'opacity-70' : ''}`}
           >
             <div className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4">
               <div className="w-12 sm:w-14 aspect-[4/5] shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
@@ -429,7 +429,7 @@ function ProductList({
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {isPublished ? (
-                    <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-green-600/10 text-green-700 px-2 py-0.5 rounded">Visible</span>
+                    <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-green-600/10 text-green-400 px-2 py-0.5 rounded">Visible</span>
                   ) : (
                     <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-grey/15 text-grey px-2 py-0.5 rounded">Hidden</span>
                   )}
@@ -521,7 +521,7 @@ function ProductForm({
   };
 
   return (
-    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-white border border-line rounded p-4 sm:p-6">
+    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-paper-2 border border-line rounded p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-xl sm:text-2xl tracking-wide-2 text-bone uppercase">New Product</h2>
         <button type="button" onClick={onCancel} className="text-grey hover:text-bone transition-colors">
@@ -666,7 +666,7 @@ function ProductEditor({
 
   return (
     <div className="space-y-6">
-      <form onSubmit={submit} className="max-w-2xl space-y-5 bg-white border border-line rounded p-4 sm:p-6">
+      <form onSubmit={submit} className="max-w-2xl space-y-5 bg-paper-2 border border-line rounded p-4 sm:p-6">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-xl sm:text-2xl tracking-wide-2 text-bone uppercase">Edit Product</h2>
           <button type="button" onClick={onCancel} className="text-grey hover:text-bone transition-colors">
@@ -739,7 +739,7 @@ function ProductEditor({
           <button type="submit" disabled={busy} className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50">
             <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Changes'}
           </button>
-          {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+          {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
           <button type="button" onClick={onCancel} className="text-[11px] uppercase tracking-wide-2 text-bone-dim hover:text-bone transition-colors px-4 py-3 ml-auto">
             Back to list
           </button>
@@ -832,7 +832,7 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
   };
 
   return (
-    <div className="max-w-2xl bg-white border border-line rounded p-4 sm:p-6">
+    <div className="max-w-2xl bg-paper-2 border border-line rounded p-4 sm:p-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase">Colors & Images</h3>
         <button
@@ -864,7 +864,7 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
             <button onClick={() => setAdding(false)} className="text-[11px] uppercase tracking-wide-2 text-bone-dim px-4 py-2">Cancel</button>
           </div>
           {uploadError && <p className="text-sm text-crimson">{uploadError}</p>}
-          {ratioWarning && <p className="text-sm text-amber-600">{ratioWarning}</p>}
+          {ratioWarning && <p className="text-sm text-amber-400">{ratioWarning}</p>}
         </div>
       )}
 
@@ -994,14 +994,14 @@ function ColorRow({ color, onDelete, onSave }: {
             <button
               onClick={handleSave}
               disabled={saving}
-              className="inline-flex items-center gap-1.5 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-ink transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 bg-bone text-ink text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-ink transition-colors disabled:opacity-50"
             >
               <Save size={14} /> {saving ? 'Saving…' : 'Save Color'}
             </button>
-            {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+            {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
           </div>
           {uploadError && <p className="text-sm text-crimson">{uploadError}</p>}
-          {ratioWarning && <p className="text-sm text-amber-600">{ratioWarning}</p>}
+          {ratioWarning && <p className="text-sm text-amber-400">{ratioWarning}</p>}
           {images.length > 0 ? (
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
               {images.map((img, index) => (
@@ -1010,7 +1010,7 @@ function ColorRow({ color, onDelete, onSave }: {
                     <img src={img} alt={`${name} ${index + 1}`} className="h-full w-full object-cover" />
                   </button>
                   {index === 0 && <span className="absolute left-1 top-1 bg-crimson px-1.5 py-1 text-[8px] font-semibold uppercase tracking-wide-2 text-white">Primary</span>}
-                  <div className="absolute inset-x-0 bottom-0 flex justify-between bg-bone/85 p-1 text-white">
+                  <div className="absolute inset-x-0 bottom-0 flex justify-between bg-bone/90 p-1 text-ink">
                     <button type="button" disabled={index === 0} onClick={() => moveImage(index, -1)} className="px-1.5 text-xs disabled:opacity-30" aria-label="Move image earlier">←</button>
                     <button type="button" onClick={() => removeImage(img)} className="px-1.5 text-xs hover:text-crimson" aria-label="Remove image"><Trash2 size={13} /></button>
                     <button type="button" disabled={index === images.length - 1} onClick={() => moveImage(index, 1)} className="px-1.5 text-xs disabled:opacity-30" aria-label="Move image later">→</button>
@@ -1020,7 +1020,7 @@ function ColorRow({ color, onDelete, onSave }: {
             </div>
           ) : <p className="text-xs text-grey">Upload or add an image URL. The first image becomes the primary product image.</p>}
           {selectedImage && (
-            <div className="rounded border border-line bg-white p-3">
+            <div className="rounded border border-line bg-paper-2 p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Selected image preview</p>
                 <button type="button" onClick={() => setIsImageViewerOpen(true)} className="text-[10px] font-semibold uppercase tracking-wide-2 text-crimson hover:text-crimson-dark">Open full size</button>
@@ -1103,7 +1103,7 @@ function InventoryManager({ product, onChanged }: { product: CatalogProduct; onC
   };
 
   return (
-    <div className="max-w-2xl bg-white border border-line rounded p-4 sm:p-6">
+    <div className="max-w-2xl bg-paper-2 border border-line rounded p-4 sm:p-6">
       <div className="mb-4">
         <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase">Inventory</h3>
         <p className="text-xs text-grey mt-0.5">Manage stock by color and size.</p>
@@ -1143,7 +1143,7 @@ function InventoryManager({ product, onChanged }: { product: CatalogProduct; onC
                             }))
                           }
                           min={0}
-                          className="w-full max-w-[4.5rem] bg-white border border-line px-2.5 py-2 text-sm text-center text-bone focus:border-crimson focus:outline-none rounded"
+                          className="w-full max-w-[4.5rem] bg-paper-2 border border-line px-2.5 py-2 text-sm text-center text-bone focus:border-crimson focus:outline-none rounded"
                         />
                       </td>
                     ))}
@@ -1162,7 +1162,7 @@ function InventoryManager({ product, onChanged }: { product: CatalogProduct; onC
             >
               <Save size={14} /> {busy ? 'Saving…' : 'Save Stock'}
             </button>
-            {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+            {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
             {error && <span className="text-sm text-crimson">{error}</span>}
           </div>
         </>
@@ -1295,7 +1295,7 @@ function ColorPriorityManager({ product, onChanged }: { product: CatalogProduct;
   if (orderedColors.length < 2) return null;
 
   return (
-    <div className="max-w-2xl bg-white border border-line rounded p-4 sm:p-6">
+    <div className="max-w-2xl bg-paper-2 border border-line rounded p-4 sm:p-6">
       <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase mb-1">Color Order</h3>
       <p className="text-xs text-grey mb-4">Drag to reorder. First color is shown as primary on product cards.</p>
       <div className="space-y-1.5">
@@ -1340,7 +1340,7 @@ function ColorPriorityManager({ product, onChanged }: { product: CatalogProduct;
         >
           <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Color Order'}
         </button>
-        {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+        {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
         {error && <span className="text-sm text-crimson">{error}</span>}
       </div>
     </div>
@@ -1366,7 +1366,7 @@ function HeroList({
 
   if (slides.length === 0) {
     return (
-      <div className="text-center py-24 border border-line rounded bg-white">
+      <div className="text-center py-24 border border-line rounded bg-paper-2">
         <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No hero slides</p>
         <p className="mt-3 text-sm text-grey">Add a slide to show on the homepage hero.</p>
       </div>
@@ -1434,7 +1434,7 @@ function HeroRow({
   };
 
   return (
-    <div className="bg-white border border-line rounded overflow-hidden">
+    <div className="bg-paper-2 border border-line rounded overflow-hidden">
       <div className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4">
         <div className="w-14 sm:w-20 h-10 sm:h-14 shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
           {image_url && <img src={image_url} alt={title} className="w-full h-full object-cover" />}
@@ -1445,7 +1445,7 @@ function HeroRow({
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <span className={`text-[9px] sm:text-[10px] uppercase tracking-wide-2 font-semibold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded ${
-            active ? 'bg-green-100 text-green-700' : 'bg-paper-2 text-grey'
+            active ? 'bg-green-950/60 text-green-400' : 'bg-paper-2 text-grey'
           }`}>
             {active ? 'Active' : 'Hidden'}
           </span>
@@ -1518,7 +1518,7 @@ function HeroRow({
             <button onClick={save} className="inline-flex items-center gap-1.5 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-crimson-dark transition-colors">
               <Save size={14} /> Save Slide
             </button>
-            {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+            {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
           </div>
         </div>
       )}
@@ -1589,7 +1589,7 @@ function HeroForm({
   };
 
   return (
-    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-white border border-line rounded p-4 sm:p-6">
+    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-paper-2 border border-line rounded p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-xl sm:text-2xl tracking-wide-2 text-bone uppercase">New Hero Slide</h2>
         <button type="button" onClick={onCancel} className="text-grey hover:text-bone transition-colors">
@@ -1731,7 +1731,7 @@ function NumInput({ value, onChange, className, placeholder, ...rest }: {
   );
 }
 
-const inputCls = 'w-full px-3 py-2.5 bg-white border border-line text-bone text-sm rounded placeholder:text-grey focus:outline-none focus:border-crimson transition-colors';
+const inputCls = 'w-full px-3 py-2.5 bg-paper-2 border border-line text-bone text-sm rounded placeholder:text-grey focus:outline-none focus:border-crimson transition-colors';
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -1780,7 +1780,7 @@ function SettingsPanel() {
     <form onSubmit={submit} className="max-w-3xl space-y-5">
       {!loaded && <div className="h-24 bg-paper-3 border border-line rounded animate-pulse" />}
 
-      <div className="bg-white border border-line rounded p-4 sm:p-6 space-y-4">
+      <div className="bg-paper-2 border border-line rounded p-4 sm:p-6 space-y-4">
         <h3 className="font-display text-lg tracking-wide-2 text-bone uppercase">Store Settings</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <Field label="Flat Shipping (₹)" hint="Charged on retail orders">
@@ -1789,7 +1789,7 @@ function SettingsPanel() {
         </div>
       </div>
 
-      <div className="bg-white border border-line rounded p-4 sm:p-6 space-y-4">
+      <div className="bg-paper-2 border border-line rounded p-4 sm:p-6 space-y-4">
         <h3 className="font-display text-lg tracking-wide-2 text-bone uppercase">Contact & Storefront</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <Field label="WhatsApp Number" hint="Digits only, country code first (e.g. 9199...)">
@@ -1817,7 +1817,7 @@ function SettingsPanel() {
         <button type="submit" disabled={busy || !loaded} className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50">
           <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Settings'}
         </button>
-        {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+        {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
         <span className="text-xs text-grey ml-auto">These apply instantly on the live storefront.</span>
       </div>
     </form>
@@ -1827,19 +1827,19 @@ function SettingsPanel() {
 /* ---- Retail Orders ---- */
 
 const PAYMENT_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
-  success: { label: 'Success', cls: 'bg-green-600/10 text-green-700' },
-  paid: { label: 'Paid', cls: 'bg-green-600/10 text-green-700' },
+  pending: { label: 'Pending', cls: 'bg-amber-950/60 text-amber-300' },
+  success: { label: 'Success', cls: 'bg-green-600/10 text-green-400' },
+  paid: { label: 'Paid', cls: 'bg-green-600/10 text-green-400' },
   failed: { label: 'Failed', cls: 'bg-crimson/10 text-crimson' },
   cancelled: { label: 'Cancelled', cls: 'bg-grey/15 text-grey' },
   refunded: { label: 'Refunded', cls: 'bg-grey/15 text-grey' },
 };
 
 const ORDER_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
-  processing: { label: 'Processing', cls: 'bg-sky-100 text-sky-700' },
-  shipped: { label: 'Shipped', cls: 'bg-indigo-100 text-indigo-700' },
-  delivered: { label: 'Delivered', cls: 'bg-green-600/10 text-green-700' },
+  pending: { label: 'Pending', cls: 'bg-amber-950/60 text-amber-300' },
+  processing: { label: 'Processing', cls: 'bg-sky-950/50 text-sky-300' },
+  shipped: { label: 'Shipped', cls: 'bg-indigo-950/50 text-indigo-300' },
+  delivered: { label: 'Delivered', cls: 'bg-green-600/10 text-green-400' },
   cancelled: { label: 'Cancelled', cls: 'bg-crimson/10 text-crimson' },
   refunded: { label: 'Refunded', cls: 'bg-grey/15 text-grey' },
 };
@@ -1947,13 +1947,13 @@ function RetailOrdersPanel() {
       {loadError && <div className="bg-crimson/5 border border-crimson/20 text-crimson text-sm px-4 py-3 rounded">{loadError}</div>}
 
       {actionMessage && (
-        <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 text-sm px-4 py-3 rounded">
+        <div className="flex items-center gap-2 bg-green-950/50 border border-green-900/70 text-green-400 text-sm px-4 py-3 rounded">
           <Check size={14} strokeWidth={2.5} /> {actionMessage}
         </div>
       )}
 
       {orders.length === 0 && !loadError && (
-        <div className="text-center py-24 border border-line rounded bg-white">
+        <div className="text-center py-24 border border-line rounded bg-paper-2">
           <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No retail orders</p>
           <p className="mt-3 text-sm text-grey">Orders placed on the retail storefront will appear here.</p>
         </div>
@@ -1963,7 +1963,7 @@ function RetailOrdersPanel() {
         const isOpen = expanded === o.id;
         const pay = PAYMENT_STATUS_LABEL[o.payment_status];
         return (
-          <div key={o.id} className="bg-white border border-line rounded overflow-hidden">
+          <div key={o.id} className="bg-paper-2 border border-line rounded overflow-hidden">
             <button
               onClick={() => setExpanded(isOpen ? null : o.id)}
               className="w-full text-left flex items-center gap-3 sm:gap-4 p-3 sm:p-4"
@@ -1996,7 +1996,7 @@ function RetailOrdersPanel() {
             {isOpen && (
               <div className="border-t border-line p-3 sm:p-4 space-y-4 bg-paper-2">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="bg-white border border-line rounded p-3 sm:p-4">
+                  <div className="bg-paper-2 border border-line rounded p-3 sm:p-4">
                     <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Customer</p>
                     <div className="space-y-1.5 text-sm text-bone">
                       <p className="flex items-center gap-2"><Phone size={13} className="text-grey" /> {o.customer.name} · {o.customer.phone}</p>
@@ -2004,12 +2004,12 @@ function RetailOrdersPanel() {
                       <p className="text-grey text-xs">{o.customer.address}, {o.customer.city}, {o.customer.state} — {o.customer.pincode}</p>
                     </div>
                   </div>
-                  <div className="bg-white border border-line rounded p-3 sm:p-4">
+                  <div className="bg-paper-2 border border-line rounded p-3 sm:p-4">
                     <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Totals</p>
                     <div className="space-y-1 text-sm">
                       <div className="flex justify-between"><span className="text-bone-dim">Subtotal</span><span className="font-medium text-bone">{formatPrice(o.subtotal)}</span></div>
                       {Number(o.discount) > 0 && (
-                        <div className="flex justify-between"><span className="text-bone-dim">Discount</span><span className="font-medium text-green-700">−{formatPrice(o.discount)}</span></div>
+                        <div className="flex justify-between"><span className="text-bone-dim">Discount</span><span className="font-medium text-green-400">−{formatPrice(o.discount)}</span></div>
                       )}
                       <div className="flex justify-between"><span className="text-bone-dim">Shipping</span><span className="font-medium text-bone">{formatPrice(o.shipping)}</span></div>
                       <div className="flex justify-between border-t border-line pt-1"><span className="text-bone">Total</span><span className="font-semibold text-bone">{formatPrice(o.total_amount)}</span></div>
@@ -2019,7 +2019,7 @@ function RetailOrdersPanel() {
                   </div>
                 </div>
 
-                <div className="bg-white border border-line rounded p-3 sm:p-4">
+                <div className="bg-paper-2 border border-line rounded p-3 sm:p-4">
                   <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Items ({o.items.length})</p>
                   <div className="divide-y divide-line">
                     {o.items.map((it, i) => (
@@ -2071,7 +2071,7 @@ function RetailOrdersPanel() {
                         }
                         load();
                       }}
-                      className="border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-crimson focus:outline-none"
+                      className="border border-line bg-paper-2 px-2 py-1.5 text-sm text-bone rounded focus:border-crimson focus:outline-none"
                     >
                       {ORDER_STATUS_FLOW.map((s) => (
                         <option key={s} value={s}>
@@ -2086,7 +2086,7 @@ function RetailOrdersPanel() {
                   <button
                     type="button"
                     onClick={() => { setDeleteError(''); setConfirmDelete(o); }}
-                    className="inline-flex items-center gap-2 border border-crimson/40 text-crimson bg-white hover:bg-crimson/5 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded transition-colors"
+                    className="inline-flex items-center gap-2 border border-crimson/40 text-crimson bg-paper-2 hover:bg-crimson/5 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded transition-colors"
                   >
                     <Trash2 size={14} strokeWidth={2} /> Delete Order
                   </button>
@@ -2100,7 +2100,7 @@ function RetailOrdersPanel() {
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/40" onClick={() => !deleting && setConfirmDelete(null)} />
-          <div className="relative w-full max-w-sm bg-white border border-line rounded-lg p-5 sm:p-6 shadow-xl">
+          <div className="relative w-full max-w-sm bg-paper-2 border border-line rounded-lg p-5 sm:p-6 shadow-xl">
             <div className="flex items-start justify-between gap-3">
               <h3 className="font-label text-sm uppercase tracking-wide-2 text-bone font-semibold">Delete this order?</h3>
               <button type="button" aria-label="Close" onClick={() => !deleting && setConfirmDelete(null)} className="text-grey hover:text-bone">
@@ -2228,7 +2228,7 @@ function PromoPanel() {
       )}
 
       {promos.length === 0 && !creating && !editing && !error && (
-        <div className="text-center py-24 border border-line rounded bg-white">
+        <div className="text-center py-24 border border-line rounded bg-paper-2">
           <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No promo codes</p>
           <p className="mt-3 text-sm text-grey">Create a code like WELCOME10 to offer shoppers a discount.</p>
         </div>
@@ -2238,7 +2238,7 @@ function PromoPanel() {
         const expired = p.expires_at && new Date(p.expires_at).getTime() < Date.now();
         const usable = p.active && !expired && (p.max_uses === null || p.used_count < p.max_uses);
         return (
-          <div key={p.id} className="bg-white border border-line rounded p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
+          <div key={p.id} className="bg-paper-2 border border-line rounded p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
             <div className="w-11 h-11 shrink-0 rounded bg-paper-3 border border-line flex items-center justify-center text-bone">
               <Ticket size={18} strokeWidth={1.8} />
             </div>
@@ -2264,7 +2264,7 @@ function PromoPanel() {
               {p.note && <p className="text-[11px] text-bone-dim mt-0.5 italic truncate">Note: {p.note}</p>}
             </div>
             <span className={`shrink-0 text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-1 rounded ${
-              usable ? 'bg-green-600/10 text-green-700' : 'bg-grey/15 text-grey'
+              usable ? 'bg-green-600/10 text-green-400' : 'bg-grey/15 text-grey'
             }`}>
               {usable ? 'Active' : expired ? 'Expired' : 'Disabled'}
             </span>
@@ -2326,7 +2326,7 @@ function PromoForm({
     active: initial?.active ?? true,
   });
 
-  const inputCls = 'w-full border border-line bg-white px-2.5 py-2 text-sm text-bone focus:border-crimson focus:outline-none rounded';
+  const inputCls = 'w-full border border-line bg-paper-2 px-2.5 py-2 text-sm text-bone focus:border-crimson focus:outline-none rounded';
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2367,7 +2367,7 @@ function PromoForm({
   };
 
   return (
-    <form onSubmit={submit} className="bg-white border border-line rounded p-4 sm:p-5 space-y-4">
+    <form onSubmit={submit} className="bg-paper-2 border border-line rounded p-4 sm:p-5 space-y-4">
       <h3 className="font-display text-lg uppercase tracking-wide-2 text-bone">
         {initial ? `Edit ${initial.code}` : 'New Promo Code'}
       </h3>

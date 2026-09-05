@@ -37,8 +37,8 @@ interface Subscriber {
 
 const TYPE_META: Record<string, { label: string; icon: typeof TrendingUp; color: string; bg: string }> = {
   drop: { label: 'New Drop', icon: ShoppingBag, color: 'text-crimson', bg: 'bg-crimson/10' },
-  restock: { label: 'Restock', icon: TrendingUp, color: 'text-amber-600', bg: 'bg-amber-50' },
-  news: { label: 'News', icon: Newspaper, color: 'text-blue-600', bg: 'bg-blue-50' },
+  restock: { label: 'Restock', icon: TrendingUp, color: 'text-amber-400', bg: 'bg-amber-950/60' },
+  news: { label: 'News', icon: Newspaper, color: 'text-blue-400', bg: 'bg-blue-950/50' },
 };
 
 export function SubscriberDashboard() {
@@ -121,7 +121,7 @@ export function SubscriberDashboard() {
   return (
     <div className="min-h-screen bg-paper-2">
       {/* Header */}
-      <header className="bg-white border-b border-line sticky top-0 z-10">
+      <header className="bg-paper-2 border-b border-line sticky top-0 z-10">
         <div className="mx-auto max-w-4xl px-5 md:px-8 h-16 flex items-center justify-between">
           <a href={linkHref('/')} className="font-brand text-2xl tracking-[0.03em] text-bone leading-none">
             DSLANG<span className="text-crimson">.</span>
@@ -166,7 +166,7 @@ export function SubscriberDashboard() {
 
         {/* Preferences panel */}
         {prefsOpen && subscriber && (
-          <div className="mb-8 bg-white border border-line rounded p-6 animate-slide-down">
+          <div className="mb-8 bg-paper-2 border border-line rounded p-6 animate-slide-down">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-xl tracking-wide-2 text-bone uppercase">Notification Settings</h2>
               <button onClick={() => setPrefsOpen(false)} className="text-grey hover:text-bone text-sm">Close</button>
@@ -218,11 +218,11 @@ export function SubscriberDashboard() {
         {announcements === null ? (
           <div className="space-y-4">
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-32 bg-white border border-line rounded animate-pulse" />
+              <div key={i} className="h-32 bg-paper-2 border border-line rounded animate-pulse" />
             ))}
           </div>
         ) : sorted.length === 0 ? (
-          <div className="text-center py-20 bg-white border border-line rounded">
+          <div className="text-center py-20 bg-paper-2 border border-line rounded">
             <Bell size={32} className="text-grey mx-auto mb-4" strokeWidth={1.5} />
             <p className="font-label text-2xl uppercase tracking-wide-2 text-grey">No updates yet</p>
             <p className="mt-2 text-sm text-grey">New drops and restocks will show up here first.</p>
@@ -242,7 +242,7 @@ export function SubscriberDashboard() {
               return (
                 <div
                   key={ann.id}
-                  className={`bg-white border rounded p-5 md:p-6 transition-all ${
+                  className={`bg-paper-2 border rounded p-5 md:p-6 transition-all ${
                     isRead ? 'border-line' : 'border-crimson/30 shadow-[0_2px_12px_rgba(196,30,58,0.06)]'
                   }`}
                 >
@@ -351,7 +351,7 @@ function PrefToggle({
 
 function StatCard({ label, value, icon: Icon }: { label: string; value: number; icon: typeof Bell }) {
   return (
-    <div className="bg-white border border-line rounded p-4 text-center">
+    <div className="bg-paper-2 border border-line rounded p-4 text-center">
       <Icon size={18} className="text-crimson mx-auto mb-2" strokeWidth={1.6} />
       <p className="font-label text-2xl font-semibold text-bone tabular-nums">{value}</p>
       <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mt-1">{label}</p>

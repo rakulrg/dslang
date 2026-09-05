@@ -3,6 +3,7 @@ import { X, Mail, ArrowRight, Lock } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { useRouter } from '@/lib/router';
+import { lockScroll, unlockScroll } from '@/lib/scrollLock';
 
 export function LoginModal({
   isOpen,
@@ -44,10 +45,10 @@ export function LoginModal({
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
+    lockScroll();
     return () => {
       window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
+      unlockScroll();
     };
   }, [isOpen, onClose]);
 
@@ -97,7 +98,7 @@ export function LoginModal({
     return (
     <div role="dialog" aria-modal="true" aria-label="Account redirect" className="fixed inset-0 z-[80] flex items-center justify-center px-5">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in" onClick={onClose} />
-        <div className="relative w-full max-w-md bg-white border border-line rounded p-8 animate-scale-in">
+        <div className="relative w-full max-w-md bg-paper-2 border border-line rounded p-8 animate-scale-in">
           <button onClick={onClose} className="absolute top-4 right-4 text-grey hover:text-bone transition-colors" aria-label="Close">
             <X size={22} strokeWidth={1.8} />
           </button>
@@ -121,7 +122,7 @@ export function LoginModal({
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="login-title" className="fixed inset-0 z-[80] flex items-center justify-center px-5">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-white border border-line p-6 md:p-8 animate-scale-in max-h-[90vh] overflow-y-auto">
+      <div className="relative w-full max-w-md bg-paper-2 border border-line p-6 md:p-8 animate-scale-in max-h-[90dvh] overflow-y-auto overscroll-contain">
         <button onClick={onClose} className="absolute top-4 right-4 text-grey hover:text-bone transition-colors" aria-label="Close">
           <X size={22} strokeWidth={1.8} />
         </button>
@@ -145,7 +146,7 @@ export function LoginModal({
                 value={email}
                 onChange={(e) => { setEmail(e.target.value); setError(''); }}
                 placeholder="Email"
-                className="w-full pl-10 pr-12 py-3.5 bg-white border border-line text-bone text-sm placeholder:text-grey focus:outline-none focus:border-crimson transition-colors"
+                className="w-full pl-10 pr-12 py-3.5 bg-ink-2 border border-line text-bone text-sm placeholder:text-grey focus:outline-none focus:border-crimson transition-colors"
               />
               {!showPassword && (
                 <button
@@ -172,7 +173,7 @@ export function LoginModal({
                   value={password}
                   onChange={(e) => { setPassword(e.target.value); setError(''); }}
                   placeholder="Password (min 6 characters)"
-                  className="w-full pl-10 pr-4 py-3.5 bg-white border border-line text-bone text-sm placeholder:text-grey focus:outline-none focus:border-crimson transition-colors"
+                  className="w-full pl-10 pr-4 py-3.5 bg-ink-2 border border-line text-bone text-sm placeholder:text-grey focus:outline-none focus:border-crimson transition-colors"
                 />
               </div>
             </label>

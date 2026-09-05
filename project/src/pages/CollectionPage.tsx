@@ -54,7 +54,7 @@ export function CollectionPage() {
               onClick={() => setFilter(f.value)}
               className={`shrink-0 font-label text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-150 ${
                 filter === f.value
-                  ? 'bg-bone text-white border-bone'
+                  ? 'bg-bone text-ink border-bone'
                   : 'border-line text-bone-dim hover:border-bone-dim hover:text-bone'
               }`}
             >

@@ -216,7 +216,7 @@ export function HomePage() {
         </h2>
         <div className="mt-8 md:mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
           {WHY_DSLANG.map((w) => (
-            <div key={w.title} className="border border-line bg-white p-5 md:p-7">
+            <div key={w.title} className="border border-line bg-paper-3 p-5 md:p-7 hover:border-line-2 transition-colors duration-150">
               <p className="font-display text-xl md:text-2xl uppercase tracking-wide-2 text-bone">
                 {w.title}
               </p>

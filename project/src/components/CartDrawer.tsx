@@ -11,6 +11,7 @@ import {
   promoApplies,
 } from '@/lib/promo';
 import { fetchLiveVariantStock, reconcileCartWithLive, describeStockChanges } from '@/lib/cartStock';
+import { lockScroll, unlockScroll } from '@/lib/scrollLock';
 
 /**
  * Bag drawer — slides in from the RIGHT, matching the premium visual language
@@ -84,22 +85,12 @@ export function CartDrawer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  const isOpenRef = useRef(isOpen);
-  isOpenRef.current = isOpen;
-
   // Body scroll lock while the drawer is open.
   useEffect(() => {
     if (isOpen) {
-      const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-      document.body.style.overflow = 'hidden';
-      if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+      lockScroll();
+      return () => unlockScroll();
     }
-    return () => {
-      if (!isOpenRef.current) {
-        document.body.style.overflow = '';
-        document.body.style.paddingRight = '';
-      }
-    };
   }, [isOpen]);
 
   // ESC closes the drawer (desktop).
@@ -158,7 +149,7 @@ export function CartDrawer() {
 
       {/* Panel — slides from RIGHT, full-height below the announcement bar / header */}
       <aside
-        className="absolute right-0 top-8 h-[calc(100vh-2rem)] w-[98vw] md:w-[440px] bg-white border-l border-line flex flex-col will-change-transform"
+        className="absolute right-0 top-8 h-[calc(100dvh-2rem)] w-[98vw] md:w-[440px] bg-paper-2 border-l border-line flex flex-col will-change-transform"
         style={{
           transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 250ms cubic-bezier(0.16, 1, 0.3, 1)',
@@ -189,10 +180,10 @@ export function CartDrawer() {
         ) : (
           <>
             {/* Items */}
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain">
               {stockNotice && (
-                <div className="px-5 py-3 border-b border-line bg-amber-50">
-                  <p className="text-xs text-amber-800 whitespace-pre-line leading-relaxed">{stockNotice}</p>
+                <div className="px-5 py-3 border-b border-line bg-amber-950/60">
+                  <p className="text-xs text-amber-300 whitespace-pre-line leading-relaxed">{stockNotice}</p>
                 </div>
               )}
               <div className="divide-y divide-line">
@@ -274,14 +265,14 @@ export function CartDrawer() {
                   </div>
                   <div className="flex items-center justify-between">
                     <dt className="text-grey">Discount</dt>
-                    <dd className={`font-semibold tabular-nums ${discount > 0 ? 'text-green-700' : 'text-grey'}`}>
+                    <dd className={`font-semibold tabular-nums ${discount > 0 ? 'text-green-400' : 'text-grey'}`}>
                       {discount > 0 ? `−${formatPrice(discount)}` : '—'}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between">
                     <dt className="text-grey">Shipping</dt>
                     <dd className="font-semibold text-bone tabular-nums">
-                      {shipping > 0 ? formatPrice(shipping) : <span className="text-green-700">FREE</span>}
+                      {shipping > 0 ? formatPrice(shipping) : <span className="text-green-400">FREE</span>}
                     </dd>
                   </div>
                   <p className="text-[10px] text-grey text-right">
@@ -306,13 +297,13 @@ export function CartDrawer() {
                 </div>
                 {promo ? (
                   <>
-                    <div className="mt-2 flex items-center justify-between border border-green-300 bg-green-50 px-3 py-2.5">
-                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-green-800">
+                    <div className="mt-2 flex items-center justify-between border border-green-900/70 bg-green-950/50 px-3 py-2.5">
+                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-green-400">
                         <Check size={14} strokeWidth={2.5} /> {promo.code} APPLIED
                       </span>
                       <button
                         onClick={handleRemovePromo}
-                        className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-800 underline underline-offset-2 hover:text-green-900"
+                        className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-400 underline underline-offset-2 hover:text-green-300"
                       >
                         Remove
                       </button>
@@ -339,7 +330,7 @@ export function CartDrawer() {
                       <button
                         onClick={handleApplyPromo}
                         disabled={applying || !promoInput.trim()}
-                        className="inline-flex items-center gap-1.5 shrink-0 bg-bone text-white text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
+                        className="inline-flex items-center gap-1.5 shrink-0 bg-bone text-ink text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
                       >
                         {applying ? <Loader2 size={13} strokeWidth={2} className="animate-spin" /> : 'Apply'}
                       </button>
@@ -353,7 +344,7 @@ export function CartDrawer() {
               <div className="px-5 pt-4 pb-3 space-y-2">
                 <button
                   onClick={goToCheckout}
-                  className="w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 hover:bg-crimson-dark transition-all duration-150"
+                  className="w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 hover:bg-crimson-dark hover:glow-crimson focus-visible:glow-crimson transition-all duration-150 active:scale-[0.99]"
                 >
                   Checkout <ArrowRight size={15} strokeWidth={2} />
                 </button>

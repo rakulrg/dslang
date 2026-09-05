@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { fetchProducts, isRetailVisible, getRetailPrice, getMrp, formatPrice, type CatalogProduct } from '@/lib/catalog';
 import { linkHref } from '@/lib/router';
+import { lockScroll, unlockScroll } from '@/lib/scrollLock';
 
 let cachedProducts: CatalogProduct[] | null = null;
 
@@ -27,16 +28,13 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
 
   useEffect(() => {
     if (!open) return;
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-    document.body.style.overflow = 'hidden';
-    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+    lockScroll();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => {
-      document.body.style.overflow = '';
-      document.body.style.paddingRight = '';
+      unlockScroll();
       window.removeEventListener('keydown', onKey);
     };
   }, [open, onClose]);
@@ -67,7 +65,7 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
         role="dialog"
         aria-modal="true"
         aria-label="Search products"
-        className="absolute left-1/2 top-[92px] md:top-[104px] w-[calc(100vw-2rem)] max-w-2xl max-h-[75vh] flex flex-col overflow-hidden bg-white border border-line shadow-[0_20px_60px_rgba(0,0,0,0.18)] will-change-transform"
+        className="absolute left-1/2 top-[92px] md:top-[104px] w-[calc(100vw-2rem)] max-w-2xl max-h-[75dvh] flex flex-col overflow-hidden bg-paper-2 border border-line shadow-[0_20px_60px_rgba(0,0,0,0.55)] will-change-transform"
         style={{
           transform: open ? 'translateX(-50%) translateY(0)' : 'translateX(-50%) translateY(-12px)',
           opacity: open ? 1 : 0,

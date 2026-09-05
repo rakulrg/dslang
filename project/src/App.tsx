@@ -193,7 +193,11 @@ function App() {
         currentPath={path}
         onOpenLogin={(mode) => { setLoginMode(mode); setLoginOpen(true); }}
       />
-      <main className="flex-1 pt-[76px] md:pt-[88px] overflow-x-hidden">{isAdminPath ? <div className="min-h-screen bg-paper">{renderPage()}</div> : renderPage()}</main>
+      <main className="flex-1 pt-[76px] md:pt-[88px] overflow-x-hidden">
+        <div key={path} className="animate-fade-in min-h-full">
+          {isAdminPath ? <div className="min-h-screen bg-paper">{renderPage()}</div> : renderPage()}
+        </div>
+      </main>
       <Footer />
       <CartDrawer />
       <LoginModal isOpen={loginOpen} onClose={handleLoginClose} initialMode={loginMode} />

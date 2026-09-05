@@ -293,7 +293,7 @@ export function RetailProductPage({ slug }: { slug: string }) {
                           readOnly
                           value={shareUrl}
                           onFocus={(e) => e.currentTarget.select()}
-                          className="flex-1 min-w-0 border border-line bg-white px-3 py-2 text-xs text-bone focus:border-crimson focus:outline-none"
+                          className="flex-1 min-w-0 border border-line bg-ink-2 px-3 py-2 text-xs text-bone focus:border-crimson focus:outline-none"
                         />
                         <button
                           onClick={handleCopyLink}
@@ -390,7 +390,7 @@ export function RetailProductPage({ slug }: { slug: string }) {
             {/* Quantity */}
             <div className="mt-4 flex items-center gap-4">
               <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Qty</p>
-              <div className="inline-flex items-center border border-line bg-white">
+              <div className="inline-flex items-center border border-line bg-paper-2">
                 <button
                   onClick={() => setQty(Math.max(1, qty - 1))}
                   className="w-11 h-12 lg:w-9 lg:h-10 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors"
@@ -420,7 +420,7 @@ export function RetailProductPage({ slug }: { slug: string }) {
               <button
                 onClick={handleAddToCart}
                 disabled={!selectedSizeRow || selectedStock < 1}
-                className="w-full inline-flex items-center justify-center gap-2 border border-bone-dim bg-transparent text-bone text-xs lg:text-[11px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 transition-colors hover:border-bone disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full inline-flex items-center justify-center gap-2 border border-bone-dim bg-transparent text-bone text-xs lg:text-[11px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 transition-all duration-150 hover:border-bone hover:glow-white focus-visible:glow-white active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {addedFeedback ? <CheckCircle2 size={15} strokeWidth={1.8} /> : <ShoppingBag size={15} strokeWidth={1.8} />}
                 {addedFeedback ? 'Added to Bag' : 'Add to Bag'}
@@ -428,7 +428,7 @@ export function RetailProductPage({ slug }: { slug: string }) {
               <button
                 onClick={handleBuyNow}
                 disabled={!selectedSizeRow || selectedStock < 1}
-                className="w-full inline-flex items-center justify-center gap-2 bg-bone text-paper text-xs lg:text-[11px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 transition-colors hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full inline-flex items-center justify-center gap-2 bg-bone text-ink text-xs lg:text-[11px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 transition-all duration-150 hover:bg-crimson hover:text-white hover:glow-crimson focus-visible:glow-crimson active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Zap size={15} strokeWidth={1.8} />
                 Buy Now
@@ -508,7 +508,7 @@ export function RetailProductPage({ slug }: { slug: string }) {
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setSizeChartOpen(false)}
           />
-          <div className="relative w-full max-w-md bg-white shadow-xl border border-line">
+          <div className="relative w-full max-w-md bg-paper-2 shadow-2xl border border-line">
             <div className="flex items-center justify-between border-b border-line px-6 py-4">
               <p className="font-label text-[10px] uppercase tracking-ultra text-grey">Size Chart</p>
               <button

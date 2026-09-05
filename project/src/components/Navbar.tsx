@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Menu, X, ShoppingBag, Search } from 'lucide-react';
 import { linkHref, useRouter } from '@/lib/router';
 import { useD2cCart } from '@/lib/d2cCart';
@@ -7,6 +7,7 @@ import { INSTAGRAM_URL } from '@/lib/catalog';
 import { useAuth } from '@/lib/auth';
 import { Instagram } from '@/components/icons/Instagram';
 import { SearchDialog } from '@/components/SearchDialog';
+import { lockScroll, unlockScroll } from '@/lib/scrollLock';
 
 const NAV_LINKS = [
   { label: 'Collection', to: '/collection' },
@@ -31,8 +32,6 @@ export function Navbar({
   const { openCart } = useCartDrawer();
   const { user, isAdmin } = useAuth();
   const { navigate } = useRouter();
-  const menuOpenRef = useRef(menuOpen);
-  menuOpenRef.current = menuOpen;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -43,18 +42,9 @@ export function Navbar({
 
   useEffect(() => {
     if (menuOpen) {
-      const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-      document.body.style.overflow = 'hidden';
-      if (scrollbarWidth > 0) {
-        document.body.style.paddingRight = `${scrollbarWidth}px`;
-      }
+      lockScroll();
+      return () => unlockScroll();
     }
-    return () => {
-      if (!menuOpenRef.current) {
-        document.body.style.overflow = '';
-        document.body.style.paddingRight = '';
-      }
-    };
   }, [menuOpen]);
 
   useEffect(() => {
@@ -81,8 +71,8 @@ export function Navbar({
       <header
         className={`fixed top-8 inset-x-0 z-50 transition-all duration-200 ${
           solid
-            ? 'bg-white/95 backdrop-blur-xl border-b border-line shadow-[0_1px_20px_rgba(0,0,0,0.04)]'
-            : 'bg-white/80 backdrop-blur-md border-b border-transparent'
+            ? 'bg-ink/90 backdrop-blur-xl border-b border-line'
+            : 'bg-ink/60 backdrop-blur-md border-b border-transparent'
         }`}
       >
         <nav className="mx-auto px-4 md:px-12 lg:px-20 xl:px-28">
@@ -174,7 +164,7 @@ export function Navbar({
           onClick={() => setMenuOpen(false)}
         />
         <div
-          className="absolute left-0 top-8 h-[calc(100vh-2rem)] w-[80vw] max-w-[380px] bg-white border-r border-line flex flex-col will-change-transform"
+          className="absolute left-0 top-8 h-[calc(100dvh-2rem)] w-[80vw] max-w-[380px] bg-paper-2 border-r border-line flex flex-col will-change-transform"
           style={{
             transform: menuOpen ? 'translateX(0)' : 'translateX(-100%)',
             transition: 'transform 250ms cubic-bezier(0.16, 1, 0.3, 1)',
@@ -188,7 +178,7 @@ export function Navbar({
               <X size={22} strokeWidth={1.6} />
             </button>
           </div>
-          <div className="flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden" style={{ WebkitOverflowScrolling: 'touch' }}>
+          <div className="flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
             <p className="px-5 pt-4 text-[10px] uppercase tracking-[0.2em] text-grey font-semibold">
               DSLANG · Slang Of Design
             </p>

@@ -149,7 +149,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
             placeholder="e.g. DSL-R-ABCD1234"
             autoCapitalize="characters"
             spellCheck={false}
-            className="mt-1.5 w-full border border-line bg-white px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
+            className="mt-1.5 w-full border border-line bg-ink-2 px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
           />
         </label>
         <label className="block">
@@ -159,7 +159,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
             onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
             placeholder="10-digit number"
             inputMode="numeric"
-            className="mt-1.5 w-full border border-line bg-white px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
+            className="mt-1.5 w-full border border-line bg-ink-2 px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
           />
         </label>
         <button
@@ -214,7 +214,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
                     <div key={s} className="flex items-center gap-2">
                       <div
                         className={`inline-flex items-center gap-2 rounded px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold ${
-                          reached ? 'bg-green-600/10 text-green-700' : 'bg-grey/10 text-grey'
+                          reached ? 'bg-green-600/10 text-green-400' : 'bg-grey/10 text-grey'
                         }`}
                       >
                         <Icon size={14} strokeWidth={2} />
@@ -251,7 +251,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
               <div className="mt-3 space-y-1.5 border-t border-line pt-3 text-sm text-grey">
                 <div className="flex justify-between"><span>Items ({order.total_qty})</span><span className="text-bone">{formatPrice(order.subtotal)}</span></div>
                 {order.discount > 0 && (
-                  <div className="flex justify-between"><span>Discount</span><span className="text-green-700">−{formatPrice(order.discount)}</span></div>
+                  <div className="flex justify-between"><span>Discount</span><span className="text-green-400">−{formatPrice(order.discount)}</span></div>
                 )}
                 <div className="flex justify-between"><span>Shipping</span><span className="text-bone">{order.shipping > 0 ? formatPrice(order.shipping) : 'FREE'}</span></div>
               </div>

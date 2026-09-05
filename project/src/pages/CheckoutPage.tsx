@@ -15,6 +15,8 @@ import {
 } from '@/lib/payment';
 import { openCashfreeCheckout } from '@/lib/cashfreeSdk';
 import { fetchLiveVariantStock, reconcileCartWithLive, describeStockChanges } from '@/lib/cartStock';
+import { LoadingDots } from '@/components/LoadingDots';
+import { lockScroll, unlockScroll } from '@/lib/scrollLock';
 
 /**
  * Retail checkout — places the order via the server-side create_retail_order
@@ -113,7 +115,16 @@ export function CheckoutPage() {
     }
     return { name: '', phone: '', email: '', address: '', city: '', state: '', pincode: '' };
   });
-  const [stage, setStage] = useState<Stage>('form');
+  const [stage, setStage] = useState<Stage>(() => {
+    // If we're landing back from the payment gateway (a pending order ref is
+    // stored), start in the confirming state so the transition overlay shows
+    // immediately instead of flashing the form while verification runs.
+    try {
+      return window.sessionStorage.getItem(PENDING_PAYMENT_KEY) ? 'confirming' : 'form';
+    } catch {
+      return 'form';
+    }
+  });
   const [errorMsg, setErrorMsg] = useState('');
   const [result, setResult] = useState<RetailOrderResult | null>(null);
   const [errors, setErrors] = useState<Partial<Record<RequiredField, string>>>({});
@@ -257,7 +268,7 @@ export function CheckoutPage() {
     return () => { cancelled = true; };
   }, [paymentCfg.configured, clear, removeAppliedPromo]);
 
-  if (items.length === 0 && stage !== 'success') {
+  if (items.length === 0 && stage !== 'success' && stage !== 'confirming') {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5">
         <p className="font-display text-5xl uppercase tracking-wide-2 text-bone leading-none">Empty</p>
@@ -304,7 +315,7 @@ export function CheckoutPage() {
               {result.discount > 0 && (
                 <div className="flex justify-between border-b border-line py-2 text-sm">
                   <span className="text-grey">Discount</span>
-                  <span className="font-semibold text-green-700">−{formatPrice(result.discount)}</span>
+                  <span className="font-semibold text-green-400">−{formatPrice(result.discount)}</span>
                 </div>
               )}
               <div className="flex justify-between pt-2 text-sm">
@@ -346,7 +357,7 @@ export function CheckoutPage() {
             <div
               className={
                 result.payment_status === 'success'
-                  ? 'w-full border border-lime-300 bg-lime-50 px-4 py-3 text-xs text-green-800 leading-relaxed'
+                  ? 'w-full border border-lime-900/70 bg-lime-950/50 px-4 py-3 text-xs text-lime-300 leading-relaxed'
                   : 'w-full border border-line bg-paper-3 px-4 py-3 text-xs text-grey leading-relaxed'
               }
             >
@@ -445,6 +456,11 @@ export function CheckoutPage() {
     if (placingRef.current) return;
     placingRef.current = true;
 
+    // Show the placing state immediately on click so the button never feels
+    // unresponsive while stock is re-validated and the order/session is created.
+    setStage('placing');
+    setErrorMsg('');
+
     // Per-field validation first — never submit if any required field is invalid.
     const errs = validateForm(form);
     if (REQUIRED_FIELDS.some((k) => errs[k])) {
@@ -483,8 +499,6 @@ export function CheckoutPage() {
       return;
     }
 
-    setStage('placing');
-    setErrorMsg('');
     try {
       const res = await createRetailOrder({
         customer: toCustomer(form),
@@ -569,6 +583,7 @@ export function CheckoutPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 md:px-12 lg:px-16 py-8 md:py-14">
+      {(stage === 'placing' || stage === 'confirming') && <TransitionOverlay stage={stage} />}
       <button
         onClick={() => { openCart(); navigate('/'); }}
         className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey hover:text-crimson transition-colors"
@@ -636,14 +651,14 @@ export function CheckoutPage() {
             </div>
             {promo ? (
               <>
-                <div className="mt-2 flex items-center justify-between border border-green-300 bg-green-50 px-3 py-2.5">
-                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-green-800">
+                <div className="mt-2 flex items-center justify-between border border-green-900/70 bg-green-950/50 px-3 py-2.5">
+                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-green-400">
                     <Check size={14} strokeWidth={2.5} /> {promo.code} APPLIED
                   </span>
                   <button
                     type="button"
                     onClick={handleRemovePromo}
-                    className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-800 underline underline-offset-2 hover:text-green-900"
+                    className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-400 underline underline-offset-2 hover:text-green-300"
                   >
                     Remove
                   </button>
@@ -665,13 +680,13 @@ export function CheckoutPage() {
                     placeholder="Enter promo code"
                     autoCapitalize="characters"
                     spellCheck={false}
-                    className="flex-1 min-w-0 border border-line bg-white px-3 py-2.5 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
+                    className="flex-1 min-w-0 border border-line bg-ink-2 px-3 py-2.5 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
                   />
                   <button
                     type="button"
                     onClick={handleApplyPromo}
                     disabled={applying || !promoInput.trim()}
-                    className="inline-flex items-center gap-1.5 shrink-0 bg-bone text-white text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
+                    className="inline-flex items-center gap-1.5 shrink-0 bg-bone text-ink text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
                   >
                     {applying ? <Loader2 size={13} strokeWidth={2} className="animate-spin" /> : 'Apply'}
                   </button>
@@ -689,13 +704,13 @@ export function CheckoutPage() {
             {discount > 0 && (
               <div className="flex items-center justify-between">
                 <dt className="text-grey">Discount ({promo?.code})</dt>
-                <dd className="font-semibold text-green-700 tabular-nums">−{formatPrice(discount)}</dd>
+                <dd className="font-semibold text-green-400 tabular-nums">−{formatPrice(discount)}</dd>
               </div>
             )}
             <div className="flex items-center justify-between">
               <dt className="text-grey">Shipping</dt>
               <dd className="font-semibold text-bone tabular-nums">
-                {shipping > 0 ? formatPrice(shipping) : <span className="text-green-700">FREE</span>}
+                {shipping > 0 ? formatPrice(shipping) : <span className="text-green-400">FREE</span>}
               </dd>
             </div>
             <div className="flex items-center justify-between">
@@ -732,7 +747,7 @@ export function CheckoutPage() {
         <button
           type="submit"
           disabled={stage === 'placing' || stage === 'confirming'}
-          className="lg:col-start-1 w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 hover:bg-crimson-dark transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed"
+          className="lg:col-start-1 w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 hover:bg-crimson-dark hover:glow-crimson focus-visible:glow-crimson transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:glow-crimson disabled:hover:bg-crimson"
         >
           {stage === 'placing' ? (
             <>
@@ -759,6 +774,44 @@ export function CheckoutPage() {
           any time.
         </p>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Full-screen transition overlay shown while an order is being placed (jump
+ * INTO the payment gateway) and while a payment is being verified on return.
+ * Pure visual state — it never affects the underlying request/response flow.
+ * Auto-hides after 15s as a safety net so it can never trap the customer.
+ */
+function TransitionOverlay({ stage }: { stage: Stage }) {
+  const [visible, setVisible] = useState(true);
+
+  // Auto-hide as a safety net for slow networks / long-lived "pending" states.
+  useEffect(() => {
+    setVisible(true);
+    const t = window.setTimeout(() => setVisible(false), 15000);
+    return () => window.clearTimeout(t);
+  }, [stage]);
+
+  useEffect(() => {
+    if (!visible) return;
+    lockScroll();
+    return () => unlockScroll();
+  }, [visible]);
+
+  const label = stage === 'placing' ? 'Securing your order' : 'Confirming your payment';
+
+  return (
+    <div
+      className="fixed inset-0 z-[300] flex flex-col items-center justify-center bg-ink text-paper transition-opacity duration-300"
+      style={{ opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none' }}
+      role="status"
+      aria-live="polite"
+    >
+      <LoadingDots />
+      <p className="mt-6 font-display text-xl md:text-2xl uppercase tracking-wide-2">{label}</p>
+      <p className="mt-2 text-[11px] uppercase tracking-wide-2 text-grey">Please do not close this page</p>
     </div>
   );
 }
@@ -806,7 +859,7 @@ function Field({
         autoComplete={autoComplete}
         placeholder={placeholder}
         aria-invalid={errorMsg ? true : undefined}
-        className={`mt-1.5 w-full border bg-white px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:outline-none transition-colors ${
+        className={`mt-1.5 w-full border bg-ink-2 px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:outline-none transition-colors ${
           errorMsg ? 'border-crimson focus:border-crimson' : 'border-line focus:border-crimson'
         }`}
       />

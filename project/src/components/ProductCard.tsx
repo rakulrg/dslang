@@ -51,7 +51,7 @@ export function ProductCard({
 
         {/* Hover bar */}
         <div className="absolute bottom-0 inset-x-0 translate-y-full group-hover:translate-y-0 transition-transform duration-200">
-          <div className="bg-bone text-white text-center py-3 text-[11px] uppercase tracking-wide-2 font-semibold">
+          <div className="bg-bone text-ink text-center py-3 text-[11px] uppercase tracking-wide-2 font-semibold">
             View Details
           </div>
         </div>

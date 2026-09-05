@@ -1,24 +1,24 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-ink: #0a0a0a;
-  --color-ink-2: #111111;
-  --color-paper: #ffffff;
-  --color-paper-2: #f8f8f6;
-  --color-paper-3: #f1f0ec;
-  --color-line: #e5e3dd;
-  --color-line-2: #d6d4cc;
-  --color-bone: #1a1a1a;
-  --color-bone-dim: #4a4a4a;
-  --color-bone-soft: #6e6e6e;
-  --color-grey: #9a9a9a;
-  --color-crimson: #c1121f;
-  --color-crimson-dark: #8c0d16;
-  --color-wine: #4a1620;
+  --color-ink: #060606;
+  --color-ink-2: #0d0d0d;
+  --color-paper: #0a0a0a;
+  --color-paper-2: #141414;
+  --color-paper-3: #1a1a1a;
+  --color-line: #232323;
+  --color-line-2: #2f2f2f;
+  --color-bone: #f4f2ec;
+  --color-bone-dim: #a8a8a2;
+  --color-bone-soft: #888884;
+  --color-grey: #6f6f6b;
+  --color-crimson: #e0313c;
+  --color-crimson-dark: #a40f19;
+  --color-wine: #5a1a24;
   --color-olive: #3b3b2e;
-  --color-cream: #faf8f4;
-  --color-sand: #e8e2d6;
-  --color-blush: #f5ede8;
+  --color-cream: #f4f2ec;
+  --color-sand: #2a2822;
+  --color-blush: #241f1b;
 
   --font-display: 'Anton', 'Bebas Neue', sans-serif;
   --font-condensed: 'Bebas Neue', 'Anton', sans-serif;
@@ -83,8 +83,8 @@
   .overflow-wrap-anywhere { overflow-wrap: anywhere; }
 
   .bg-concrete {
-    background-color: #f7f6f3;
-    background-image: radial-gradient(circle at 1px 1px, rgba(10, 10, 10, 0.055) 1px, transparent 0);
+    background-color: #141414;
+    background-image: radial-gradient(circle at 1px 1px, rgba(244, 242, 236, 0.05) 1px, transparent 0);
     background-size: 22px 22px;
   }
 
@@ -109,6 +109,18 @@
   }
 }
 
+@utility glow-crimson {
+  box-shadow: 0 0 0 1px rgba(224, 49, 60, 0.35), 0 0 20px 2px rgba(224, 49, 60, 0.28);
+}
+
+@utility glow-white {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 0 16px 2px rgba(255, 255, 255, 0.18);
+}
+
+@utility glow-crimson-strong {
+  box-shadow: 0 0 0 1px rgba(224, 49, 60, 0.45), 0 0 26px 3px rgba(224, 49, 60, 0.38);
+}
+
 @keyframes marquee {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
@@ -128,10 +140,6 @@
 @keyframes slideDown {
   from { opacity: 0; transform: translateY(-12px); }
   to { opacity: 1; transform: translateY(0); }
-}
-@keyframes slideInRight {
-  from { opacity: 0; transform: translateX(20px); }
-  to { opacity: 1; transform: translateX(0); }
 }
 
 /* ---- DSLANG loading dots ---- */
