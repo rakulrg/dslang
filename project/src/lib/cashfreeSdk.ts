@@ -86,35 +86,46 @@ export async function openCashfreeCheckout(opts: {
   const cashfree = window.Cashfree({ mode: toCashfreeMode(opts.environment) });
 
   // The SDK's checkout() promise must not be able to hang the checkout page
-  // forever (e.g. the hosted page stalls before it can start a redirect).
-  let result: { error?: { message?: string }; redirect?: boolean } | undefined;
-  let timedOut = false;
-  const timer = window.setTimeout(() => {
-    timedOut = true;
-    result = { error: { message: 'The payment window timed out.' } };
-  }, CHECKOUT_TIMEOUT_MS);
+  // forever (e.g. the hosted page stalls before it can start a redirect). The
+  // SDK may open the hosted checkout in a hidden form/iframe where its promise
+  // only settles once the payment page posts a result — if that post never
+  // arrives (CDN/network stall, popup blocked, gateway hiccup), the await
+  // below would never resume. Race it so a clean timeout always wins.
+  let timer: number | undefined;
+  let settled: { error?: { message?: string }; redirect?: boolean } | undefined;
+  let checkoutError: unknown;
   try {
-    const settled = await cashfree.checkout({
+    const checkoutPromise = cashfree.checkout({
       paymentSessionId: opts.paymentSessionId,
       redirectTarget: opts.redirectTarget ?? '_self',
     });
-    if (!timedOut) result = settled;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = window.setTimeout(() => {
+        reject(new Error('The payment window timed out.'));
+      }, CHECKOUT_TIMEOUT_MS);
+    });
+    settled = await Promise.race([checkoutPromise, timeoutPromise]);
   } catch (err) {
-    if (!timedOut) throw err;
+    checkoutError = err;
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) window.clearTimeout(timer);
   }
 
-  if (result?.redirect) {
+  if (settled?.redirect) {
     // The hosted checkout is redirecting the customer; the SPA will verify the
     // payment server-side when they land back on the return URL.
     return;
   }
-  if (result?.error?.message) {
+  if (settled?.error?.message) {
     // NEVER surface the raw gateway message to the customer — it can contain
     // technical/configuration detail. Log it for debugging, throw a clean message.
     // eslint-disable-next-line no-console
-    console.error('[checkout] Payment gateway error:', result.error.message);
+    console.error('[checkout] Payment gateway error:', settled.error.message);
+    throw new Error('The payment window could not be opened. Your order has not been charged.');
+  }
+  if (checkoutError) {
+    // eslint-disable-next-line no-console
+    console.error('[checkout] Payment gateway threw:', checkoutError);
     throw new Error('The payment window could not be opened. Your order has not been charged.');
   }
 }
