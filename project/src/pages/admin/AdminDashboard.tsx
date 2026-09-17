@@ -8,6 +8,8 @@ import {
   Save,
   X,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   GripVertical,
   Check,
   ExternalLink,
@@ -26,6 +28,7 @@ import { linkHref } from '@/lib/router';
 import { formatPrice, getMrp, getRetailPrice, getSizesForColor } from '@/lib/catalog';
 import { preloadImage } from '@/lib/image';
 import { LoadingDots } from '@/components/LoadingDots';
+import { useConfirm } from '@/components/ConfirmDialog';
 import {
   adminFetchProducts,
   adminFetchHero,
@@ -36,7 +39,9 @@ import {
   adminUpdateColor,
   adminDeleteColor,
   adminUpdateColorSortOrders,
-  adminSetSizeStock,
+  adminBulkSetSizeStock,
+  adminRemoveProductSize,
+  adminSetSizeOrder,
   adminFetchRetailOrders,
   adminDeleteRetailOrder,
   adminCreateHero,
@@ -44,13 +49,13 @@ import {
   adminDeleteHero,
   uploadProductImage,
   uploadHeroImage,
-  hasHeroCtaColumns,
+  latestImageCleanupWarning,
   describeSupabaseError,
   type ProductInput,
 } from '@/lib/admin';
-import { hasPublishColumns } from '@/lib/catalog';
-import type { CatalogProduct, HeroSlideRow, ProductColorRow, ProductSizeRow, RetailOrder } from '@/lib/types';
-import { SIZE_LABELS } from '@/lib/types';
+import { hasPublishColumns, isRetailVisible } from '@/lib/catalog';
+import type { CatalogProduct, HeroSlideRow, ProductColorRow, RetailOrder } from '@/lib/types';
+import { sortSizeLabels, sizeLabelsForRows } from '@/lib/sizes';
 
 type Tab = 'products' | 'hero' | 'settings' | 'orders' | 'promos';
 
@@ -84,7 +89,7 @@ function checkImageAspectRatios(files: File[]): Promise<string[]> {
 }
 
 export function AdminDashboard() {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [tab, setTab] = useState<Tab>('products');
   const [products, setProducts] = useState<CatalogProduct[] | null>(null);
   const [heroSlides, setHeroSlides] = useState<HeroSlideRow[] | null>(null);
@@ -93,7 +98,6 @@ export function AdminDashboard() {
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
   const [publishReady, setPublishReady] = useState(false);
-  const [heroCtaReady, setHeroCtaReady] = useState(false);
 
   const loadProducts = useCallback(async () => {
     try {
@@ -123,7 +127,6 @@ export function AdminDashboard() {
   useEffect(() => {
     let cancelled = false;
     hasPublishColumns().then((ok) => { if (!cancelled) setPublishReady(ok); });
-    hasHeroCtaColumns().then((ok) => { if (!cancelled) setHeroCtaReady(ok); });
     return () => { cancelled = true; };
   }, []);
 
@@ -143,25 +146,41 @@ export function AdminDashboard() {
 
   const editingProduct = products?.find((p) => p.id === editingId) ?? null;
 
+  // Defense-in-depth: App.tsx already redirects non-admins away from /admin,
+  // but never render admin controls if this session is not an admin.
+  if (!user || isAdmin !== true) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-paper px-4">
+        <div className="text-center w-full max-w-md">
+          <p className="font-label text-2xl uppercase tracking-wide-2 text-bone">Access restricted</p>
+          <p className="mt-2 text-sm text-grey">You need an administrator account to open the dashboard.</p>
+          <a href={linkHref('/')} className="mt-6 inline-block bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-ink transition-colors">
+            Back to site
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-paper-2 flex flex-col lg:flex-row">
       {/* Mobile header */}
-      <div className="lg:hidden w-full shrink-0 bg-paper-2 border-b border-line">
+      <div className="lg:hidden w-full shrink-0 bg-white border-b border-line">
         <div className="flex items-center justify-between px-4 py-3">
           <a href={linkHref('/')} className="font-brand text-xl tracking-[0.03em] text-bone leading-none">
-            DSLANG<span className="text-crimson">.</span>
+            DSLANG
           </a>
           <div className="flex items-center gap-1">
             <span className="text-[10px] uppercase tracking-wide-2 text-grey px-2 hidden sm:inline">{user?.email}</span>
             <a
               href={linkHref('/')}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wide-2 font-medium text-bone-dim hover:text-crimson rounded transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wide-2 font-medium text-bone-dim hover:text-bone rounded transition-colors"
             >
               <ExternalLink size={12} /> Site
             </a>
             <button
               onClick={handleLogout}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wide-2 font-medium text-bone-dim hover:text-crimson rounded transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wide-2 font-medium text-bone-dim hover:text-bone rounded transition-colors"
             >
               <LogOut size={12} /> Out
             </button>
@@ -171,7 +190,7 @@ export function AdminDashboard() {
           <button
             onClick={() => { setTab('products'); setEditingId(null); setCreating(false); }}
             className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'products' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+              tab === 'products' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <LayoutGrid size={13} strokeWidth={1.8} /> Products
@@ -179,7 +198,7 @@ export function AdminDashboard() {
           <button
             onClick={() => { setTab('hero'); setEditingId(null); setCreating(false); }}
             className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'hero' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+              tab === 'hero' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <ImageIcon size={13} strokeWidth={1.8} /> Homepage
@@ -187,7 +206,7 @@ export function AdminDashboard() {
           <button
             onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); }}
             className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'settings' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+              tab === 'settings' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <SettingsIcon size={13} strokeWidth={1.8} /> Settings
@@ -195,7 +214,7 @@ export function AdminDashboard() {
           <button
             onClick={() => { setTab('orders'); setEditingId(null); setCreating(false); }}
             className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'orders' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+              tab === 'orders' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <ShoppingBag size={13} strokeWidth={1.8} /> Orders
@@ -203,7 +222,7 @@ export function AdminDashboard() {
           <button
             onClick={() => { setTab('promos'); setEditingId(null); setCreating(false); }}
             className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'promos' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+              tab === 'promos' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <Ticket size={13} strokeWidth={1.8} /> Promo Codes
@@ -212,10 +231,10 @@ export function AdminDashboard() {
       </div>
 
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-60 shrink-0 border-r border-line bg-paper-2 flex-col sticky top-0 h-screen">
+      <aside className="hidden lg:flex w-60 shrink-0 border-r border-line bg-white flex-col sticky top-0 h-screen">
         <div className="px-5 py-6 border-b border-line">
           <a href={linkHref('/')} className="font-brand text-2xl tracking-[0.03em] text-bone leading-none">
-            DSLANG<span className="text-crimson">.</span>
+            DSLANG
           </a>
           <p className="mt-1 font-label text-[10px] uppercase tracking-wide-2 text-grey">Admin Panel</p>
         </div>
@@ -224,7 +243,7 @@ export function AdminDashboard() {
           <button
             onClick={() => { setTab('products'); setEditingId(null); setCreating(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'products' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+              tab === 'products' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <LayoutGrid size={16} strokeWidth={1.8} /> Products
@@ -232,7 +251,7 @@ export function AdminDashboard() {
           <button
             onClick={() => { setTab('hero'); setEditingId(null); setCreating(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'hero' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+              tab === 'hero' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <ImageIcon size={16} strokeWidth={1.8} /> Homepage
@@ -240,7 +259,7 @@ export function AdminDashboard() {
           <button
             onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'settings' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+              tab === 'settings' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <SettingsIcon size={16} strokeWidth={1.8} /> Settings
@@ -248,7 +267,7 @@ export function AdminDashboard() {
           <button
             onClick={() => { setTab('orders'); setEditingId(null); setCreating(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'orders' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+              tab === 'orders' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <ShoppingBag size={16} strokeWidth={1.8} /> Orders
@@ -256,7 +275,7 @@ export function AdminDashboard() {
           <button
             onClick={() => { setTab('promos'); setEditingId(null); setCreating(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'promos' ? 'bg-crimson text-white' : 'text-bone-dim hover:bg-paper-2'
+              tab === 'promos' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
             }`}
           >
             <Ticket size={16} strokeWidth={1.8} /> Promo Codes
@@ -269,13 +288,13 @@ export function AdminDashboard() {
           </div>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-bone-dim hover:text-crimson rounded transition-colors hover:bg-paper-2"
+            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-bone-dim hover:text-bone rounded transition-colors hover:bg-paper-2"
           >
             <LogOut size={16} strokeWidth={1.8} /> Sign out
           </button>
           <a
             href={linkHref('/')}
-            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-bone-dim hover:text-crimson rounded transition-colors hover:bg-paper-2"
+            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-bone-dim hover:text-bone rounded transition-colors hover:bg-paper-2"
           >
             <ExternalLink size={16} strokeWidth={1.8} /> View site
           </a>
@@ -285,14 +304,14 @@ export function AdminDashboard() {
       {/* Main */}
       <div className="flex-1 min-w-0">
         {/* Top bar */}
-        <header className="sticky top-0 z-10 bg-paper-2/95 backdrop-blur-md border-b border-line px-4 sm:px-6 h-12 sm:h-14 flex items-center justify-between gap-3">
+        <header className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-line px-4 sm:px-6 h-12 sm:h-14 flex items-center justify-between gap-3">
           <h1 className="font-display text-lg sm:text-2xl tracking-wide-2 text-bone uppercase">
             {tab === 'products' ? 'Products' : tab === 'hero' ? 'Homepage' : tab === 'settings' ? 'Settings' : tab === 'orders' ? 'Orders' : 'Promo Codes'}
           </h1>
           {tab === 'products' && !creating && !editingProduct && (
             <button
               onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 sm:gap-2 bg-crimson text-white text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-crimson-dark transition-colors rounded"
+              className="inline-flex items-center gap-1.5 sm:gap-2 bg-bone text-white text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-ink transition-colors rounded"
             >
               <Plus size={14} strokeWidth={2} /> New Product
             </button>
@@ -300,14 +319,14 @@ export function AdminDashboard() {
           {tab === 'hero' && !creating && (
             <button
               onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 sm:gap-2 bg-crimson text-white text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-crimson-dark transition-colors rounded"
+              className="inline-flex items-center gap-1.5 sm:gap-2 bg-bone text-white text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-ink transition-colors rounded"
             >
               <Plus size={14} strokeWidth={2} /> New Slide
             </button>
           )}
         </header>
 
-        <div className="p-3 sm:p-5 md:p-6">
+        <div className="p-3 sm:p-5 md:p-6 lg:p-8 w-full max-w-5xl mx-auto">
           {loadError && (
             <div className="mb-6 bg-crimson/5 border border-crimson/20 text-crimson text-sm px-4 py-3 rounded">
               {loadError}
@@ -337,7 +356,8 @@ export function AdminDashboard() {
               <ProductList
                 products={products}
                 onEdit={(id) => setEditingId(id)}
-                onDelete={(id) => runAction(async () => { await adminDeleteProduct(id); await loadProducts(); }, 'Could not delete this product.')}
+                onCreate={() => setCreating(true)}
+                onDelete={(id) => runAction(async () => { await adminDeleteProduct(id); await loadProducts(); const warning = latestImageCleanupWarning(); if (warning) throw new Error(warning); }, 'Could not delete this product.')}
               />
             )
           )}
@@ -345,16 +365,14 @@ export function AdminDashboard() {
           {tab === 'hero' && (
             creating ? (
               <HeroForm
-                ctaReady={heroCtaReady}
                 onSave={(slide) => runAction(async () => { await adminCreateHero(slide); await loadHero(); setCreating(false); }, 'Could not create this slide.')}
                 onCancel={() => setCreating(false)}
               />
             ) : (
               <HeroList
                 slides={heroSlides}
-                onUpdate={(id, patch) => runAction(async () => { await adminUpdateHero(id, patch); await loadHero(); }, 'Could not save this slide.')}
-                onDelete={(id) => runAction(async () => { await adminDeleteHero(id); await loadHero(); }, 'Could not delete this slide.')}
-                ctaReady={heroCtaReady}
+                onUpdate={(id, patch) => runAction(async () => { await adminUpdateHero(id, patch); await loadHero(); const warning = latestImageCleanupWarning(); if (warning) throw new Error(warning); }, 'Could not save this slide.')}
+                onDelete={(id) => runAction(async () => { await adminDeleteHero(id); await loadHero(); const warning = latestImageCleanupWarning(); if (warning) throw new Error(warning); }, 'Could not delete this slide.')}
               />
             )
           )}
@@ -376,11 +394,14 @@ function ProductList({
   products,
   onEdit,
   onDelete,
+  onCreate,
 }: {
   products: CatalogProduct[] | null;
   onEdit: (id: string) => void;
   onDelete: (id: string) => Promise<void>;
+  onCreate: () => void;
 }) {
+  const { confirm: requestConfirm, dialog: confirmDialog } = useConfirm();
   if (products === null) {
     return (
       <div className="min-h-[40vh] flex items-center justify-center">
@@ -391,9 +412,15 @@ function ProductList({
 
   if (products.length === 0) {
     return (
-      <div className="text-center py-24 border border-line rounded bg-paper-2">
+      <div className="text-center py-24 border border-line rounded bg-white">
         <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No products yet</p>
         <p className="mt-3 text-sm text-grey">Create your first product to get started.</p>
+        <button
+          onClick={onCreate}
+          className="mt-6 inline-flex items-center gap-1.5 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-2.5 rounded hover:bg-ink transition-colors"
+        >
+          <Plus size={14} strokeWidth={2} /> Create Product
+        </button>
       </div>
     );
   }
@@ -403,12 +430,13 @@ function ProductList({
       {products.map((p) => {
         const primary = p.colors[0];
         const isPublished = p.published !== false;
+        const visibleToShoppers = isRetailVisible(p);
         const retailPrice = getRetailPrice(p);
         const mrp = getMrp(p);
         return (
           <div
             key={p.id}
-            className={`bg-paper-2 border border-line rounded hover:border-line-2 transition-colors overflow-hidden ${!isPublished ? 'opacity-70' : ''}`}
+            className={`bg-white border border-line rounded hover:border-line-2 transition-colors overflow-hidden ${!isPublished ? 'opacity-70' : ''}`}
           >
             <div className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4">
               <div className="w-12 sm:w-14 aspect-[4/5] shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
@@ -429,12 +457,16 @@ function ProductList({
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {isPublished ? (
-                    <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-green-600/10 text-green-400 px-2 py-0.5 rounded">Visible</span>
+                    visibleToShoppers ? (
+                      <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-green-600/10 text-green-700 px-2 py-0.5 rounded">Visible</span>
+                    ) : (
+                      <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Published · Hidden Online</span>
+                    )
                   ) : (
                     <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-grey/15 text-grey px-2 py-0.5 rounded">Hidden</span>
                   )}
                   {p.featured && (
-                    <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-crimson/10 text-crimson px-2 py-0.5 rounded">Featured</span>
+                    <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-bone/10 text-bone px-2 py-0.5 rounded">Featured</span>
                   )}
                   {p.new_drop && (
                     <span className="text-[10px] uppercase tracking-wide-2 font-semibold bg-bone/10 text-bone px-2 py-0.5 rounded">New Drop</span>
@@ -444,13 +476,18 @@ function ProductList({
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   onClick={() => onEdit(p.id)}
-                  className="text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson transition-colors px-2.5 sm:px-3 py-1.5 sm:py-2 border border-line rounded hover:border-crimson"
+                  className="text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone transition-colors px-2.5 sm:px-3 py-1.5 sm:py-2 border border-line rounded hover:border-bone"
                 >
                   Edit
                 </button>
                 <button
-                  onClick={() => { if (confirm(`Delete "${p.name}"? This cannot be undone.`)) onDelete(p.id); }}
-                  className="text-grey hover:text-crimson transition-colors p-1.5 sm:p-2"
+                  onClick={() => requestConfirm({
+                    title: 'Delete product',
+                    message: `Deleting "${p.name}" removes it from the store. This cannot be undone.`,
+                    confirmLabel: 'Delete',
+                    onConfirm: () => onDelete(p.id),
+                  })}
+                  className="text-grey hover:text-bone transition-colors p-1.5 sm:p-2"
                   aria-label="Delete product"
                 >
                   <Trash2 size={15} strokeWidth={1.8} />
@@ -460,6 +497,7 @@ function ProductList({
           </div>
         );
       })}
+      {confirmDialog}
     </div>
   );
 }
@@ -480,14 +518,10 @@ function ProductForm({
     name: '',
     code: '',
     category: 'tee',
-    badge: null,
     featured: true,
     published: true,
     new_drop: false,
     sort_order: 99,
-    moq: null,
-    wholesale_price_50: null,
-    wholesale_price_100: null,
     price: null,
     mrp: null,
     retail_visible: true,
@@ -521,7 +555,7 @@ function ProductForm({
   };
 
   return (
-    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-paper-2 border border-line rounded p-4 sm:p-6">
+    <form onSubmit={submit} className="space-y-5 bg-white border border-line rounded p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-xl sm:text-2xl tracking-wide-2 text-bone uppercase">New Product</h2>
         <button type="button" onClick={onCancel} className="text-grey hover:text-bone transition-colors">
@@ -531,7 +565,7 @@ function ProductForm({
 
       <div>
         <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Product</h3>
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <Field label="Slug" hint="URL-friendly, no spaces">
             <input value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="fallen-halo-tee" className={inputCls} />
           </Field>
@@ -541,18 +575,15 @@ function ProductForm({
           <Field label="Code">
             <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="DSL-FH-01" className={inputCls} />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-            <Field label="Category">
-              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls}>
-                <option value="tee">Tee</option>
-                <option value="hoodie">Hoodie</option>
-                <option value="jogger">Jogger</option>
-                <option value="tank">Tank</option>
-                <option value="drop">Drop</option>
-              </select>
-            </Field>
-            <div className="hidden sm:block" />
-          </div>
+          <Field label="Category">
+            <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={inputCls}>
+              <option value="tee">Tee</option>
+              <option value="hoodie">Hoodie</option>
+              <option value="jogger">Jogger</option>
+              <option value="tank">Tank</option>
+              <option value="drop">Drop</option>
+            </select>
+          </Field>
         </div>
       </div>
 
@@ -576,17 +607,21 @@ function ProductForm({
         <div className="flex items-end gap-4 flex-wrap mt-3">
           {publishReady && (
             <label className="flex items-end gap-2">
-              <input type="checkbox" checked={form.published} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
-              <span className="text-sm text-bone-dim">Published (visible to shoppers)</span>
+              <input type="checkbox" checked={form.published} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-bone" />
+              <span className="text-sm text-bone-dim">Published</span>
             </label>
           )}
           <label className="flex items-end gap-2">
-            <input type="checkbox" checked={form.featured} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
+            <input type="checkbox" checked={form.featured} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-bone" />
             <span className="text-sm text-bone-dim">Featured on homepage</span>
           </label>
           <label className="flex items-end gap-2">
-            <input type="checkbox" checked={form.new_drop} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-crimson" />
+            <input type="checkbox" checked={form.new_drop} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-bone" />
             <span className="text-sm text-bone-dim">New Drop</span>
+          </label>
+          <label className="flex items-end gap-2">
+            <input type="checkbox" checked={form.retail_visible} onChange={(e) => setForm({ ...form, retail_visible: e.target.checked })} className="w-4 h-4 accent-bone" />
+            <span className="text-sm text-bone-dim">Visible in online store</span>
           </label>
         </div>
       </div>
@@ -594,7 +629,7 @@ function ProductForm({
       {error && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{error}</p>}
 
       <div className="flex items-center gap-3 pt-2">
-        <button type="submit" disabled={busy} className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50">
+        <button type="submit" disabled={busy} className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-ink transition-colors disabled:opacity-50">
           <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Create Product'}
         </button>
         <button type="button" onClick={onCancel} className="text-[11px] uppercase tracking-wide-2 text-bone-dim hover:text-bone transition-colors px-4 py-3">
@@ -602,7 +637,7 @@ function ProductForm({
         </button>
       </div>
       <p className="text-xs text-grey pt-2 border-t border-line">
-        After creating, add colors with images, then sizes with stock. Buyers shop retail per piece (M / L / XL).
+        After creating, add colors with images, then add sizes and set per-color stock. Buyers shop retail per piece, with inventory tracked for every colour and size.
       </p>
     </form>
   );
@@ -628,10 +663,10 @@ function ProductEditor({
     name: product.name,
     code: product.code,
     category: product.category,
-    badge: product.badge,
     featured: product.featured,
     published: product.published !== false,
     new_drop: product.new_drop === true,
+    retail_visible: product.retail_visible !== false,
     sort_order: product.sort_order,
     price: Number(product.price ?? 0) > 0 ? Number(product.price ?? 0) : null,
     mrp: Number(product.mrp ?? 0) > 0 ? Number(product.mrp ?? 0) : null,
@@ -650,6 +685,11 @@ function ProductEditor({
       setError('Price must be a non-negative number.');
       return;
     }
+    const willPublish = form.published ?? product.published !== false;
+    if (willPublish && !(Number(form.price ?? 0) > 0)) {
+      setError('Set a retail price — published products must be sellable online.');
+      return;
+    }
     setBusy(true);
     setError('');
     setSaved(false);
@@ -666,7 +706,7 @@ function ProductEditor({
 
   return (
     <div className="space-y-6">
-      <form onSubmit={submit} className="max-w-2xl space-y-5 bg-paper-2 border border-line rounded p-4 sm:p-6">
+      <form onSubmit={submit} className="space-y-5 bg-white border border-line rounded p-4 sm:p-6">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-xl sm:text-2xl tracking-wide-2 text-bone uppercase">Edit Product</h2>
           <button type="button" onClick={onCancel} className="text-grey hover:text-bone transition-colors">
@@ -676,7 +716,7 @@ function ProductEditor({
 
         <div>
           <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Product</h3>
-          <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             <Field label="Slug" hint="Cannot be changed after creation">
               <input value={form.slug ?? ''} disabled className={inputCls + ' opacity-60 cursor-not-allowed'} />
             </Field>
@@ -699,47 +739,51 @@ function ProductEditor({
         </div>
 
       <div>
-        <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Pricing</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          <Field label="MRP" hint="Original / strikethrough price">
-            <NumInput value={form.mrp ?? null} onChange={(n) => setForm({ ...form, mrp: n })} className={inputCls} placeholder="—" />
-          </Field>
-          <Field label="Offer Price" hint="Online selling price per piece">
-            <NumInput value={form.price ?? null} onChange={(n) => setForm({ ...form, price: n })} className={inputCls} placeholder="—" />
-          </Field>
+          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Pricing</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            <Field label="MRP" hint="Original / strikethrough price">
+              <NumInput value={form.mrp ?? null} onChange={(n) => setForm({ ...form, mrp: n })} className={inputCls} placeholder="—" />
+            </Field>
+            <Field label="Offer Price" hint="Online selling price per piece">
+              <NumInput value={form.price ?? null} onChange={(n) => setForm({ ...form, price: n })} className={inputCls} placeholder="—" />
+            </Field>
+          </div>
         </div>
-      </div>
 
       <div>
-        <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Status</h3>
-        <Field label="Sort Order">
-          <NumInput value={form.sort_order ?? 0} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
-        </Field>
-        <div className="flex items-end gap-4 flex-wrap mt-3">
-          {publishReady && (
+          <h3 className="font-label text-[11px] uppercase tracking-wide-2 text-grey font-semibold mb-3 border-b border-line pb-2">Status</h3>
+          <Field label="Sort Order">
+            <NumInput value={form.sort_order ?? 0} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
+          </Field>
+          <div className="flex items-end gap-4 flex-wrap mt-3">
+{publishReady && (
             <label className="flex items-end gap-2">
-              <input type="checkbox" checked={form.published ?? true} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-crimson" />
-              <span className="text-sm text-bone-dim">Published (visible to shoppers)</span>
+              <input type="checkbox" checked={form.published ?? true} onChange={(e) => setForm({ ...form, published: e.target.checked })} className="w-4 h-4 accent-bone" />
+              <span className="text-sm text-bone-dim">Published</span>
             </label>
           )}
           <label className="flex items-end gap-2">
-            <input type="checkbox" checked={form.featured ?? false} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-crimson" />
+            <input type="checkbox" checked={form.featured ?? false} onChange={(e) => setForm({ ...form, featured: e.target.checked })} className="w-4 h-4 accent-bone" />
             <span className="text-sm text-bone-dim">Featured</span>
           </label>
           <label className="flex items-end gap-2">
-            <input type="checkbox" checked={form.new_drop ?? false} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-crimson" />
+            <input type="checkbox" checked={form.new_drop ?? false} onChange={(e) => setForm({ ...form, new_drop: e.target.checked })} className="w-4 h-4 accent-bone" />
             <span className="text-sm text-bone-dim">New Drop</span>
           </label>
+          <label className="flex items-end gap-2">
+            <input type="checkbox" checked={form.retail_visible ?? true} onChange={(e) => setForm({ ...form, retail_visible: e.target.checked })} className="w-4 h-4 accent-bone" />
+            <span className="text-sm text-bone-dim">Visible in online store</span>
+          </label>
         </div>
-        </div>
+      </div>
 
         {error && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{error}</p>}
 
         <div className="flex items-center gap-3 pt-2">
-          <button type="submit" disabled={busy} className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50">
+          <button type="submit" disabled={busy} className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-ink transition-colors disabled:opacity-50">
             <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Changes'}
           </button>
-          {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
+          {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
           <button type="button" onClick={onCancel} className="text-[11px] uppercase tracking-wide-2 text-bone-dim hover:text-bone transition-colors px-4 py-3 ml-auto">
             Back to list
           </button>
@@ -762,6 +806,7 @@ function ProductEditor({
 
 function ColorManager({ product, onChanged }: { product: CatalogProduct; onChanged: () => Promise<void> }) {
   const colors = product.colors;
+  const { confirm: requestConfirm, dialog: confirmDialog } = useConfirm();
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newHex, setNewHex] = useState('#000000');
@@ -800,7 +845,23 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
     setUploadError('');
     try {
       const imgs = newImages.split('\n').map((s) => s.trim()).filter(Boolean);
-      await adminAddColor(product.id, newName.trim(), newHex, imgs);
+      const created = await adminAddColor(product.id, newName.trim(), newHex, imgs);
+      // Seed zero-stock variant rows so every existing size gets a cell for
+      // this new colour (the inventory grid covers the full color × size set).
+      const existingSizes = sortSizeLabels(
+        Array.from(
+          new Set<string>(
+            product.colors.flatMap((c) =>
+              product.sizes
+                .filter((s) => s.color_id === c.id)
+                .map((s) => s.size_label)
+            )
+          )
+        )
+      );
+      await adminBulkSetSizeStock(
+        existingSizes.map((label) => ({ productId: product.id, colorId: created.id, sizeLabel: label, stock: 0 }))
+      );
       setNewName(''); setNewHex('#000000'); setNewImages(''); setAdding(false);
       await onChanged();
     } catch (err) {
@@ -810,15 +871,25 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
     }
   };
 
-  const handleDeleteColor = async (id: string) => {
-    if (!confirm('Delete this color and all its images?')) return;
+  const deleteColorNow = async (id: string) => {
     setUploadError('');
     try {
       await adminDeleteColor(id);
       await onChanged();
+      const warning = latestImageCleanupWarning();
+      if (warning) setUploadError(warning);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not delete this color.'));
     }
+  };
+
+  const handleDeleteColor = (id: string) => {
+    requestConfirm({
+      title: 'Delete color',
+      message: 'Delete this color and all its images? This cannot be undone.',
+      confirmLabel: 'Delete',
+      onConfirm: () => void deleteColorNow(id),
+    });
   };
 
   const handleSaveColor = async (id: string, name: string, hex: string, images: string[]) => {
@@ -826,18 +897,20 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
     try {
       await adminUpdateColor(id, { name, hex, images });
       await onChanged();
+      const warning = latestImageCleanupWarning();
+      if (warning) setUploadError(warning);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not save this color.'));
     }
   };
 
   return (
-    <div className="max-w-2xl bg-paper-2 border border-line rounded p-4 sm:p-6">
+    <div className="bg-white border border-line rounded p-4 sm:p-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase">Colors & Images</h3>
         <button
           onClick={() => setAdding(!adding)}
-          className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide-2 font-semibold text-crimson hover:text-crimson-dark transition-colors"
+          className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide-2 font-semibold text-bone hover:text-bone-dim transition-colors"
         >
           <Plus size={14} strokeWidth={2} /> Add Color
         </button>
@@ -858,14 +931,18 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
               <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => handleImagePick(e.target.files)} />
               {uploading ? 'Uploading…' : 'Upload Image'}
             </label>
-            <button onClick={handleAdd} disabled={busy || !newName.trim()} className="bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-crimson-dark disabled:opacity-50">
+            <button onClick={handleAdd} disabled={busy || !newName.trim()} className="bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-ink disabled:opacity-50">
               {busy ? 'Adding…' : 'Add'}
             </button>
             <button onClick={() => setAdding(false)} className="text-[11px] uppercase tracking-wide-2 text-bone-dim px-4 py-2">Cancel</button>
           </div>
-          {uploadError && <p className="text-sm text-crimson">{uploadError}</p>}
-          {ratioWarning && <p className="text-sm text-amber-400">{ratioWarning}</p>}
+          {ratioWarning && <p className="text-sm text-amber-600">{ratioWarning}</p>}
+          <p className="text-xs text-grey">New colours automatically get a 0-stock row for every size already set on this product.</p>
         </div>
+      )}
+
+      {uploadError && (
+        <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded mb-4">{uploadError}</p>
       )}
 
       <div className="space-y-4">
@@ -879,6 +956,7 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
         ))}
         {colors.length === 0 && <p className="text-sm text-grey">No colors yet. Add one with images.</p>}
       </div>
+      {confirmDialog}
     </div>
   );
 }
@@ -969,7 +1047,7 @@ function ColorRow({ color, onDelete, onSave }: {
         <button onClick={() => setExpanded(!expanded)} className="text-grey hover:text-bone p-1">
           <ChevronDown size={16} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
         </button>
-        <button onClick={onDelete} className="text-grey hover:text-crimson p-1">
+        <button onClick={onDelete} className="text-grey hover:text-bone p-1">
           <Trash2 size={15} />
         </button>
       </div>
@@ -994,25 +1072,25 @@ function ColorRow({ color, onDelete, onSave }: {
             <button
               onClick={handleSave}
               disabled={saving}
-              className="inline-flex items-center gap-1.5 bg-bone text-ink text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-ink transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-ink transition-colors disabled:opacity-50"
             >
               <Save size={14} /> {saving ? 'Saving…' : 'Save Color'}
             </button>
-            {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
+            {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
           </div>
           {uploadError && <p className="text-sm text-crimson">{uploadError}</p>}
-          {ratioWarning && <p className="text-sm text-amber-400">{ratioWarning}</p>}
+          {ratioWarning && <p className="text-sm text-amber-600">{ratioWarning}</p>}
           {images.length > 0 ? (
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
               {images.map((img, index) => (
-                <div key={img} className={`relative aspect-[4/5] overflow-hidden border bg-paper-3 ${selectedImage === img ? 'border-crimson ring-1 ring-crimson' : 'border-line'}`}>
+                <div key={img} className={`relative aspect-[4/5] overflow-hidden border bg-paper-3 ${selectedImage === img ? 'border-bone ring-1 ring-bone' : 'border-line'}`}>
                   <button type="button" onClick={() => { setSelectedImage(img); setIsImageViewerOpen(true); }} className="absolute inset-0 cursor-zoom-in" aria-label={`Zoom image ${index + 1}`}>
                     <img src={img} alt={`${name} ${index + 1}`} className="h-full w-full object-cover" />
                   </button>
-                  {index === 0 && <span className="absolute left-1 top-1 bg-crimson px-1.5 py-1 text-[8px] font-semibold uppercase tracking-wide-2 text-white">Primary</span>}
-                  <div className="absolute inset-x-0 bottom-0 flex justify-between bg-bone/90 p-1 text-ink">
+                  {index === 0 && <span className="absolute left-1 top-1 bg-bone px-1.5 py-1 text-[8px] font-semibold uppercase tracking-wide-2 text-white">Primary</span>}
+                  <div className="absolute inset-x-0 bottom-0 flex justify-between bg-bone/85 p-1 text-white">
                     <button type="button" disabled={index === 0} onClick={() => moveImage(index, -1)} className="px-1.5 text-xs disabled:opacity-30" aria-label="Move image earlier">←</button>
-                    <button type="button" onClick={() => removeImage(img)} className="px-1.5 text-xs hover:text-crimson" aria-label="Remove image"><Trash2 size={13} /></button>
+                    <button type="button" onClick={() => removeImage(img)} className="px-1.5 text-xs hover:text-bone" aria-label="Remove image"><Trash2 size={13} /></button>
                     <button type="button" disabled={index === images.length - 1} onClick={() => moveImage(index, 1)} className="px-1.5 text-xs disabled:opacity-30" aria-label="Move image later">→</button>
                   </div>
                 </div>
@@ -1020,10 +1098,10 @@ function ColorRow({ color, onDelete, onSave }: {
             </div>
           ) : <p className="text-xs text-grey">Upload or add an image URL. The first image becomes the primary product image.</p>}
           {selectedImage && (
-            <div className="rounded border border-line bg-paper-2 p-3">
+            <div className="rounded border border-line bg-white p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Selected image preview</p>
-                <button type="button" onClick={() => setIsImageViewerOpen(true)} className="text-[10px] font-semibold uppercase tracking-wide-2 text-crimson hover:text-crimson-dark">Open full size</button>
+                <button type="button" onClick={() => setIsImageViewerOpen(true)} className="text-[10px] font-semibold uppercase tracking-wide-2 text-bone hover:text-bone-dim">Open full size</button>
               </div>
               <img src={selectedImage} alt={`${name} selected`} className="max-h-80 w-full object-contain" />
             </div>
@@ -1044,13 +1122,19 @@ function ColorRow({ color, onDelete, onSave }: {
 
 function InventoryManager({ product, onChanged }: { product: CatalogProduct; onChanged: () => Promise<void> }) {
   const colors = product.colors;
-
+  const { confirm: requestConfirm, dialog: confirmDialog } = useConfirm();
   const buildDrafts = (p: CatalogProduct): Record<string, Record<string, number>> => {
+    const labels = new Set<string>();
+    for (const c of p.colors) {
+      for (const s of getSizesForColor(p, c.id)) labels.add(s.size_label);
+    }
+    const sortedLabels = sortSizeLabels([...labels]);
     const out: Record<string, Record<string, number>> = {};
     for (const c of p.colors) {
       const row: Record<string, number> = {};
-      for (const s of getSizesForColor(p, c.id)) {
-        row[s.size_label] = Math.max(0, Math.floor(Number(s.stock ?? 0)));
+      for (const label of sortedLabels) {
+        const found = p.sizes.find((s) => s.color_id === c.id && s.size_label === label);
+        row[label] = Math.max(0, Math.floor(Number(found?.stock ?? 0)));
       }
       out[c.id] = row;
     }
@@ -1058,40 +1142,117 @@ function InventoryManager({ product, onChanged }: { product: CatalogProduct; onC
   };
 
   const [drafts, setDrafts] = useState<Record<string, Record<string, number>>>(() => buildDrafts(product));
+  const [sizeOrder, setSizeOrder] = useState<string[]>(() => sizeLabelsForRows(product.sizes));
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [newSizeInput, setNewSizeInput] = useState('');
+  const [sizeBusy, setSizeBusy] = useState(false);
+  const [orderBusy, setOrderBusy] = useState(false);
+  const [orderSaved, setOrderSaved] = useState(false);
 
   useEffect(() => {
     setDrafts(buildDrafts(product));
+    setSizeOrder(sizeLabelsForRows(product.sizes));
     setSaved(false);
+    setOrderSaved(false);
     setError('');
   }, [product]);
 
-  const sizeOrderIndex = (label: string): number => {
-    const i = SIZE_LABELS.indexOf(label as (typeof SIZE_LABELS)[number]);
-    return i === -1 ? 999 : i;
-  };
-
-  const sizeLabels = Array.from(
-    new Set<string>(colors.flatMap((c) => getSizesForColor(product, c.id).map((s) => s.size_label)))
-  ).sort((a, b) => sizeOrderIndex(a) - sizeOrderIndex(b));
+  const sizeLabels = sizeOrder;
 
   const hasSizes = sizeLabels.length > 0 && colors.length > 0;
+
+  const handleAddSizes = async () => {
+    const requested = newSizeInput
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (requested.length === 0 || colors.length === 0) return;
+    const fresh = [...new Set(requested.filter((label) => !sizeLabels.includes(label)))];
+    if (fresh.length === 0) {
+      setError('That size already exists for this product.');
+      return;
+    }
+    setSizeBusy(true);
+    setError('');
+    try {
+      const updates: Array<{ productId: string; colorId: string; sizeLabel: string; stock: number }> = [];
+      for (const c of colors) {
+        for (const label of fresh) {
+          updates.push({ productId: product.id, colorId: c.id, sizeLabel: label, stock: 0 });
+        }
+      }
+      await adminBulkSetSizeStock(updates);
+      setNewSizeInput('');
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not add this size.'));
+    } finally {
+      setSizeBusy(false);
+    }
+  };
+
+  const removeSizeNow = async (label: string) => {
+    setError('');
+    try {
+      await adminRemoveProductSize(product.id, label);
+      setSizeOrder((prev) => prev.filter((l) => l !== label));
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not remove this size.'));
+    }
+  };
+
+  const handleRemoveSize = (label: string) => {
+    requestConfirm({
+      title: 'Delete size',
+      message: `Delete size "${label}" and its stock for every colour of this product? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: () => void removeSizeNow(label),
+    });
+  };
+
+  const moveSize = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= sizeOrder.length) return;
+    setSizeOrder((prev) => {
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const handleSaveOrder = async () => {
+    setOrderBusy(true);
+    setError('');
+    setOrderSaved(false);
+    try {
+      await adminSetSizeOrder(product.id, sizeOrder);
+      await onChanged();
+      setOrderSaved(true);
+      setTimeout(() => setOrderSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not reorder sizes.'));
+    } finally {
+      setOrderBusy(false);
+    }
+  };
 
   const handleSave = async () => {
     setBusy(true);
     setError('');
     setSaved(false);
     try {
-      const jobs: Promise<void>[] = [];
+      // Upsert EVERY colour × size combination so the database reflects the
+      // full matrix (0 stock = sold out). Missing combos become explicit rows.
+      const updates: Array<{ productId: string; colorId: string; sizeLabel: string; stock: number }> = [];
       for (const c of colors) {
-        const sizes = getSizesForColor(product, c.id);
-        for (const s of sizes) {
-          jobs.push(adminSetSizeStock(product.id, c.id, s.size_label, drafts[c.id]?.[s.size_label] ?? 0));
+        for (const label of sizeLabels) {
+          updates.push({ productId: product.id, colorId: c.id, sizeLabel: label, stock: drafts[c.id]?.[label] ?? 0 });
         }
       }
-      await Promise.all(jobs);
+      await adminBulkSetSizeStock(updates);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       await onChanged();
@@ -1103,68 +1264,155 @@ function InventoryManager({ product, onChanged }: { product: CatalogProduct; onC
   };
 
   return (
-    <div className="max-w-2xl bg-paper-2 border border-line rounded p-4 sm:p-6">
+    <div className="bg-white border border-line rounded p-4 sm:p-6">
       <div className="mb-4">
         <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase">Inventory</h3>
-        <p className="text-xs text-grey mt-0.5">Manage stock by color and size.</p>
+        <p className="text-xs text-grey mt-0.5">Sizes are per product; every colour gets its own stock row. 0 means sold out.</p>
       </div>
 
-      {!hasSizes ? (
-        <p className="text-sm text-grey">Add sizes to your colors in the database (or check the product's size chart) to manage stock.</p>
+      {colors.length === 0 ? (
+        <p className="text-sm text-grey">Add colours first, then sizes and per-colour stock become available.</p>
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-line">
-                  <th className="text-left text-[10px] font-semibold uppercase tracking-wide-2 text-grey py-2 pr-3">Color</th>
-                  {sizeLabels.map((label) => (
-                    <th key={label} className="text-center text-[10px] font-semibold uppercase tracking-wide-2 text-grey py-2 px-2">{label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {colors.map((c) => (
-                  <tr key={c.id} className="border-b border-line last:border-b-0">
-                    <td className="py-2 pr-3">
-                      <div className="flex items-center gap-2 whitespace-nowrap">
-                        <span className="w-5 h-5 rounded border border-line shrink-0" style={{ backgroundColor: c.hex }} />
-                        <span className="text-sm font-medium text-bone">{c.name}</span>
-                      </div>
-                    </td>
-                    {sizeLabels.map((label) => (
-                      <td key={label} className="py-2 px-2">
-                        <NumInput
-                          value={drafts[c.id]?.[label] ?? 0}
-                          onChange={(n) =>
-                            setDrafts((prev) => ({
-                              ...prev,
-                              [c.id]: { ...(prev[c.id] ?? {}), [label]: Math.max(0, Math.floor(Number(n ?? 0))) },
-                            }))
-                          }
-                          min={0}
-                          className="w-full max-w-[4.5rem] bg-paper-2 border border-line px-2.5 py-2 text-sm text-center text-bone focus:border-crimson focus:outline-none rounded"
-                        />
-                      </td>
+          {/* Size manager */}
+          <div className="mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold">Sizes</p>
+              {sizeLabels.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => void handleSaveOrder()}
+                  disabled={orderBusy}
+                  className="inline-flex items-center gap-1.5 border border-line text-[10px] uppercase tracking-wide-2 font-semibold px-3 py-1.5 rounded text-bone-dim hover:border-bone-dim hover:text-bone transition-colors disabled:opacity-50"
+                >
+                  <Save size={12} /> {orderBusy ? 'Saving…' : 'Save Size Order'}
+                </button>
+              )}
+            </div>
+            {sizeLabels.length > 1 && (
+              <p className="text-[10px] text-grey mb-2 -mt-1">Use the arrows to set the display order, then save. The storefront and inventory matrix follow this order.</p>
+            )}
+            <div className="flex flex-wrap gap-2 mb-3">
+              {sizeLabels.map((label, i) => (
+                <span
+                  key={label}
+                  className="inline-flex items-center gap-1 border border-line rounded px-2 py-1.5 text-xs font-semibold uppercase tracking-wide-2 text-bone"
+                >
+                  <button
+                    type="button"
+                    disabled={i === 0}
+                    onClick={() => moveSize(i, -1)}
+                    className="text-grey hover:text-bone transition-colors disabled:opacity-25"
+                    aria-label={`Move ${label} earlier`}
+                  >
+                    <ChevronLeft size={13} strokeWidth={2.2} />
+                  </button>
+                  {label}
+                  <button
+                    type="button"
+                    disabled={i === sizeLabels.length - 1}
+                    onClick={() => moveSize(i, 1)}
+                    className="text-grey hover:text-bone transition-colors disabled:opacity-25"
+                    aria-label={`Move ${label} later`}
+                  >
+                    <ChevronRight size={13} strokeWidth={2.2} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveSize(label)}
+                    className="text-grey hover:text-bone transition-colors h-4"
+                    aria-label={`Remove size ${label}`}
+                  >
+                    <X size={12} strokeWidth={2.2} />
+                  </button>
+                </span>
+              ))}
+              {sizeLabels.length === 0 && (
+                <p className="text-xs text-grey w-full">No sizes yet. Add one below to start tracking stock.</p>
+              )}
+            </div>
+            {orderSaved && <p className="text-xs text-green-600 mb-2">Size order saved.</p>}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+              <input
+                value={newSizeInput}
+                onChange={(e) => setNewSizeInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handleAddSizes(); } }}
+                placeholder="Add size(s), e.g. S, M, 28"
+                className="flex-1 min-w-0 border border-line rounded px-3 py-2 text-sm text-bone placeholder:text-grey/60 focus:border-bone focus:outline-none transition-colors"
+              />
+              <button
+                type="button"
+                onClick={() => void handleAddSizes()}
+                disabled={sizeBusy || !newSizeInput.trim() || colors.length === 0}
+                className="inline-flex items-center justify-center gap-1.5 border border-line text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded text-bone-dim hover:border-bone-dim hover:text-bone transition-colors disabled:opacity-50"
+              >
+                <Plus size={13} strokeWidth={2} /> {sizeBusy ? 'Adding…' : 'Add Size'}
+              </button>
+              <p className="text-[10px] text-grey">Applies to every colour above. You can list several at once.</p>
+            </div>
+          </div>
+
+          {hasSizes ? (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-line">
+                      <th className="text-left text-[10px] font-semibold uppercase tracking-wide-2 text-grey py-2 pr-3">Color</th>
+                      {sizeLabels.map((label) => (
+                        <th key={label} className="text-center text-[10px] font-semibold uppercase tracking-wide-2 text-grey py-2 px-2">{label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {colors.map((c) => (
+                      <tr key={c.id} className="border-b border-line last:border-b-0">
+                        <td className="py-2 pr-3">
+                          <div className="flex items-center gap-2 whitespace-nowrap">
+                            <span className="w-5 h-5 rounded border border-line shrink-0" style={{ backgroundColor: c.hex }} />
+                            <span className="text-sm font-medium text-bone">{c.name}</span>
+                          </div>
+                        </td>
+                        {sizeLabels.map((label) => (
+                          <td key={label} className="py-2 px-2">
+                            <NumInput
+                              value={drafts[c.id]?.[label] ?? 0}
+                              onChange={(n) =>
+                                setDrafts((prev) => ({
+                                  ...prev,
+                                  [c.id]: { ...(prev[c.id] ?? {}), [label]: Math.max(0, Math.floor(Number(n ?? 0))) },
+                                }))
+                              }
+                              min={0}
+                              className="w-full max-w-[4.5rem] bg-white border border-line px-2.5 py-2 text-sm text-center text-bone focus:border-bone focus:outline-none rounded"
+                            />
+                          </td>
+                        ))}
+                      </tr>
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="text-xs text-grey mt-2">0 means sold out. Stock is tracked separately for every product color and size.</p>
-          <div className="flex items-center gap-3 pt-3">
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-2.5 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50"
-            >
-              <Save size={14} /> {busy ? 'Saving…' : 'Save Stock'}
-            </button>
-            {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
-            {error && <span className="text-sm text-crimson">{error}</span>}
-          </div>
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-grey mt-2">0 means sold out. Stock is tracked separately for every product colour and size.</p>
+              <div className="flex items-center gap-3 pt-3">
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-2.5 rounded hover:bg-ink transition-colors disabled:opacity-50"
+                >
+                  <Save size={14} /> {busy ? 'Saving…' : 'Save Stock'}
+                </button>
+                {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
+                {error && <span className="text-sm text-crimson">{error}</span>}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-grey">
+              Add a size above to generate its stock cells for every colour.
+            </p>
+          )}
+          {confirmDialog}
         </>
       )}
     </div>
@@ -1295,7 +1543,7 @@ function ColorPriorityManager({ product, onChanged }: { product: CatalogProduct;
   if (orderedColors.length < 2) return null;
 
   return (
-    <div className="max-w-2xl bg-paper-2 border border-line rounded p-4 sm:p-6">
+    <div className="bg-white border border-line rounded p-4 sm:p-6">
       <h3 className="font-display text-lg sm:text-xl tracking-wide-2 text-bone uppercase mb-1">Color Order</h3>
       <p className="text-xs text-grey mb-4">Drag to reorder. First color is shown as primary on product cards.</p>
       <div className="space-y-1.5">
@@ -1336,11 +1584,11 @@ function ColorPriorityManager({ product, onChanged }: { product: CatalogProduct;
           type="button"
           onClick={saveOrder}
           disabled={busy}
-          className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-ink transition-colors disabled:opacity-50"
         >
           <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Color Order'}
         </button>
-        {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
+        {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
         {error && <span className="text-sm text-crimson">{error}</span>}
       </div>
     </div>
@@ -1353,12 +1601,10 @@ function HeroList({
   slides,
   onUpdate,
   onDelete,
-  ctaReady,
 }: {
   slides: HeroSlideRow[] | null;
   onUpdate: (id: string, patch: Partial<Omit<HeroSlideRow, 'id' | 'created_at'>>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
-  ctaReady: boolean;
 }) {
   if (slides === null) {
     return <div className="h-32 bg-paper-3 border border-line rounded animate-pulse" />;
@@ -1366,7 +1612,7 @@ function HeroList({
 
   if (slides.length === 0) {
     return (
-      <div className="text-center py-24 border border-line rounded bg-paper-2">
+      <div className="text-center py-24 border border-line rounded bg-white">
         <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No hero slides</p>
         <p className="mt-3 text-sm text-grey">Add a slide to show on the homepage hero.</p>
       </div>
@@ -1376,7 +1622,7 @@ function HeroList({
   return (
     <div className="space-y-4">
       {slides.map((s) => (
-        <HeroRow key={s.id} slide={s} ctaReady={ctaReady} onUpdate={(patch) => onUpdate(s.id, patch)} onDelete={() => onDelete(s.id)} />
+        <HeroRow key={s.id} slide={s} onUpdate={(patch) => onUpdate(s.id, patch)} onDelete={() => onDelete(s.id)} />
       ))}
     </div>
   );
@@ -1386,19 +1632,12 @@ function HeroRow({
   slide,
   onUpdate,
   onDelete,
-  ctaReady,
 }: {
   slide: HeroSlideRow;
   onUpdate: (patch: Partial<Omit<HeroSlideRow, 'id' | 'created_at'>>) => Promise<void>;
   onDelete: () => Promise<void>;
-  ctaReady: boolean;
 }) {
   const [image_url, setImageUrl] = useState(slide.image_url);
-  const [eyebrow, setEyebrow] = useState(slide.eyebrow);
-  const [title, setTitle] = useState(slide.title);
-  const [subtitle, setSubtitle] = useState(slide.subtitle);
-  const [cta_text, setCtaText] = useState(slide.cta_text ?? '');
-  const [cta_url, setCtaUrl] = useState(slide.cta_url ?? '');
   const [sort_order, setSortOrder] = useState(slide.sort_order);
   const [active, setActive] = useState(slide.active);
   const [expanded, setExpanded] = useState(false);
@@ -1406,6 +1645,7 @@ function HeroRow({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { confirm: requestConfirm, dialog: confirmDialog } = useConfirm();
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1428,24 +1668,23 @@ function HeroRow({
   };
 
   const save = async () => {
-    await onUpdate({ image_url, eyebrow, title, subtitle, sort_order, active, cta_text, cta_url });
+    await onUpdate({ image_url, sort_order, active });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
   return (
-    <div className="bg-paper-2 border border-line rounded overflow-hidden">
+    <div className="bg-white border border-line rounded overflow-hidden">
       <div className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4">
         <div className="w-14 sm:w-20 h-10 sm:h-14 shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
-          {image_url && <img src={image_url} alt={title} className="w-full h-full object-cover" />}
+          {image_url && <img src={image_url} alt="Hero slide preview" className="w-full h-full object-cover" />}
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-bone truncate">{title || 'Untitled slide'}</h3>
-          <p className="text-xs text-grey truncate">{eyebrow}</p>
+          <h3 className="text-sm font-semibold text-bone truncate">Hero Slide #{sort_order}</h3>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <span className={`text-[9px] sm:text-[10px] uppercase tracking-wide-2 font-semibold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded ${
-            active ? 'bg-green-950/60 text-green-400' : 'bg-paper-2 text-grey'
+            active ? 'bg-green-100 text-green-700' : 'bg-paper-2 text-grey'
           }`}>
             {active ? 'Active' : 'Hidden'}
           </span>
@@ -1453,7 +1692,15 @@ function HeroRow({
           <button onClick={() => setExpanded(!expanded)} className="text-grey hover:text-bone p-1">
             <ChevronDown size={15} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
           </button>
-          <button onClick={() => { if (confirm('Delete this slide?')) onDelete(); }} className="text-grey hover:text-crimson p-1">
+          <button
+            onClick={() => requestConfirm({
+              title: 'Delete slide',
+              message: 'Delete this slide from the homepage? This cannot be undone.',
+              confirmLabel: 'Delete',
+              onConfirm: onDelete,
+            })}
+            className="text-grey hover:text-bone p-1"
+          >
             <Trash2 size={14} />
           </button>
         </div>
@@ -1486,42 +1733,24 @@ function HeroRow({
           <Field label="Image URL">
             <input value={image_url} onChange={(e) => setImageUrl(e.target.value)} className={inputCls} />
           </Field>
-          <Field label="Eyebrow">
-            <input value={eyebrow} onChange={(e) => setEyebrow(e.target.value)} className={inputCls} />
-          </Field>
-          <Field label="Title" hint="Use \n for line breaks">
-            <textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={2} className={inputCls} />
-          </Field>
-          <Field label="Subtitle">
-            <textarea value={subtitle} onChange={(e) => setSubtitle(e.target.value)} rows={2} className={inputCls} />
-          </Field>
-          {ctaReady && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 border-t border-line pt-3">
-              <Field label="CTA Button Text" hint="Leave blank for default">
-                <input value={cta_text} onChange={(e) => setCtaText(e.target.value)} className={inputCls} placeholder="View Collection" />
-              </Field>
-              <Field label="CTA Button URL" hint="https://... or internal (#/route)">
-                <input value={cta_url} onChange={(e) => setCtaUrl(e.target.value)} className={inputCls} placeholder="#/collection" />
-              </Field>
-            </div>
-          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             <Field label="Sort Order">
               <NumInput value={sort_order} onChange={(n) => setSortOrder(n ?? 0)} className={inputCls} />
             </Field>
             <label className="flex items-end gap-2 pb-3">
-              <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="w-4 h-4 accent-crimson" />
+              <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="w-4 h-4 accent-bone" />
               <span className="text-sm text-bone-dim">Active (show on homepage)</span>
             </label>
           </div>
           <div className="flex items-center gap-3">
-            <button onClick={save} className="inline-flex items-center gap-1.5 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-crimson-dark transition-colors">
+            <button onClick={save} className="inline-flex items-center gap-1.5 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-ink transition-colors">
               <Save size={14} /> Save Slide
             </button>
-            {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
+            {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
           </div>
         </div>
       )}
+      {confirmDialog}
     </div>
   );
 }
@@ -1531,19 +1760,12 @@ function HeroRow({
 function HeroForm({
   onSave,
   onCancel,
-  ctaReady,
 }: {
   onSave: (slide: Omit<HeroSlideRow, 'id' | 'created_at'>) => Promise<void>;
   onCancel: () => void;
-  ctaReady: boolean;
 }) {
   const [form, setForm] = useState({
     image_url: '',
-    eyebrow: '',
-    title: '',
-    subtitle: '',
-    cta_text: '',
-    cta_url: '',
     sort_order: 99,
     active: true,
   });
@@ -1589,7 +1811,7 @@ function HeroForm({
   };
 
   return (
-    <form onSubmit={submit} className="max-w-2xl space-y-5 bg-paper-2 border border-line rounded p-4 sm:p-6">
+    <form onSubmit={submit} className="space-y-5 bg-white border border-line rounded p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-xl sm:text-2xl tracking-wide-2 text-bone uppercase">New Hero Slide</h2>
         <button type="button" onClick={onCancel} className="text-grey hover:text-bone transition-colors">
@@ -1623,31 +1845,12 @@ function HeroForm({
       <Field label="Image URL">
         <input value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://images.pexels.com/..." className={inputCls} />
       </Field>
-      <Field label="Eyebrow" hint="Small text above the title">
-        <input value={form.eyebrow} onChange={(e) => setForm({ ...form, eyebrow: e.target.value })} placeholder="New Arrivals" className={inputCls} />
-      </Field>
-      <Field label="Title" hint="Use \n for line breaks">
-        <textarea value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} rows={2} placeholder="Wear The\nStruggle" className={inputCls} />
-      </Field>
-      <Field label="Subtitle">
-        <textarea value={form.subtitle} onChange={(e) => setForm({ ...form, subtitle: e.target.value })} rows={2} className={inputCls} />
-      </Field>
-      {ctaReady && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 border-t border-line pt-4">
-          <Field label="CTA Button Text" hint="Leave blank for default">
-            <input value={form.cta_text} onChange={(e) => setForm({ ...form, cta_text: e.target.value })} className={inputCls} placeholder="View Collection" />
-          </Field>
-          <Field label="CTA Button URL" hint="https://... or internal (#/route)">
-            <input value={form.cta_url} onChange={(e) => setForm({ ...form, cta_url: e.target.value })} className={inputCls} placeholder="#/collection" />
-          </Field>
-        </div>
-      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <Field label="Sort Order">
           <NumInput value={form.sort_order} onChange={(n) => setForm({ ...form, sort_order: n ?? 0 })} className={inputCls} />
         </Field>
         <label className="flex items-end gap-2 pb-3">
-          <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 accent-crimson" />
+          <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 accent-bone" />
           <span className="text-sm text-bone-dim">Active</span>
         </label>
       </div>
@@ -1655,7 +1858,7 @@ function HeroForm({
       {error && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{error}</p>}
 
       <div className="flex items-center gap-3 pt-2">
-        <button type="submit" disabled={busy} className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50">
+        <button type="submit" disabled={busy} className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-ink transition-colors disabled:opacity-50">
           <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Create Slide'}
         </button>
         <button type="button" onClick={onCancel} className="text-[11px] uppercase tracking-wide-2 text-bone-dim hover:text-bone transition-colors px-4 py-3">
@@ -1731,7 +1934,7 @@ function NumInput({ value, onChange, className, placeholder, ...rest }: {
   );
 }
 
-const inputCls = 'w-full px-3 py-2.5 bg-paper-2 border border-line text-bone text-sm rounded placeholder:text-grey focus:outline-none focus:border-crimson transition-colors';
+const inputCls = 'w-full px-3 py-2.5 bg-white border border-line text-bone text-sm rounded placeholder:text-grey focus:outline-none focus:border-bone transition-colors';
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -1777,10 +1980,10 @@ function SettingsPanel() {
   };
 
   return (
-    <form onSubmit={submit} className="max-w-3xl space-y-5">
+    <form onSubmit={submit} className="space-y-5">
       {!loaded && <div className="h-24 bg-paper-3 border border-line rounded animate-pulse" />}
 
-      <div className="bg-paper-2 border border-line rounded p-4 sm:p-6 space-y-4">
+      <div className="bg-white border border-line rounded p-4 sm:p-6 space-y-4">
         <h3 className="font-display text-lg tracking-wide-2 text-bone uppercase">Store Settings</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <Field label="Flat Shipping (₹)" hint="Charged on retail orders">
@@ -1789,24 +1992,18 @@ function SettingsPanel() {
         </div>
       </div>
 
-      <div className="bg-paper-2 border border-line rounded p-4 sm:p-6 space-y-4">
+      <div className="bg-white border border-line rounded p-4 sm:p-6 space-y-4">
         <h3 className="font-display text-lg tracking-wide-2 text-bone uppercase">Contact & Storefront</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <Field label="WhatsApp Number" hint="Digits only, country code first (e.g. 9199...)">
             <input value={form.whatsapp_number} onChange={(e) => patch({ whatsapp_number: e.target.value })} className={inputCls} />
-          </Field>
-          <Field label="Dispatch Note">
-            <input value={form.dispatch_note} onChange={(e) => patch({ dispatch_note: e.target.value })} className={inputCls} />
-          </Field>
-          <Field label="Delivery Note">
-            <input value={form.delivery_note} onChange={(e) => patch({ delivery_note: e.target.value })} className={inputCls} />
           </Field>
           <Field label="Announcement Text">
             <input value={form.announcement_text} onChange={(e) => patch({ announcement_text: e.target.value })} className={inputCls} />
           </Field>
         </div>
         <label className="flex items-end gap-2">
-          <input type="checkbox" checked={form.announcement_active} onChange={(e) => patch({ announcement_active: e.target.checked })} className="w-4 h-4 accent-crimson" />
+          <input type="checkbox" checked={form.announcement_active} onChange={(e) => patch({ announcement_active: e.target.checked })} className="w-4 h-4 accent-bone" />
           <span className="text-sm text-bone-dim">Show announcement bar</span>
         </label>
       </div>
@@ -1814,10 +2011,10 @@ function SettingsPanel() {
       {error && <p className="text-sm text-crimson bg-crimson/5 border border-crimson/20 px-4 py-3 rounded">{error}</p>}
 
       <div className="flex items-center gap-3">
-        <button type="submit" disabled={busy || !loaded} className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50">
+        <button type="submit" disabled={busy || !loaded} className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-ink transition-colors disabled:opacity-50">
           <Save size={15} strokeWidth={2} /> {busy ? 'Saving…' : 'Save Settings'}
         </button>
-        {saved && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Saved</span>}
+        {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check size={16} /> Saved</span>}
         <span className="text-xs text-grey ml-auto">These apply instantly on the live storefront.</span>
       </div>
     </form>
@@ -1827,19 +2024,19 @@ function SettingsPanel() {
 /* ---- Retail Orders ---- */
 
 const PAYMENT_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  pending: { label: 'Pending', cls: 'bg-amber-950/60 text-amber-300' },
-  success: { label: 'Success', cls: 'bg-green-600/10 text-green-400' },
-  paid: { label: 'Paid', cls: 'bg-green-600/10 text-green-400' },
+  pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
+  success: { label: 'Success', cls: 'bg-green-600/10 text-green-700' },
+  paid: { label: 'Paid', cls: 'bg-green-600/10 text-green-700' },
   failed: { label: 'Failed', cls: 'bg-crimson/10 text-crimson' },
   cancelled: { label: 'Cancelled', cls: 'bg-grey/15 text-grey' },
   refunded: { label: 'Refunded', cls: 'bg-grey/15 text-grey' },
 };
 
 const ORDER_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  pending: { label: 'Pending', cls: 'bg-amber-950/60 text-amber-300' },
-  processing: { label: 'Processing', cls: 'bg-sky-950/50 text-sky-300' },
-  shipped: { label: 'Shipped', cls: 'bg-indigo-950/50 text-indigo-300' },
-  delivered: { label: 'Delivered', cls: 'bg-green-600/10 text-green-400' },
+  pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
+  processing: { label: 'Processing', cls: 'bg-sky-100 text-sky-700' },
+  shipped: { label: 'Shipped', cls: 'bg-indigo-100 text-indigo-700' },
+  delivered: { label: 'Delivered', cls: 'bg-green-600/10 text-green-700' },
   cancelled: { label: 'Cancelled', cls: 'bg-crimson/10 text-crimson' },
   refunded: { label: 'Refunded', cls: 'bg-grey/15 text-grey' },
 };
@@ -1858,10 +2055,12 @@ function RetailOrdersPanel() {
   const [orders, setOrders] = useState<RetailOrder[] | null>(null);
   const [loadError, setLoadError] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
-  const { settings } = useSiteSettings();
+  const [ordersComplete, setOrdersComplete] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError('');
+    setOrdersComplete(false);
     try {
       setOrders(await adminFetchRetailOrders());
     } catch (err) {
@@ -1869,6 +2068,20 @@ function RetailOrdersPanel() {
       setLoadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not load retail orders.'));
     }
   }, []);
+
+  const loadMore = useCallback(async () => {
+    setLoadingMore(true);
+    setLoadError('');
+    try {
+      const extra = await adminFetchRetailOrders({ offset: orders?.length ?? 0 });
+      setOrders((prev) => [...(prev ?? []), ...extra]);
+      if (extra.length < 100) setOrdersComplete(true);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not load more retail orders.'));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [orders]);
 
   useEffect(() => {
     load();
@@ -1880,21 +2093,6 @@ function RetailOrdersPanel() {
     } catch {
       /* clipboard unavailable — the ref is still visible in the UI */
     }
-  };
-
-  const whatsappLink = (order: RetailOrder) => {
-    const number = (settings.whatsapp_number ?? '').replace(/\D/g, '') || '919944676178';
-    const lines = [
-      `DSLANG Order ${order.ref}`,
-      `Total ${order.total_qty} items — ${formatPrice(order.total_amount)}`,
-      '',
-      ...order.items.map((it) => `${it.name} ${it.color} ${it.size_label} × ${it.quantity} (${formatPrice(it.line_total)})`),
-      '',
-      `Name: ${order.customer.name} · ${order.customer.phone}`,
-      `Address: ${order.customer.address}, ${order.customer.city}, ${order.customer.state} ${order.customer.pincode}`,
-      `Payment: ${PAYMENT_STATUS_LABEL[order.payment_status]?.label ?? order.payment_status}`,
-    ];
-    return `https://wa.me/${number}?text=${encodeURIComponent(lines.join('\n'))}`;
   };
 
   const [confirmDelete, setConfirmDelete] = useState<RetailOrder | null>(null);
@@ -1926,6 +2124,73 @@ function RetailOrdersPanel() {
     return () => window.clearTimeout(t);
   }, [actionMessage]);
 
+  // --- Shipment tracking (manual save; automated SMS/WhatsApp parked) ---
+  const [shipDrafts, setShipDrafts] = useState<Record<string, { tracking_id: string; tracking_url: string }>>({});
+
+  const draftFor = (o: RetailOrder) =>
+    shipDrafts[o.id] ?? { tracking_id: o.tracking_id ?? '', tracking_url: o.tracking_url ?? '' };
+
+  const setDraft = (id: string, patch: Partial<{ tracking_id: string; tracking_url: string }>) => {
+    setShipDrafts((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] ?? { tracking_id: '', tracking_url: '' }), ...patch },
+    }));
+  };
+
+  const saveTracking = useCallback(async (o: RetailOrder): Promise<boolean> => {
+    const draft = draftFor(o);
+    // Always write both fields (trimmed or null) so the admin can clear a
+    // previously saved tracking id/link.
+    const patch: Record<string, unknown> = {
+      tracking_id: draft.tracking_id.trim() || null,
+      tracking_url: draft.tracking_url.trim() || null,
+    };
+    const { error } = await supabase.from('retail_orders').update(patch).eq('id', o.id);
+    if (error) {
+      setLoadError(describeSupabaseError(error, 'Could not save tracking information.'));
+      return false;
+    }
+    load();
+    setShipDrafts((prev) => {
+      const next = { ...prev };
+      delete next[o.id];
+      return next;
+    });
+    return true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shipDrafts]);
+
+  const updateWhatsAppLink = (o: RetailOrder): string => {
+    const draft = draftFor(o);
+    const phone = (o.customer?.phone ?? '').replace(/\D/g, '').slice(-10);
+    const trackUrl = `${window.location.origin}/#/track-order/${o.ref}`;
+    const shipped = o.order_status === 'shipped' || o.order_status === 'delivered';
+    const trackingId = draft.tracking_id.trim();
+    const trackingUrl = draft.tracking_url.trim();
+    const items = o.items
+      .map((it) => `${it.quantity}× ${it.name} (${it.color} · ${it.size_label}) — ${formatPrice(it.line_total)}`)
+      .join('\n');
+    const lines = shipped
+      ? [
+          `Hi ${o.customer.name},`,
+          `Your DSLANG order ${o.ref} has been shipped.`,
+          '',
+          trackingId ? `Tracking ID: ${trackingId}` : null,
+          trackingUrl ? `Track shipment: ${trackingUrl}` : null,
+          `You can also track your order here: ${trackUrl}`,
+        ]
+      : [
+          `Hi ${o.customer.name},`,
+          `Thank you for your DSLANG order ${o.ref}!`,
+          '',
+          items,
+          '',
+          `Order total: ${formatPrice(o.total_amount)}`,
+          `Track your order here: ${trackUrl}`,
+        ];
+    return `https://wa.me/91${phone}?text=${encodeURIComponent(lines.filter(Boolean).join('\n'))}`;
+  };
+
   if (orders === null) {
     return <div className="min-h-[40vh] flex items-center justify-center"><LoadingDots /></div>;
   }
@@ -1938,7 +2203,7 @@ function RetailOrdersPanel() {
         </p>
         <button
           onClick={load}
-          className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson border border-line rounded px-3 py-2 transition-colors"
+          className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone border border-line rounded px-3 py-2 transition-colors"
         >
           <ShoppingBag size={13} strokeWidth={1.8} /> Refresh
         </button>
@@ -1947,13 +2212,13 @@ function RetailOrdersPanel() {
       {loadError && <div className="bg-crimson/5 border border-crimson/20 text-crimson text-sm px-4 py-3 rounded">{loadError}</div>}
 
       {actionMessage && (
-        <div className="flex items-center gap-2 bg-green-950/50 border border-green-900/70 text-green-400 text-sm px-4 py-3 rounded">
+        <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 text-sm px-4 py-3 rounded">
           <Check size={14} strokeWidth={2.5} /> {actionMessage}
         </div>
       )}
 
       {orders.length === 0 && !loadError && (
-        <div className="text-center py-24 border border-line rounded bg-paper-2">
+        <div className="text-center py-24 border border-line rounded bg-white">
           <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No retail orders</p>
           <p className="mt-3 text-sm text-grey">Orders placed on the retail storefront will appear here.</p>
         </div>
@@ -1963,7 +2228,7 @@ function RetailOrdersPanel() {
         const isOpen = expanded === o.id;
         const pay = PAYMENT_STATUS_LABEL[o.payment_status];
         return (
-          <div key={o.id} className="bg-paper-2 border border-line rounded overflow-hidden">
+          <div key={o.id} className="bg-white border border-line rounded overflow-hidden">
             <button
               onClick={() => setExpanded(isOpen ? null : o.id)}
               className="w-full text-left flex items-center gap-3 sm:gap-4 p-3 sm:p-4"
@@ -1996,7 +2261,7 @@ function RetailOrdersPanel() {
             {isOpen && (
               <div className="border-t border-line p-3 sm:p-4 space-y-4 bg-paper-2">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="bg-paper-2 border border-line rounded p-3 sm:p-4">
+                  <div className="bg-white border border-line rounded p-3 sm:p-4">
                     <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Customer</p>
                     <div className="space-y-1.5 text-sm text-bone">
                       <p className="flex items-center gap-2"><Phone size={13} className="text-grey" /> {o.customer.name} · {o.customer.phone}</p>
@@ -2004,12 +2269,12 @@ function RetailOrdersPanel() {
                       <p className="text-grey text-xs">{o.customer.address}, {o.customer.city}, {o.customer.state} — {o.customer.pincode}</p>
                     </div>
                   </div>
-                  <div className="bg-paper-2 border border-line rounded p-3 sm:p-4">
+                  <div className="bg-white border border-line rounded p-3 sm:p-4">
                     <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Totals</p>
                     <div className="space-y-1 text-sm">
                       <div className="flex justify-between"><span className="text-bone-dim">Subtotal</span><span className="font-medium text-bone">{formatPrice(o.subtotal)}</span></div>
                       {Number(o.discount) > 0 && (
-                        <div className="flex justify-between"><span className="text-bone-dim">Discount</span><span className="font-medium text-green-400">−{formatPrice(o.discount)}</span></div>
+                        <div className="flex justify-between"><span className="text-bone-dim">Discount</span><span className="font-medium text-green-700">−{formatPrice(o.discount)}</span></div>
                       )}
                       <div className="flex justify-between"><span className="text-bone-dim">Shipping</span><span className="font-medium text-bone">{formatPrice(o.shipping)}</span></div>
                       <div className="flex justify-between border-t border-line pt-1"><span className="text-bone">Total</span><span className="font-semibold text-bone">{formatPrice(o.total_amount)}</span></div>
@@ -2019,7 +2284,7 @@ function RetailOrdersPanel() {
                   </div>
                 </div>
 
-                <div className="bg-paper-2 border border-line rounded p-3 sm:p-4">
+                <div className="bg-white border border-line rounded p-3 sm:p-4">
                   <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Items ({o.items.length})</p>
                   <div className="divide-y divide-line">
                     {o.items.map((it, i) => (
@@ -2036,17 +2301,6 @@ function RetailOrdersPanel() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 flex-wrap">
-                  <a
-                    href={whatsappLink(o)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 bg-green-600 text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-green-700 transition-colors"
-                  >
-                    <Phone size={14} strokeWidth={2} /> Confirm on WhatsApp
-                  </a>
-                </div>
-
                 <div className="flex items-start justify-between gap-3 flex-wrap border-t border-line pt-3">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Payment</span>
@@ -2061,9 +2315,15 @@ function RetailOrdersPanel() {
                       value={o.order_status}
                       onChange={async (e) => {
                         const next = e.target.value;
+                        const draft = draftFor(o);
+                        const patch: Record<string, unknown> = {
+                          order_status: next,
+                          tracking_id: draft.tracking_id.trim() || null,
+                          tracking_url: draft.tracking_url.trim() || null,
+                        };
                         const { error } = await supabase
                           .from('retail_orders')
-                          .update({ order_status: next })
+                          .update(patch)
                           .eq('id', o.id);
                         if (error) {
                           setLoadError(describeSupabaseError(error, 'Could not update order status.'));
@@ -2071,7 +2331,7 @@ function RetailOrdersPanel() {
                         }
                         load();
                       }}
-                      className="border border-line bg-paper-2 px-2 py-1.5 text-sm text-bone rounded focus:border-crimson focus:outline-none"
+                      className="border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
                     >
                       {ORDER_STATUS_FLOW.map((s) => (
                         <option key={s} value={s}>
@@ -2082,11 +2342,54 @@ function RetailOrdersPanel() {
                   </label>
                 </div>
 
+                <div className="border-t border-line pt-3">
+                    <div className="bg-white border border-line rounded p-3 sm:p-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Shipment</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label className="block">
+                          <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Tracking ID</span>
+                          <input
+                            value={draftFor(o).tracking_id}
+                            onChange={(e) => setDraft(o.id, { tracking_id: e.target.value })}
+                            placeholder="AWB / consignment no."
+                            className="mt-1 w-full border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Tracking Link</span>
+                          <input
+                            value={draftFor(o).tracking_url}
+                            onChange={(e) => setDraft(o.id, { tracking_url: e.target.value })}
+                            placeholder="https://courier.com/track/… (optional)"
+                            className="mt-1 w-full border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
+                          />
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap mt-3">
+                        <button
+                          type="button"
+                          onClick={() => saveTracking(o)}
+                          className="btn-dark inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded"
+                        >
+                          <Save size={14} strokeWidth={2} /> Save tracking
+                        </button>
+                        <a
+                          href={updateWhatsAppLink(o)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 bg-green-600 text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-green-700 transition-colors"
+                        >
+                          <Phone size={14} strokeWidth={2} /> Send Order Update via WhatsApp
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+
                 <div className="flex justify-end border-t border-line pt-3">
                   <button
                     type="button"
                     onClick={() => { setDeleteError(''); setConfirmDelete(o); }}
-                    className="inline-flex items-center gap-2 border border-crimson/40 text-crimson bg-paper-2 hover:bg-crimson/5 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded transition-colors"
+                    className="inline-flex items-center gap-2 border border-bone/40 text-bone bg-white hover:bg-bone/5 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded transition-colors"
                   >
                     <Trash2 size={14} strokeWidth={2} /> Delete Order
                   </button>
@@ -2097,10 +2400,23 @@ function RetailOrdersPanel() {
         );
       })}
 
+      {orders.length > 0 && !ordersComplete && (
+        <div className="flex justify-center pt-2">
+          <button
+            onClick={() => void loadMore()}
+            disabled={loadingMore}
+            className="inline-flex items-center gap-2 border border-line bg-white text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone hover:border-bone rounded px-5 py-2.5 transition-colors disabled:opacity-50"
+          >
+            {loadingMore ? <Loader2 size={14} strokeWidth={2} className="animate-spin" /> : null}
+            {loadingMore ? 'Loading…' : 'Load older orders'}
+          </button>
+        </div>
+      )}
+
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/40" onClick={() => !deleting && setConfirmDelete(null)} />
-          <div className="relative w-full max-w-sm bg-paper-2 border border-line rounded-lg p-5 sm:p-6 shadow-xl">
+          <div className="relative w-full max-w-sm bg-white border border-line rounded-lg p-5 sm:p-6 shadow-xl">
             <div className="flex items-start justify-between gap-3">
               <h3 className="font-label text-sm uppercase tracking-wide-2 text-bone font-semibold">Delete this order?</h3>
               <button type="button" aria-label="Close" onClick={() => !deleting && setConfirmDelete(null)} className="text-grey hover:text-bone">
@@ -2126,7 +2442,7 @@ function RetailOrdersPanel() {
                 type="button"
                 disabled={deleting}
                 onClick={performDelete}
-                className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-crimson/90 transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-ink transition-colors disabled:opacity-50"
               >
                 {deleting ? <Loader2 size={14} strokeWidth={2.5} className="animate-spin" /> : <Trash2 size={14} strokeWidth={2} />} Delete Order
               </button>
@@ -2163,6 +2479,7 @@ function PromoPanel() {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<PromoRow | null>(null);
   const [creating, setCreating] = useState(false);
+  const { confirm: requestConfirm, dialog: confirmDialog } = useConfirm();
 
   const load = useCallback(async () => {
     setError('');
@@ -2190,8 +2507,15 @@ function PromoPanel() {
     setPromos((prev) => prev?.map((x) => (x.id === p.id ? { ...x, active: !p.active } : x)) ?? null);
   };
 
+  const requestDelete = (p: PromoRow) =>
+    requestConfirm({
+      title: 'Delete promo code',
+      message: `Delete promo "${p.code}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: () => void remove(p),
+    });
+
   const remove = async (p: PromoRow) => {
-    if (!confirm(`Delete promo "${p.code}"? This cannot be undone.`)) return;
     setError('');
     const { error } = await supabase.from('promo_codes').delete().eq('id', p.id);
     if (error) { setError(describeSupabaseError(error, 'Could not delete promo code.')); return; }
@@ -2211,7 +2535,7 @@ function PromoPanel() {
         </p>
         <button
           onClick={() => { setCreating(true); setEditing(null); }}
-          className="inline-flex items-center gap-1.5 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-3 py-2 rounded hover:bg-crimson-dark transition-colors"
+          className="inline-flex items-center gap-1.5 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-3 py-2 rounded hover:bg-ink transition-colors"
         >
           <Plus size={13} strokeWidth={2} /> New Promo
         </button>
@@ -2228,7 +2552,7 @@ function PromoPanel() {
       )}
 
       {promos.length === 0 && !creating && !editing && !error && (
-        <div className="text-center py-24 border border-line rounded bg-paper-2">
+        <div className="text-center py-24 border border-line rounded bg-white">
           <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No promo codes</p>
           <p className="mt-3 text-sm text-grey">Create a code like WELCOME10 to offer shoppers a discount.</p>
         </div>
@@ -2238,7 +2562,7 @@ function PromoPanel() {
         const expired = p.expires_at && new Date(p.expires_at).getTime() < Date.now();
         const usable = p.active && !expired && (p.max_uses === null || p.used_count < p.max_uses);
         return (
-          <div key={p.id} className="bg-paper-2 border border-line rounded p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
+          <div key={p.id} className="bg-white border border-line rounded p-3 sm:p-4 flex items-center gap-3 sm:gap-4 flex-wrap">
             <div className="w-11 h-11 shrink-0 rounded bg-paper-3 border border-line flex items-center justify-center text-bone">
               <Ticket size={18} strokeWidth={1.8} />
             </div>
@@ -2264,28 +2588,29 @@ function PromoPanel() {
               {p.note && <p className="text-[11px] text-bone-dim mt-0.5 italic truncate">Note: {p.note}</p>}
             </div>
             <span className={`shrink-0 text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-1 rounded ${
-              usable ? 'bg-green-600/10 text-green-400' : 'bg-grey/15 text-grey'
+              usable ? 'bg-green-600/10 text-green-700' : 'bg-grey/15 text-grey'
             }`}>
               {usable ? 'Active' : expired ? 'Expired' : 'Disabled'}
             </span>
             <button
               onClick={() => toggleActive(p)}
-              className="shrink-0 inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson border border-line rounded px-2.5 py-1.5 transition-colors"
+              className="shrink-0 inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone border border-line rounded px-2.5 py-1.5 transition-colors"
             >
               {p.active ? 'Disable' : 'Enable'}
             </button>
             <button
               onClick={() => { setEditing(p); setCreating(false); }}
-              className="shrink-0 text-[10px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson px-2 py-1.5 border border-line rounded hover:border-crimson transition-colors"
+              className="shrink-0 text-[10px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone px-2 py-1.5 border border-line rounded hover:border-bone transition-colors"
             >
               Edit
             </button>
-            <button onClick={() => remove(p)} className="text-grey hover:text-crimson p-1.5" aria-label="Delete promo code">
+            <button onClick={() => requestDelete(p)} className="text-grey hover:text-bone p-1.5" aria-label="Delete promo code">
               <Trash2 size={15} strokeWidth={1.8} />
             </button>
           </div>
         );
       })}
+      {confirmDialog}
     </div>
   );
 }
@@ -2326,13 +2651,14 @@ function PromoForm({
     active: initial?.active ?? true,
   });
 
-  const inputCls = 'w-full border border-line bg-paper-2 px-2.5 py-2 text-sm text-bone focus:border-crimson focus:outline-none rounded';
+  const inputCls = 'w-full border border-line bg-white px-2.5 py-2 text-sm text-bone focus:border-bone focus:outline-none rounded';
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError('');
-    const value = Math.max(0, Number(form.discount_value) || 0);
+    let value = Math.max(0, Number(form.discount_value) || 0);
+    if (form.discount_type === 'percent') value = Math.min(100, value);
     const minOrder = Math.max(0, Number(form.min_order_value) || 0);
     const maxDisc = form.max_discount !== '' ? Math.max(0, Number(form.max_discount) || 0) : null;
     const perCustomer =
@@ -2367,7 +2693,7 @@ function PromoForm({
   };
 
   return (
-    <form onSubmit={submit} className="bg-paper-2 border border-line rounded p-4 sm:p-5 space-y-4">
+    <form onSubmit={submit} className="bg-white border border-line rounded p-4 sm:p-5 space-y-4">
       <h3 className="font-display text-lg uppercase tracking-wide-2 text-bone">
         {initial ? `Edit ${initial.code}` : 'New Promo Code'}
       </h3>
@@ -2411,15 +2737,15 @@ function PromoForm({
         <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className={inputCls} placeholder="e.g. Winter sale, saturday email code" maxLength={240} />
       </Field>
       <label className="flex items-center gap-2 text-sm text-bone">
-        <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 accent-crimson" />
+        <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 accent-bone" />
         Active — redeemable at checkout
       </label>
       <div className="flex items-center gap-2 pt-1">
-        <button type="submit" disabled={saving} className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-crimson-dark transition-colors disabled:opacity-60">
+        <button type="submit" disabled={saving} className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 rounded hover:bg-ink transition-colors disabled:opacity-60">
           {saving ? <Loader2 size={14} strokeWidth={2} className="animate-spin" /> : null}
           {saving ? 'Saving…' : 'Save Promo'}
         </button>
-        <button type="button" onClick={onCancel} className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-crimson border border-line rounded px-5 py-3 transition-colors">
+        <button type="button" onClick={onCancel} className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone border border-line rounded px-5 py-3 transition-colors">
           Cancel
         </button>
       </div>

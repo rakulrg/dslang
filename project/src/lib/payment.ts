@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { invokeFunction } from '@/lib/rest';
 
 /**
  * Payment abstraction layer — the only place payment-provider specifics live.
@@ -130,25 +130,32 @@ export async function createPaymentSession(req: PaymentSessionRequest): Promise<
  * Asks the secure backend for the authoritative, verified payment state of an
  * order (used right after returning from the gateway — never trusting a
  * browser success page or URL parameter).
+ *
+ * `phone` is the customer's 10-digit number from the checkout form. The
+ * cashfree-status Edge Function requires it as a possession factor before it
+ * returns ANY order data — the caller must know the ref AND the phone.
  */
-export async function verifyPayment(orderRef: string): Promise<PaymentVerification> {
+export async function verifyPayment(orderRef: string, phone: string): Promise<PaymentVerification> {
   const cfg = getPaymentConfig();
   if (!cfg.configured || PROVIDER !== 'cashfree') {
     return { verified: false, status: 'unavailable', order: null };
   }
-  const { data, error } = await supabase.functions.invoke('cashfree-status', {
-    body: { orderRef },
-  });
-  if (error || !data) {
+  try {
+    const data = await invokeFunction<{
+      verified?: boolean;
+      status?: string;
+      order?: Record<string, unknown> | null;
+    }>('cashfree-status', { orderRef, phone });
+    return {
+      verified: Boolean(data.verified),
+      status: data.status as PaymentVerification['status'],
+      order: data.order ?? null,
+    };
+  } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[checkout] Payment verification failed:', error ?? data);
+    console.error('[checkout] Payment verification failed:', err);
     return { verified: false, status: 'unavailable', order: null };
   }
-  return {
-    verified: Boolean(data.verified),
-    status: data.status as PaymentVerification['status'],
-    order: data.order ?? null,
-  };
 }
 
 /** Plain-text note used in checkout to explain the payment state. */

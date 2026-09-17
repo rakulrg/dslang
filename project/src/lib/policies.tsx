@@ -31,7 +31,7 @@ export function PolicyPageShell({ eyebrow, title, intro, children }: PolicyPageS
   return (
     <div className="pt-4 pb-12 md:pt-8 md:pb-20">
       <div className="mx-auto max-w-[1000px] px-5 md:px-8">
-        <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">
+        <p className="font-label text-[10px] uppercase tracking-ultra text-grey mb-2">
           {eyebrow}
         </p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-[0.95]">
@@ -88,7 +88,7 @@ export function PolicyOl({ items }: { items: ReactNode[] }) {
     <ol className="space-y-3">
       {items.map((item, i) => (
         <li key={i} className="flex gap-3">
-          <span className="font-label text-crimson font-semibold shrink-0">{(i + 1).toString().padStart(2, '0')}</span>
+          <span className="font-label text-bone font-semibold shrink-0">{(i + 1).toString().padStart(2, '0')}</span>
           <span>{item}</span>
         </li>
       ))}
@@ -102,7 +102,7 @@ export function PolicyUl({ items }: { items: ReactNode[] }) {
     <ul className="space-y-3">
       {items.map((item, i) => (
         <li key={i} className="flex gap-3">
-          <span className="block w-1.5 h-1.5 rounded-full bg-crimson shrink-0 mt-2" aria-hidden="true" />
+          <span className="block w-1.5 h-1.5 rounded-full bg-bone shrink-0 mt-2" aria-hidden="true" />
           <span>{item}</span>
         </li>
       ))}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ProductCard } from '@/components/ProductCard';
+import { FadeSwap, ProductGridSkeleton } from '@/components/Skeletons';
 import { fetchProducts, isRetailVisible, type CatalogProduct } from '@/lib/catalog';
-import { LoadingDots } from '@/components/LoadingDots';
 
 export function CollectionPage() {
   const [filter, setFilter] = useState('all');
@@ -10,14 +10,21 @@ export function CollectionPage() {
   const [loadKey, setLoadKey] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     setProducts(null);
     setError(false);
     fetchProducts()
       .then((all) => {
+        if (cancelled) return;
         setProducts(all.filter((p) => isRetailVisible(p)));
         setError(false);
       })
-      .catch(() => setError(true));
+      .catch(() => {
+        if (!cancelled) setError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [loadKey]);
 
   const categories = Array.from(
@@ -32,18 +39,15 @@ export function CollectionPage() {
 
   return (
     <div className="pb-12 md:pb-20 pt-3">
-      <div className="mx-auto px-2 md:px-12 lg:px-20 xl:px-28">
+      <div className="mx-auto px-2 md:px-4 lg:px-6 xl:px-8">
         {/* Header */}
-        <div className="px-2 md:px-0 border-b border-line pb-4 md:pb-8">
-          <p className="font-label text-[10px] uppercase tracking-ultra text-crimson mb-2">
+        <div className="md:px-0 border-b border-line pb-4 md:pb-8">
+          <p className="font-label text-[9px] uppercase tracking-wide-2 text-grey mb-1.5">
             DSLANG · Slang Of Design
           </p>
-          <h1 className="font-display text-[1.75rem] md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
+          <h1 className="font-display text-[1.5rem] md:text-[5rem] uppercase tracking-wide-2 text-bone leading-[0.85]">
             Shop The Collection
           </h1>
-          <p className="mt-3 text-bone-dim max-w-xl leading-relaxed text-sm md:text-base">
-            Oversized fits, heavy quality. Pan-India dispatch in 24–48 hrs with easy size exchanges.
-          </p>
         </div>
 
         {/* Filters */}
@@ -54,16 +58,18 @@ export function CollectionPage() {
               onClick={() => setFilter(f.value)}
               className={`shrink-0 font-label text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-150 ${
                 filter === f.value
-                  ? 'bg-bone text-ink border-bone'
+                  ? 'bg-bone text-white border-bone'
                   : 'border-line text-bone-dim hover:border-bone-dim hover:text-bone'
               }`}
             >
               {f.label}
             </button>
           ))}
-          <span className="ml-auto shrink-0 font-label text-[11px] uppercase tracking-wide-2 text-grey">
-            {filtered.length} {filtered.length === 1 ? 'Design' : 'Designs'}
-          </span>
+          {!error && products !== null && (
+            <span className="ml-auto shrink-0 font-label text-[10px] uppercase tracking-wide-2 text-grey">
+              {filtered.length} {filtered.length === 1 ? 'Design' : 'Designs'}
+            </span>
+          )}
         </div>
 
         {error ? (
@@ -72,45 +78,27 @@ export function CollectionPage() {
             <p className="mt-2 text-sm text-grey">Could not load the collection. Please try again.</p>
             <button
               onClick={() => setLoadKey((k) => k + 1)}
-              className="mt-8 inline-flex items-center text-[11px] uppercase tracking-wide-2 font-semibold bg-crimson text-white px-6 py-3.5 hover:bg-crimson-dark transition-colors"
+              className="mt-8 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
             >
               Try Again
             </button>
           </div>
-        ) : products === null ? (
-          <div className="min-h-[50vh] flex items-center justify-center"><LoadingDots /></div>
-        ) : filtered.length > 0 ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-8">
-            {filtered.map((p, i) => (
-              <ProductCard key={p.id} product={p} index={i} />
-            ))}
-          </div>
         ) : (
-          <div className="py-16 text-center">
+          <FadeSwap loading={products === null} skeleton={<ProductGridSkeleton count={8} />}>
+          {filtered.length > 0 ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-x-0.5 gap-y-6 md:gap-x-8 md:gap-y-10">
+            {filtered.map((p, i) => (
+              <ProductCard key={p.id} product={p} index={i} immediate />
+            ))}
+            </div>
+          ) : (
+            <div className="py-16 text-center">
             <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No Designs</p>
             <p className="mt-2 text-sm text-grey">{activeCat ? `Nothing in "${activeCat}" yet. ` : ''}Next drop loading. Stay close.</p>
-          </div>
+            </div>
+          )}
+          </FadeSwap>
         )}
-
-        {/* Retail highlights */}
-        <div className="mt-10 grid grid-cols-2 md:grid-cols-4 gap-3 text-center bg-paper-3 border border-line px-4 py-8">
-          <div>
-            <p className="font-display text-xl md:text-2xl uppercase tracking-wide-2 text-bone">Heavy Weight</p>
-            <p className="mt-1 text-[11px] text-grey">240 GSM cotton</p>
-          </div>
-          <div>
-            <p className="font-display text-xl md:text-2xl uppercase tracking-wide-2 text-bone">Oversized</p>
-            <p className="mt-1 text-[11px] text-grey">True-to-size boxy fit</p>
-          </div>
-          <div>
-            <p className="font-display text-xl md:text-2xl uppercase tracking-wide-2 text-bone">Fast Ships</p>
-            <p className="mt-1 text-[11px] text-grey">24–48 hrs dispatch</p>
-          </div>
-          <div>
-            <p className="font-display text-xl md:text-2xl uppercase tracking-wide-2 text-bone">Easy Swap</p>
-            <p className="mt-1 text-[11px] text-grey">7-day size exchange</p>
-          </div>
-        </div>
       </div>
     </div>
   );

@@ -33,6 +33,11 @@ function baseUrl(env: string): string {
     : 'https://sandbox.cashfree.com';
 }
 
+/** Normalizes a phone number to its last 10 digits (Indic mobile format). */
+function normalizePhone(raw: unknown): string {
+  return String(raw ?? '').replace(/\D/g, '').slice(-10);
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ verified: false, status: 'unavailable', order: null }, 405);
@@ -46,7 +51,7 @@ Deno.serve(async (req) => {
     return json({ verified: false, status: 'unavailable', order: null }, 500);
   }
 
-  let body: { orderRef?: string };
+  let body: { orderRef?: string; phone?: string };
   try {
     body = await req.json();
   } catch {
@@ -65,6 +70,17 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (error || !order || !order.payment_id) {
     return json({ verified: false, status: 'pending', order: null }, 404);
+  }
+
+  // POSSESSION GATE: the caller must know the order reference AND the
+  // customer's 10-digit phone. An anonymous caller who only knows/guesses an
+  // order ref gets the same indistinguishable "pending / null" response as an
+  // invalid ref — so this endpoint can never be used to enumerate orders or
+  // read customer PII (name, phone, delivery address) from retail_orders.
+  const orderPhone = normalizePhone((order.customer as Record<string, unknown> | null)?.phone);
+  const callerPhone = normalizePhone(body.phone);
+  if (callerPhone.length !== 10 || callerPhone !== orderPhone) {
+    return json({ verified: false, status: 'pending', order: null }, 200);
   }
 
   if (order.payment_status === 'success') {

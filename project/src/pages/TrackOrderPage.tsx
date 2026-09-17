@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Check, Loader2, Package, Search, ShieldCheck, Truck, XCircle, RotateCcw, Clock } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Loader2, Package, Search, ShieldCheck, Truck, XCircle, RotateCcw, Clock, ExternalLink } from 'lucide-react';
+import { rpc } from '@/lib/rest';
 import { useRouter } from '@/lib/router';
 import { formatPrice } from '@/lib/catalog';
 
@@ -32,6 +32,8 @@ interface TrackedOrder {
   discount: number;
   shipping: number;
   total_amount: number;
+  tracking_id?: string | null;
+  tracking_url?: string | null;
   items: TrackItem[];
 }
 
@@ -55,6 +57,18 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
   const [error, setError] = useState('');
   const [order, setOrder] = useState<TrackedOrder | null>(null);
   const [didLookup, setDidLookup] = useState(false);
+  const refInputRef = useRef<HTMLInputElement>(null);
+  const phoneInputRef = useRef<HTMLInputElement>(null);
+
+  const focusField = (el: HTMLInputElement | null) => {
+    if (!el) return;
+    try {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.focus({ preventScroll: true });
+    } catch {
+      el.focus();
+    }
+  };
 
   useEffect(() => {
     if (!refFromRoute) return;
@@ -91,19 +105,18 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
     e?.preventDefault();
     const ref = refInput.trim().toUpperCase();
     const digits = phone.replace(/\D/g, '');
-    if (!ref) return setError('Enter your order reference.');
-    if (digits.length !== 10) return setError('Enter your 10-digit mobile number.');
+    if (!ref) { setError('Enter your order reference.'); focusField(refInputRef.current); return; }
+    if (digits.length !== 10) { setError('Enter your 10-digit mobile number.'); focusField(phoneInputRef.current); return; }
     setLoading(true);
     setError('');
     setOrder(null);
     setDidLookup(false);
     try {
-      const { data, error: rpcError } = await supabase.rpc('track_lookup_order', {
+      const data = await rpc<{ ok: boolean; reason?: string; order?: TrackedOrder }>('track_lookup_order', {
         p_ref: ref,
         p_phone: digits,
       });
-      if (rpcError) throw rpcError;
-      const res = data as { ok: boolean; reason?: string; order?: TrackedOrder };
+      const res = data;
       if (!res?.ok) {
         setError(res?.reason || 'We could not find that order.');
       } else if (res.order) {
@@ -144,28 +157,30 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
         <label className="block">
           <span className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Order Reference</span>
           <input
+            ref={refInputRef}
             value={refInput}
             onChange={(e) => setRefInput(e.target.value.toUpperCase())}
             placeholder="e.g. DSL-R-ABCD1234"
             autoCapitalize="characters"
             spellCheck={false}
-            className="mt-1.5 w-full border border-line bg-ink-2 px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
+            className="mt-1.5 w-full border border-line bg-white px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:border-bone focus:outline-none transition-colors"
           />
         </label>
         <label className="block">
           <span className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Mobile Number</span>
           <input
+            ref={phoneInputRef}
             value={phone}
             onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
             placeholder="10-digit number"
             inputMode="numeric"
-            className="mt-1.5 w-full border border-line bg-ink-2 px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
+            className="mt-1.5 w-full border border-line bg-white px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:border-bone focus:outline-none transition-colors"
           />
         </label>
         <button
           type="submit"
           disabled={loading}
-          className="inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-[13px] hover:bg-crimson-dark transition-colors disabled:opacity-60"
+          className="btn-soft btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-[13px] disabled:opacity-60"
         >
           {loading ? <Loader2 size={15} strokeWidth={2} className="animate-spin" /> : <Search size={15} strokeWidth={2} />}
           <span>{loading ? 'Checking…' : 'Track'}</span>
@@ -190,7 +205,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
             </div>
             <div className="text-right">
               <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Total</p>
-              <p className="font-price text-lg font-bold text-crimson tabular-nums">{formatPrice(order.total_amount)}</p>
+              <p className="font-price text-lg font-bold text-bone tabular-nums">{formatPrice(order.total_amount)}</p>
             </div>
           </div>
 
@@ -209,12 +224,11 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
                   const meta = STATUS_META[s];
                   const Icon = meta.icon;
                   const reached = i <= current || i === 0;
-                  const isCurrent = i === current;
                   return (
                     <div key={s} className="flex items-center gap-2">
                       <div
                         className={`inline-flex items-center gap-2 rounded px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold ${
-                          reached ? 'bg-green-600/10 text-green-400' : 'bg-grey/10 text-grey'
+                          reached ? 'bg-green-600/10 text-green-700' : 'bg-grey/10 text-grey'
                         }`}
                       >
                         <Icon size={14} strokeWidth={2} />
@@ -234,6 +248,37 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
             </div>
           )}
 
+          {(order.order_status === 'shipped' || order.order_status === 'delivered') &&
+            (order.tracking_id || order.tracking_url) && (
+              <div className="mt-6 border border-line bg-paper px-4 py-3">
+                <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-2 flex items-center gap-1.5">
+                  <Truck size={13} strokeWidth={1.8} /> Shipment Tracking
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                  {order.tracking_id && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide-2 text-grey">Tracking Number</p>
+                      <p className="text-bone font-medium mt-0.5">{order.tracking_id}</p>
+                    </div>
+                  )}
+                  {order.tracking_url && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide-2 text-grey">Track Shipment</p>
+                      <a
+                        href={order.tracking_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-bone underline underline-offset-2 hover:text-bone-dim"
+                      >
+                        {order.tracking_url.length > 48 ? `${order.tracking_url.slice(0, 48)}…` : order.tracking_url}
+                        <ExternalLink size={12} />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
           {order.items.length > 0 && (
             <div className="mt-6 border-t border-line pt-4">
               <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-2">Your Products</p>
@@ -251,7 +296,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
               <div className="mt-3 space-y-1.5 border-t border-line pt-3 text-sm text-grey">
                 <div className="flex justify-between"><span>Items ({order.total_qty})</span><span className="text-bone">{formatPrice(order.subtotal)}</span></div>
                 {order.discount > 0 && (
-                  <div className="flex justify-between"><span>Discount</span><span className="text-green-400">−{formatPrice(order.discount)}</span></div>
+                  <div className="flex justify-between"><span>Discount</span><span className="text-green-700">−{formatPrice(order.discount)}</span></div>
                 )}
                 <div className="flex justify-between"><span>Shipping</span><span className="text-bone">{order.shipping > 0 ? formatPrice(order.shipping) : 'FREE'}</span></div>
               </div>
@@ -261,7 +306,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
           <div className="mt-6 flex flex-wrap gap-3 border-t border-line pt-5">
             <button
               onClick={() => navigate('/contact')}
-              className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3 hover:bg-crimson-dark transition-colors"
+              className="btn-soft btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3"
             >
               Need Help?
             </button>

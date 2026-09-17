@@ -13,7 +13,6 @@ const NAV_LINKS = [
   { label: 'Collection', to: '/collection' },
   { label: 'New Drops', to: '/new-drops' },
   { label: 'Track Order', to: '/track-order' },
-  { label: 'How It Works', to: '/how-it-works' },
   { label: 'About', to: '/stock-dslang' },
 ];
 
@@ -56,6 +55,13 @@ export function Navbar({
     return () => window.removeEventListener('keydown', onKey);
   }, [menuOpen]);
 
+  // A route change — menu link tap, browser back/forward, or programmatic
+  // navigation — must always close the mobile menu. The scroll-lock effect
+  // above releases the body scroll via its cleanup when menuOpen turns false.
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [currentPath]);
+
   const isActive = (to: string) => {
     if (to === '/') return currentPath === '/' || currentPath === '';
     if (to === '/stock-dslang') {
@@ -71,12 +77,12 @@ export function Navbar({
       <header
         className={`fixed top-8 inset-x-0 z-50 transition-all duration-200 ${
           solid
-            ? 'bg-ink/90 backdrop-blur-xl border-b border-line'
-            : 'bg-ink/60 backdrop-blur-md border-b border-transparent'
+            ? 'bg-white/95 backdrop-blur-xl border-b border-line shadow-[0_1px_20px_rgba(0,0,0,0.04)]'
+            : 'bg-white/80 backdrop-blur-md border-b border-transparent'
         }`}
       >
         <nav className="mx-auto px-4 md:px-12 lg:px-20 xl:px-28">
-          <div className="flex h-11 md:h-14 items-center gap-3 md:gap-6">
+          <div className="flex h-12 md:h-14 items-center gap-3 md:gap-6">
             {/* Left — hamburger (mobile) */}
             <button
               onClick={() => setMenuOpen(true)}
@@ -92,7 +98,7 @@ export function Navbar({
               className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-brand text-2xl md:text-3xl tracking-[0.18em] leading-none select-none text-bone lg:static lg:translate-x-0 lg:translate-y-0"
               aria-label="DSLANG home"
             >
-              DSLANG<span className="text-crimson">.</span>
+              DSLANG
             </a>
 
             {/* Desktop links */}
@@ -101,8 +107,9 @@ export function Navbar({
                 <a
                   key={l.to}
                   href={linkHref(l.to)}
-                  className={`font-label text-[11px] xl:text-xs uppercase tracking-[0.16em] font-semibold transition-colors ${
-                    isActive(l.to) ? 'text-crimson' : 'text-bone-dim hover:text-bone'
+                  aria-current={isActive(l.to) ? 'page' : undefined}
+                  className={`nav-underline font-label text-[11px] xl:text-xs uppercase tracking-[0.16em] font-semibold transition-colors ${
+                    isActive(l.to) ? 'text-bone' : 'text-bone-dim hover:text-bone'
                   }`}
                 >
                   {l.label}
@@ -115,7 +122,7 @@ export function Navbar({
               {!user && (
                 <button
                   onClick={() => onOpenLogin('signin')}
-                  className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-crimson transition-colors"
+                  className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-bone transition-colors"
                 >
                   Sign In
                 </button>
@@ -123,26 +130,26 @@ export function Navbar({
               {user && (
                 <button
                   onClick={() => navigate(isAdmin ? '/admin' : '/account')}
-                  className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-crimson transition-colors"
+                  className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-bone transition-colors"
                 >
                   {isAdmin ? 'Admin' : 'Account'}
                 </button>
               )}
               <button
                 onClick={() => { setSearchOpen(true); setMenuOpen(false); }}
-                className="relative text-bone-dim hover:text-crimson transition-colors p-1"
+                className="relative text-bone-dim hover:text-bone transition-colors p-1"
                 aria-label="Search products"
               >
                 <Search size={22} strokeWidth={1.6} />
               </button>
               <button
                 onClick={() => { openCart(); setMenuOpen(false); }}
-                className="relative text-bone-dim hover:text-crimson transition-colors p-1"
+                className="relative text-bone-dim hover:text-bone transition-colors p-1"
                 aria-label="Shopping bag"
               >
                 <ShoppingBag size={22} strokeWidth={1.6} />
                 {retailCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 bg-crimson text-white text-[9px] font-bold min-w-4 h-4 px-1 rounded-full flex items-center justify-center leading-none tabular-nums">
+                  <span className="absolute -top-1.5 -right-1.5 bg-bone text-white text-[9px] font-bold min-w-4 h-4 px-1 rounded-full flex items-center justify-center leading-none tabular-nums">
                     {retailCount}
                   </span>
                 )}
@@ -159,20 +166,20 @@ export function Navbar({
         aria-hidden={!menuOpen}
       >
         <div
-          className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity duration-200"
+          className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity duration-[250ms]"
           style={{ opacity: menuOpen ? 1 : 0 }}
           onClick={() => setMenuOpen(false)}
         />
         <div
-          className="absolute left-0 top-8 h-[calc(100dvh-2rem)] w-[80vw] max-w-[380px] bg-paper-2 border-r border-line flex flex-col will-change-transform"
+          className="absolute left-0 top-8 h-[calc(100dvh-2rem)] w-[95vw] bg-paper-2 border-r border-line flex flex-col will-change-transform"
           style={{
             transform: menuOpen ? 'translateX(0)' : 'translateX(-100%)',
-            transition: 'transform 250ms cubic-bezier(0.16, 1, 0.3, 1)',
+            transition: 'transform 250ms cubic-bezier(0.4, 0, 0.2, 1)',
           }}
         >
           <div className="flex items-center justify-between h-11 px-5 border-b border-line shrink-0">
             <span className="font-brand text-2xl tracking-[0.03em] text-bone">
-              DSLANG<span className="text-crimson">.</span>
+              DSLANG
             </span>
             <button onClick={() => setMenuOpen(false)} className="text-bone p-1" aria-label="Close menu">
               <X size={22} strokeWidth={1.6} />
@@ -189,7 +196,7 @@ export function Navbar({
                     href={linkHref(l.to)}
                     onClick={() => setMenuOpen(false)}
                     className={`block px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors ${
-                      isActive(l.to) ? 'text-crimson' : 'text-bone-dim hover:text-bone'
+                      isActive(l.to) ? 'text-bone' : 'text-bone-dim hover:text-bone'
                     }`}
                   >
                     {l.label}
@@ -201,7 +208,7 @@ export function Navbar({
                   href={linkHref('/contact')}
                   onClick={() => setMenuOpen(false)}
                   className={`block px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors ${
-                    isActive('/contact') ? 'text-crimson' : 'text-bone-dim hover:text-bone'
+                    isActive('/contact') ? 'text-bone' : 'text-bone-dim hover:text-bone'
                   }`}
                 >
                   Contact
@@ -219,20 +226,12 @@ export function Navbar({
                     {isAdmin ? 'Admin Panel' : 'Account'}
                   </button>
                 ) : (
-                  <>
-                    <button
-                      onClick={() => { setMenuOpen(false); onOpenLogin('signin'); }}
-                      className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
-                    >
-                      Sign In
-                    </button>
-                    <button
-                      onClick={() => { setMenuOpen(false); onOpenLogin('signup'); }}
-                      className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
-                    >
-                      Create Account
-                    </button>
-                  </>
+                  <button
+                    onClick={() => { setMenuOpen(false); onOpenLogin('signin'); }}
+                    className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
+                  >
+                    LOGIN
+                  </button>
                 )}
               </li>
             </ul>
@@ -243,14 +242,11 @@ export function Navbar({
               href={INSTAGRAM_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-bone-dim hover:text-crimson transition-colors"
+              className="text-bone-dim hover:text-bone transition-colors"
               aria-label="Instagram"
             >
               <Instagram size={20} strokeWidth={1.6} />
             </a>
-            <span className="ml-auto text-[10px] uppercase tracking-wide-2 text-grey">
-              Pan-India delivery · Easy exchanges
-            </span>
           </div>
         </div>
       </div>

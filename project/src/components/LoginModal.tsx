@@ -1,6 +1,5 @@
-import { useState, type FormEvent, useEffect, useCallback } from 'react';
+import { useState, type FormEvent, useEffect } from 'react';
 import { X, Mail, ArrowRight, Lock } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { useRouter } from '@/lib/router';
 import { lockScroll, unlockScroll } from '@/lib/scrollLock';
@@ -14,7 +13,7 @@ export function LoginModal({
   onClose: () => void;
   initialMode?: 'signin' | 'signup';
 }) {
-  const { user, loading, isAdmin } = useAuth();
+  const { user, loading, isAdmin, signIn, signUp } = useAuth();
   const { navigate } = useRouter();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
@@ -68,14 +67,10 @@ export function LoginModal({
     setBusy(true);
     try {
       if (mode === 'signup') {
-        const { error: signUpError } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { opt_in: optIn } },
-        });
+        const { error: signUpError } = await signUp(email, password, optIn);
         if (signUpError) throw signUpError;
       } else {
-        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        const { error: signInError } = await signIn(email, password);
         if (signInError) throw signInError;
       }
     } catch (err) {
@@ -98,12 +93,12 @@ export function LoginModal({
     return (
     <div role="dialog" aria-modal="true" aria-label="Account redirect" className="fixed inset-0 z-[80] flex items-center justify-center px-5">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in" onClick={onClose} />
-        <div className="relative w-full max-w-md bg-paper-2 border border-line rounded p-8 animate-scale-in">
+        <div className="relative w-full max-w-md bg-white border border-line rounded p-8 animate-scale-in">
           <button onClick={onClose} className="absolute top-4 right-4 text-grey hover:text-bone transition-colors" aria-label="Close">
             <X size={22} strokeWidth={1.8} />
           </button>
           <div className="flex items-center gap-3 mb-2">
-            <span className="font-brand text-2xl tracking-[0.03em] text-bone">DSLANG<span className="text-crimson">.</span></span>
+            <span className="font-brand text-2xl tracking-[0.03em] text-bone">DSLANG</span>
           </div>
           <h2 className="font-display text-2xl uppercase tracking-wide-2 text-bone mt-4">Welcome back</h2>
           <p className="mt-2 text-sm text-bone-soft">You are signed in as {user.email}.</p>
@@ -122,13 +117,13 @@ export function LoginModal({
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="login-title" className="fixed inset-0 z-[80] flex items-center justify-center px-5">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-paper-2 border border-line p-6 md:p-8 animate-scale-in max-h-[90dvh] overflow-y-auto overscroll-contain">
+      <div className="relative w-full max-w-md bg-white border border-line p-6 md:p-8 animate-scale-in max-h-[90dvh] overflow-y-auto overscroll-contain">
         <button onClick={onClose} className="absolute top-4 right-4 text-grey hover:text-bone transition-colors" aria-label="Close">
           <X size={22} strokeWidth={1.8} />
         </button>
 
         <div className="flex items-center justify-center mb-4">
-          <span className="font-brand text-3xl tracking-[0.03em] text-bone">DSLANG<span className="text-crimson">.</span></span>
+          <span className="font-brand text-3xl tracking-[0.03em] text-bone">DSLANG</span>
         </div>
 
         <h2 id="login-title" className="font-price text-[28px] md:text-[32px] uppercase tracking-[0.03em] text-bone text-center leading-[1.05]">
@@ -146,13 +141,13 @@ export function LoginModal({
                 value={email}
                 onChange={(e) => { setEmail(e.target.value); setError(''); }}
                 placeholder="Email"
-                className="w-full pl-10 pr-12 py-3.5 bg-ink-2 border border-line text-bone text-sm placeholder:text-grey focus:outline-none focus:border-crimson transition-colors"
+                className="w-full pl-10 pr-12 py-3.5 bg-white border border-line text-bone text-sm placeholder:text-grey focus:outline-none focus:border-bone transition-colors"
               />
               {!showPassword && (
                 <button
                   type="button"
                   onClick={handleContinue}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full text-bone-dim hover:text-crimson transition-colors"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full text-bone-dim hover:text-bone transition-colors"
                   aria-label="Continue"
                 >
                   <ArrowRight size={16} strokeWidth={2} />
@@ -173,7 +168,7 @@ export function LoginModal({
                   value={password}
                   onChange={(e) => { setPassword(e.target.value); setError(''); }}
                   placeholder="Password (min 6 characters)"
-                  className="w-full pl-10 pr-4 py-3.5 bg-ink-2 border border-line text-bone text-sm placeholder:text-grey focus:outline-none focus:border-crimson transition-colors"
+                  className="w-full pl-10 pr-4 py-3.5 bg-white border border-line text-bone text-sm placeholder:text-grey focus:outline-none focus:border-bone transition-colors"
                 />
               </div>
             </label>
@@ -187,7 +182,7 @@ export function LoginModal({
             <button
               type="submit"
               disabled={busy}
-              className="w-full bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 rounded hover:bg-crimson-dark transition-colors disabled:opacity-50"
+              className="w-full btn-dark text-[11px] uppercase tracking-wide-2 font-semibold py-4 transition-colors disabled:opacity-50"
             >
               {busy ? 'Please wait…' : mode === 'signin' ? 'Sign In' : 'Create Account'}
             </button>
@@ -205,7 +200,7 @@ export function LoginModal({
             type="checkbox"
             checked={optIn}
             onChange={(e) => setOptIn(e.target.checked)}
-            className="w-4 h-4 accent-crimson"
+            className="w-4 h-4 accent-bone"
           />
           <span className="text-xs text-bone-soft">Email me new drops & offers</span>
         </label>
@@ -214,7 +209,7 @@ export function LoginModal({
           {mode === 'signin' ? "Don't have an account? " : 'Already have an account? '}
           <button
             onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); setShowPassword(false); }}
-            className="text-crimson hover:text-crimson-dark font-medium"
+            className="text-bone hover:text-bone-dim font-medium"
           >
             {mode === 'signin' ? 'Create one' : 'Sign in'}
           </button>

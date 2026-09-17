@@ -5,9 +5,8 @@ import { getPromo, savePromo, removePromo, promoApplies, type Promo } from '@/li
 const STORAGE_KEY = 'dslang_retail_cart_v1';
 
 /**
- * Retail / D2C cart — completely separate from the wholesale pack cart.
+ * Retail / D2C cart.
  * Lines are normal retail SKUs: one item = product + color + size + quantity.
- * No pack logic, no MOQ, no wholesale pricing.
  */
 
 export interface D2cCartItem {

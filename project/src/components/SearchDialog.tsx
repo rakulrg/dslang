@@ -1,18 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Search, X } from 'lucide-react';
-import { fetchProducts, isRetailVisible, getRetailPrice, getMrp, formatPrice, type CatalogProduct } from '@/lib/catalog';
+import { fetchProducts, isRetailVisible, getRetailPrice, getMrp, formatPrice, isProductInStock, type CatalogProduct } from '@/lib/catalog';
 import { linkHref } from '@/lib/router';
 import { lockScroll, unlockScroll } from '@/lib/scrollLock';
 
-let cachedProducts: CatalogProduct[] | null = null;
-
 function loadProducts(): Promise<CatalogProduct[]> {
-  if (cachedProducts) return Promise.resolve(cachedProducts);
   return fetchProducts()
-    .then((all) => {
-      cachedProducts = all.filter((p) => isRetailVisible(p));
-      return cachedProducts;
-    })
+    .then((all) => all.filter((p) => isRetailVisible(p)))
     .catch(() => []);
 }
 
@@ -65,7 +59,7 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
         role="dialog"
         aria-modal="true"
         aria-label="Search products"
-        className="absolute left-1/2 top-[92px] md:top-[104px] w-[calc(100vw-2rem)] max-w-2xl max-h-[75dvh] flex flex-col overflow-hidden bg-paper-2 border border-line shadow-[0_20px_60px_rgba(0,0,0,0.55)] will-change-transform"
+        className="absolute left-1/2 top-[92px] md:top-[104px] w-[calc(100vw-2rem)] max-w-2xl max-h-[75dvh] flex flex-col overflow-hidden bg-white border border-line shadow-[0_20px_60px_rgba(0,0,0,0.18)] will-change-transform"
         style={{
           transform: open ? 'translateX(-50%) translateY(0)' : 'translateX(-50%) translateY(-12px)',
           opacity: open ? 1 : 0,
@@ -101,6 +95,7 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
                 const image = primary?.images[0];
                 const price = getRetailPrice(p);
                 const mrp = getMrp(p);
+                const soldOut = !isProductInStock(p);
                 return (
                   <a
                     key={p.id}
@@ -123,6 +118,9 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
                       {price > 0 && (
                         <p className="font-price text-sm font-semibold text-bone tabular-nums">{formatPrice(price)}</p>
                       )}
+                      {soldOut && (
+                        <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mt-0.5">Sold out</p>
+                      )}
                       {mrp !== null && mrp > price && (
                         <p className="font-price text-[11px] text-grey line-through tabular-nums">{formatPrice(mrp)}</p>
                       )}
@@ -140,7 +138,7 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
           </span>
           <button
             onClick={() => { onClose(); window.location.hash = '#/collection'; }}
-            className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-crimson hover:text-crimson-dark transition-colors"
+            className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-bone hover:text-bone-dim transition-colors"
           >
             View Collection →
           </button>

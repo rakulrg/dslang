@@ -67,14 +67,6 @@ export async function openCashfreeCheckout(opts: {
     throw new Error('Could not open the payment gateway. Please try again.');
   }
   const cashfree = window.Cashfree({ mode: toCashfreeMode(opts.environment) });
-  // eslint-disable-next-line no-console
-  console.log('[checkout] cashfree checkout diag', {
-    provider: getPaymentConfig().provider,
-    configured: getPaymentConfig().configured,
-    paymentSessionId: opts.paymentSessionId,
-    environment: opts.environment,
-    sdkMode: toCashfreeMode(opts.environment),
-  });
   const result = await cashfree.checkout({
     paymentSessionId: opts.paymentSessionId,
     redirectTarget: opts.redirectTarget ?? '_self',

@@ -13,7 +13,7 @@ export function LoadingDots({ className = '' }: { className?: string }) {
     width: 7,
     height: 7,
     borderRadius: '50%',
-    backgroundColor: 'var(--color-crimson)',
+    backgroundColor: 'var(--color-bone)',
     display: 'inline-block',
   };
 

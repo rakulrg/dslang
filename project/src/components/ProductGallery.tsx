@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, useCallback, memo } from 'react';
+import { useEffect, useRef, useState, useCallback, memo, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { responsiveSrc } from '@/lib/img';
 
-/* Shared product galleries used by both the retail (D2C) and wholesale
- * product pages. The SwipeGallery is the touch/mobile view, DesktopGallery the
- * thumbnail view, LightboxViewer the fullscreen viewer. */
+/* Shared product galleries. The SwipeGallery is the touch/mobile view,
+ * DesktopGallery the thumbnail view, LightboxViewer the fullscreen viewer. */
 
 /* ---- Swipe Gallery ---- */
 
@@ -14,6 +14,7 @@ export const SwipeGallery = memo(function SwipeGallery({
   onImageClick,
   onIndexChange,
   showDotRow = true,
+  overlay,
 }: {
   images: string[];
   productName: string;
@@ -21,6 +22,7 @@ export const SwipeGallery = memo(function SwipeGallery({
   onImageClick: () => void;
   onIndexChange: (i: number) => void;
   showDotRow?: boolean;
+  overlay?: ReactNode;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const slideRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -125,6 +127,7 @@ export const SwipeGallery = memo(function SwipeGallery({
               </button>
             </>
           )}
+          {overlay}
         </div>
       </div>
       {showDotRow && <DotRow images={images} activeIdx={activeIdx} scrollTo={scrollTo} />}
@@ -178,6 +181,7 @@ const Slide = memo(function Slide({
         loading="eager"
         fetchPriority={slideIndex === 0 ? 'high' : 'auto'}
         decoding="async"
+        {...responsiveSrc(img)}
         className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none"
         draggable={false}
       />
@@ -218,12 +222,14 @@ export function DesktopGallery({
   colorName,
   onImageClick,
   onIndexChange,
+  overlay,
 }: {
   images: string[];
   productName: string;
   colorName: string;
   onImageClick: () => void;
   onIndexChange: (i: number) => void;
+  overlay?: ReactNode;
 }) {
   const [activeIdx, setActiveIdx] = useState(0);
 
@@ -250,7 +256,7 @@ export function DesktopGallery({
                 i === activeIdx ? 'border-bone' : 'border-line opacity-60 hover:opacity-100'
               }`}
             >
-              <img src={img} alt="" className="w-full h-full object-cover" draggable={false} />
+              <img src={img} alt="" loading="lazy" decoding="async" {...responsiveSrc(img, [120, 180, 240])} className="w-full h-full object-cover" draggable={false} />
             </button>
           ))}
         </div>
@@ -265,9 +271,14 @@ export function DesktopGallery({
           <img
             src={images[activeIdx]}
             alt={`${productName} — ${colorName}`}
+            loading="eager"
+            fetchPriority="high"
+            decoding="async"
+            {...responsiveSrc(images[activeIdx])}
             className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none"
             draggable={false}
           />
+          {overlay}
         </button>
       </div>
     </div>
@@ -360,6 +371,7 @@ export function LightboxViewer({
       <img
         src={images[idx]}
         alt={`${productName} — ${colorName}`}
+        {...responsiveSrc(images[idx], [720, 1080])}
         className="max-h-full max-w-full select-none object-contain"
         onClick={(e) => e.stopPropagation()}
         key={`${images[idx]}-${idx}`}

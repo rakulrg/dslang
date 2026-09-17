@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { rpc } from '@/lib/rest';
 
 /** Client-provided line. Prices are intentionally NOT included — the server
  * re-prices every line from products.price via create_retail_order. */
@@ -73,13 +73,11 @@ export async function createRetailOrder(payload: RetailOrderPayload): Promise<Re
     quantity: item.quantity,
   }));
 
-  const { data, error } = await supabase.rpc('create_retail_order', {
+  const data = await rpc<RetailOrderResult>('create_retail_order', {
     p_customer: payload.customer as unknown as Record<string, unknown>,
     p_items: items as unknown as Record<string, unknown>[],
     p_promo_code: payload.promoCode ?? null,
     p_shipping: {},
   });
-
-  if (error) throw error;
-  return data as RetailOrderResult;
+  return data;
 }

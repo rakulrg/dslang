@@ -1,24 +1,24 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-ink: #060606;
-  --color-ink-2: #0d0d0d;
-  --color-paper: #0a0a0a;
-  --color-paper-2: #141414;
-  --color-paper-3: #1a1a1a;
-  --color-line: #232323;
-  --color-line-2: #2f2f2f;
-  --color-bone: #f4f2ec;
-  --color-bone-dim: #a8a8a2;
-  --color-bone-soft: #888884;
-  --color-grey: #6f6f6b;
-  --color-crimson: #e0313c;
-  --color-crimson-dark: #a40f19;
-  --color-wine: #5a1a24;
+  --color-ink: #0a0a0a;
+  --color-ink-2: #111111;
+  --color-paper: #ffffff;
+  --color-paper-2: #f8f8f6;
+  --color-paper-3: #f1f0ec;
+  --color-line: #e5e3dd;
+  --color-line-2: #d6d4cc;
+  --color-bone: #1a1a1a;
+  --color-bone-dim: #4a4a4a;
+  --color-bone-soft: #6e6e6e;
+  --color-grey: #9a9a9a;
+  --color-crimson: #c1121f;
+  --color-crimson-dark: #8c0d16;
+  --color-wine: #4a1620;
   --color-olive: #3b3b2e;
-  --color-cream: #f4f2ec;
-  --color-sand: #2a2822;
-  --color-blush: #241f1b;
+  --color-cream: #faf8f4;
+  --color-sand: #e8e2d6;
+  --color-blush: #f5ede8;
 
   --font-display: 'Anton', 'Bebas Neue', sans-serif;
   --font-condensed: 'Bebas Neue', 'Anton', sans-serif;
@@ -26,6 +26,37 @@
   --font-price: 'D-DINExp-Bold', 'Open Sans', sans-serif;
   --font-body: 'Open Sans', 'Helvetica Neue', system-ui, sans-serif;
   --font-brand: 'GC Epic Pro', 'Anton', sans-serif;
+
+  --radius-soft: 0.625rem;
+  --radius-card: 0.75rem;
+
+  /* Product card visual scale — bump to make cards bigger, lower to shrink.
+     1.10 ≈ 10 % larger (width + height). Applied on md (tablet) screens and
+     up; on phones the cards are unscaled so the two mobile columns sit flush
+     in a clean 2 px gutter with perfect edge alignment (they stay equal-width
+     because the CSS grid is untouched). */
+  --product-card-scale: 1.10;
+}
+
+/* The scale is applied to the card INSIDE a reserved cell frame, never to the
+   grid item itself. A scaled grid item bleeds 5 % of its height/width into the
+   neighbouring rows/columns where it collides with the next card's info or
+   image. The frame absorbs that exact bleed with percentage padding (the card
+   image is 4:5, so vertical bleed ≈ 6.25 % of the column width + ~4 px of text
+   stack; horizontal bleed is exactly 5 % of the column width), which makes the
+   spacing hold at every desktop/tablet width — no fixed heights, no clipping,
+   no ratio change. Mobile keeps 0 padding and no scale. */
+@media (min-width: 768px) {
+  .product-card-scale {
+    transform: scale(var(--product-card-scale));
+    transform-origin: center center;
+  }
+  .product-card-frame {
+    padding-top: calc(6.25% + 8px);
+    padding-bottom: calc(6.25% + 8px);
+    padding-left: calc(5% + 1px);
+    padding-right: calc(5% + 1px);
+  }
 }
 
 @font-face {
@@ -48,6 +79,16 @@
   html {
     scroll-behavior: smooth;
   }
+  /* Kill any page-level horizontal scroll/overscroll. The hero carousel is the
+     ONLY horizontally moving surface, and it stays contained in its own
+     overflow-hidden section (touch-pan-y keeps normal vertical page scroll). */
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+    overflow-x: clip;
+    overscroll-behavior-x: none;
+  }
   body {
     background-color: var(--color-paper);
     color: var(--color-bone);
@@ -56,11 +97,111 @@
     text-rendering: optimizeLegibility;
   }
   ::selection {
-    background-color: var(--color-crimson);
+    background-color: var(--color-bone);
     color: #fff;
   }
   * {
     border-color: var(--color-line);
+  }
+  input,
+  select,
+  textarea {
+    border-radius: var(--radius-soft);
+  }
+}
+
+@layer components {
+  .btn-dark,
+  .btn-soft {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: var(--radius-soft);
+    white-space: nowrap;
+    will-change: transform;
+  }
+
+  .btn-dark {
+    background-color: var(--color-bone);
+    color: #fff;
+    transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
+      background-color 150ms ease-out;
+  }
+  .btn-dark:hover:not(:disabled) {
+    background-color: #000;
+    transform: scale(1.02);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  }
+  .btn-dark:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.18);
+  }
+  .btn-dark:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .btn-soft {
+    transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1),
+      background-color 150ms ease-out,
+      color 150ms ease-out,
+      border-color 150ms ease-out;
+  }
+  .btn-soft:hover:not(:disabled) {
+    transform: scale(1.02);
+  }
+  .btn-soft:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .nav-underline {
+    position: relative;
+  }
+  .nav-underline::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: -4px;
+    height: 1.5px;
+    width: 100%;
+    background: currentColor;
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .nav-underline:hover::after,
+  .nav-underline[aria-current='page']::after {
+    transform: scaleX(1);
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 400ms cubic-bezier(0.4, 0, 0.2, 1),
+      transform 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .reveal.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+    .btn-dark,
+    .btn-soft {
+      transition: none;
+    }
+    .btn-dark:hover:not(:disabled),
+    .btn-soft:hover:not(:disabled) {
+      transform: none;
+    }
   }
 }
 
@@ -74,6 +215,20 @@
   .tracking-ultra { letter-spacing: 0.35em; }
   .tracking-wide-2 { letter-spacing: 0.18em; }
 
+  /* Vertical editorial text (hero edge labels). */
+  .writing-vertical {
+    writing-mode: vertical-rl;
+  }
+
+  /* Subtle film grain for the hero — decorative SVG fractal noise, low
+     opacity, never blocks content. */
+  .hero-grain {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+    background-size: 180px 180px;
+    mix-blend-mode: overlay;
+    opacity: 0.35;
+  }
+
   .text-shadow-dark {
     text-shadow: 0 2px 30px rgba(0,0,0,0.5);
   }
@@ -81,12 +236,6 @@
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   .overflow-wrap-anywhere { overflow-wrap: anywhere; }
-
-  .bg-concrete {
-    background-color: #141414;
-    background-image: radial-gradient(circle at 1px 1px, rgba(244, 242, 236, 0.05) 1px, transparent 0);
-    background-size: 22px 22px;
-  }
 
   .animate-marquee {
     animation: marquee 25s linear infinite;
@@ -107,18 +256,6 @@
   .animate-slide-down {
     animation: slideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
-}
-
-@utility glow-crimson {
-  box-shadow: 0 0 0 1px rgba(224, 49, 60, 0.35), 0 0 20px 2px rgba(224, 49, 60, 0.28);
-}
-
-@utility glow-white {
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 0 16px 2px rgba(255, 255, 255, 0.18);
-}
-
-@utility glow-crimson-strong {
-  box-shadow: 0 0 0 1px rgba(224, 49, 60, 0.45), 0 0 26px 3px rgba(224, 49, 60, 0.38);
 }
 
 @keyframes marquee {
@@ -159,4 +296,6 @@
     opacity: 1 !important;
   }
 }
+
+
 

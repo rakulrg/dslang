@@ -121,7 +121,14 @@ console.log('[cashfree-order] Order loaded successfully', {
     },
     order_meta: {
       return_url: `${origin}/#/checkout?order_id={order_id}`,
-      notify_url: `${process.env.APP_ORIGIN ?? 'https://dslang.in'}/api/cashfree-webhook`,
+      // Cashfree posts payment updates here. This points at the Supabase Edge
+      // Function cashfree-webhook (HMAC + Cashfree re-verification inside). The
+      // function must be deployed WITHOUT JWT verification — Cashfree posts
+      // unauthenticated, and the gateway rejects a JWT-required function with
+      // 401 (this was previously a guaranteed 404 because the twin Vercel
+      // handler api/cashfree-webhook did not exist).
+      //   Deploy once:  supabase functions deploy cashfree-webhook --no-verify-jwt
+      notify_url: `${supabaseUrl.replace(/\/$/, '')}/functions/v1/cashfree-webhook`,
     },
   };
   // Drop empty customer fields (Cashfree rejects blank optional fields).

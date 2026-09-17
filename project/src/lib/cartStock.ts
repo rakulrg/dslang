@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { get } from '@/lib/rest';
 import type { D2cCartItem } from '@/lib/d2cCart';
 
 /**
@@ -37,15 +37,15 @@ export async function fetchLiveVariantStock(
   const products = [...new Set(items.map((i) => i.productId))];
   if (products.length === 0) return {};
 
-  const { data, error } = await supabase
-    .from('product_sizes')
-    .select('product_id, color_id, size_label, stock')
-    .in('product_id', products);
+  const rows = await get<{
+    product_id: string | number;
+    color_id: string | number;
+    size_label: string | number;
+    stock: number | null;
+  }>('product_sizes', { product_id: `in.(${products.join(',')})` }, { select: 'product_id, color_id, size_label, stock' });
 
   const live: LiveStockMap = {};
-  if (error) throw error;
-
-  for (const row of data ?? []) {
+  for (const row of rows ?? []) {
     const key = variantKey(
       String(row.product_id),
       String(row.color_id),

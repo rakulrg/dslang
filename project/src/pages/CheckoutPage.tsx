@@ -232,7 +232,9 @@ export function CheckoutPage() {
     const confirm = async () => {
       try {
         const pending = JSON.parse(raw) as { ref: string };
-        const v = await verifyPayment(pending.ref);
+        // Possession gate: the edge function only returns order data to a
+        // caller who knows the ref AND the customer's 10-digit phone.
+        const v = await verifyPayment(pending.ref, form.phone);
         if (cancelled || !v || !v.order) return;
         if (v.verified) {
           window.sessionStorage.removeItem(PENDING_PAYMENT_KEY);
@@ -275,7 +277,7 @@ export function CheckoutPage() {
         <p className="mt-3 text-sm text-grey">Your bag is empty.</p>
         <button
           onClick={() => navigate('/collection')}
-          className="mt-8 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-crimson-dark transition-colors"
+          className="mt-8 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
         >
           Shop The Collection
         </button>
@@ -287,8 +289,8 @@ export function CheckoutPage() {
   if (stage === 'success' && result) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
-        <CheckCircle2 size={40} strokeWidth={1.4} className="text-crimson" />
-        <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-crimson">Order Confirmed</p>
+        <CheckCircle2 size={40} strokeWidth={1.4} className="text-bone" />
+        <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">Order Confirmed</p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
           Thank You
         </h1>
@@ -315,12 +317,12 @@ export function CheckoutPage() {
               {result.discount > 0 && (
                 <div className="flex justify-between border-b border-line py-2 text-sm">
                   <span className="text-grey">Discount</span>
-                  <span className="font-semibold text-green-400">−{formatPrice(result.discount)}</span>
+                  <span className="font-semibold text-green-700">−{formatPrice(result.discount)}</span>
                 </div>
               )}
               <div className="flex justify-between pt-2 text-sm">
                 <span className="text-grey">Total</span>
-                <span className="font-price text-lg font-bold text-crimson tabular-nums">{formatPrice(result.total_amount)}</span>
+                <span className="font-price text-lg font-bold text-bone tabular-nums">{formatPrice(result.total_amount)}</span>
               </div>
             </div>
 
@@ -357,7 +359,7 @@ export function CheckoutPage() {
             <div
               className={
                 result.payment_status === 'success'
-                  ? 'w-full border border-lime-900/70 bg-lime-950/50 px-4 py-3 text-xs text-lime-300 leading-relaxed'
+                  ? 'w-full border border-lime-300 bg-lime-50 px-4 py-3 text-xs text-green-800 leading-relaxed'
                   : 'w-full border border-line bg-paper-3 px-4 py-3 text-xs text-grey leading-relaxed'
               }
             >
@@ -370,15 +372,15 @@ export function CheckoutPage() {
               <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-3">What Happens Next</p>
               <ol className="space-y-3">
                 <li className="flex gap-3 text-sm">
-                  <span className="font-label text-crimson font-semibold shrink-0">1</span>
+                  <span className="font-label text-bone font-semibold shrink-0">1</span>
                   <span className="text-grey leading-relaxed">We personally review order <span className="text-bone font-medium">{result.ref}</span> — every order is checked by hand.</span>
                 </li>
                 <li className="flex gap-3 text-sm">
-                  <span className="font-label text-crimson font-semibold shrink-0">2</span>
+                  <span className="font-label text-bone font-semibold shrink-0">2</span>
                   <span className="text-grey leading-relaxed">Your order is dispatched from Tiruppur within 24-48 hours, with stock confirmed before it ships.</span>
                 </li>
                 <li className="flex gap-3 text-sm">
-                  <span className="font-label text-crimson font-semibold shrink-0">3</span>
+                  <span className="font-label text-bone font-semibold shrink-0">3</span>
                   <span className="text-grey leading-relaxed">We send you a confirmation SMS with your order reference and a Track Order link.</span>
                 </li>
               </ol>
@@ -389,14 +391,14 @@ export function CheckoutPage() {
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <button
             onClick={() => navigate(`/track-order/${encodeURIComponent(result.ref)}`)}
-            className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-crimson-dark transition-colors"
+            className="btn-soft btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
           >
             <Truck size={15} strokeWidth={2} />
             Track Order
           </button>
           <button
             onClick={() => navigate('/collection')}
-            className="inline-flex items-center gap-2 border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+            className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Continue Shopping
           </button>
@@ -405,10 +407,10 @@ export function CheckoutPage() {
         <div className="mt-8 w-full max-w-2xl mx-auto border-t border-line pt-5">
           <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Useful Links</p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-            <a href="#/shipping-policy" className="border border-line px-3 py-2.5 text-center text-grey hover:text-crimson hover:border-crimson transition-colors">Shipping Policy</a>
-            <a href="#/return-policy" className="border border-line px-3 py-2.5 text-center text-grey hover:text-crimson hover:border-crimson transition-colors">Return Policy</a>
-            <a href="#/privacy-policy" className="border border-line px-3 py-2.5 text-center text-grey hover:text-crimson hover:border-crimson transition-colors">Privacy Policy</a>
-            <a href="#/contact" className="border border-line px-3 py-2.5 text-center text-grey hover:text-crimson hover:border-crimson transition-colors">Contact Us</a>
+            <a href="#/shipping-policy" className="border border-line px-3 py-2.5 text-center text-grey hover:text-bone hover:border-bone transition-colors">Shipping Policy</a>
+            <a href="#/return-policy" className="border border-line px-3 py-2.5 text-center text-grey hover:text-bone hover:border-bone transition-colors">Return Policy</a>
+            <a href="#/privacy-policy" className="border border-line px-3 py-2.5 text-center text-grey hover:text-bone hover:border-bone transition-colors">Privacy Policy</a>
+            <a href="#/contact" className="border border-line px-3 py-2.5 text-center text-grey hover:text-bone hover:border-bone transition-colors">Contact Us</a>
           </div>
         </div>
       </div>
@@ -419,7 +421,7 @@ export function CheckoutPage() {
   if (stage === 'failure') {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
-        <p className="font-label text-[10px] uppercase tracking-ultra text-crimson">Payment Not Completed</p>
+        <p className="font-label text-[10px] uppercase tracking-ultra text-grey">Payment Not Completed</p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
           Almost there
         </h1>
@@ -429,19 +431,19 @@ export function CheckoutPage() {
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <button
             onClick={() => setStage('form')}
-            className="inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-crimson-dark transition-colors"
+            className="btn-soft btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
           >
             Try Again
           </button>
           <button
             onClick={() => navigate('/contact')}
-            className="inline-flex items-center gap-2 border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+            className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Contact Us
           </button>
           <button
             onClick={() => { openCart(); navigate('/'); }}
-            className="inline-flex items-center gap-2 border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+            className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Back To Bag
           </button>
@@ -586,7 +588,7 @@ export function CheckoutPage() {
       {(stage === 'placing' || stage === 'confirming') && <TransitionOverlay stage={stage} />}
       <button
         onClick={() => { openCart(); navigate('/'); }}
-        className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey hover:text-crimson transition-colors"
+        className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey hover:text-bone transition-colors"
       >
         <ArrowLeft size={14} strokeWidth={2} /> Back To Bag
       </button>
@@ -651,14 +653,14 @@ export function CheckoutPage() {
             </div>
             {promo ? (
               <>
-                <div className="mt-2 flex items-center justify-between border border-green-900/70 bg-green-950/50 px-3 py-2.5">
-                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-green-400">
+                <div className="mt-2 flex items-center justify-between border border-green-300 bg-green-50 px-3 py-2.5">
+                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-green-800">
                     <Check size={14} strokeWidth={2.5} /> {promo.code} APPLIED
                   </span>
                   <button
                     type="button"
                     onClick={handleRemovePromo}
-                    className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-400 underline underline-offset-2 hover:text-green-300"
+                    className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-800 underline underline-offset-2 hover:text-green-900"
                   >
                     Remove
                   </button>
@@ -680,13 +682,13 @@ export function CheckoutPage() {
                     placeholder="Enter promo code"
                     autoCapitalize="characters"
                     spellCheck={false}
-                    className="flex-1 min-w-0 border border-line bg-ink-2 px-3 py-2.5 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
+                    className="flex-1 min-w-0 border border-line bg-white px-3 py-2.5 text-sm text-bone placeholder:text-grey/60 focus:border-bone focus:outline-none transition-colors"
                   />
                   <button
                     type="button"
                     onClick={handleApplyPromo}
                     disabled={applying || !promoInput.trim()}
-                    className="inline-flex items-center gap-1.5 shrink-0 bg-bone text-ink text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
+                    className="inline-flex items-center gap-1.5 shrink-0 bg-bone text-white text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
                   >
                     {applying ? <Loader2 size={13} strokeWidth={2} className="animate-spin" /> : 'Apply'}
                   </button>
@@ -704,13 +706,13 @@ export function CheckoutPage() {
             {discount > 0 && (
               <div className="flex items-center justify-between">
                 <dt className="text-grey">Discount ({promo?.code})</dt>
-                <dd className="font-semibold text-green-400 tabular-nums">−{formatPrice(discount)}</dd>
+                <dd className="font-semibold text-green-700 tabular-nums">−{formatPrice(discount)}</dd>
               </div>
             )}
             <div className="flex items-center justify-between">
               <dt className="text-grey">Shipping</dt>
               <dd className="font-semibold text-bone tabular-nums">
-                {shipping > 0 ? formatPrice(shipping) : <span className="text-green-400">FREE</span>}
+                {shipping > 0 ? formatPrice(shipping) : <span className="text-green-700">FREE</span>}
               </dd>
             </div>
             <div className="flex items-center justify-between">
@@ -720,7 +722,7 @@ export function CheckoutPage() {
             </div>
             <div className="flex items-center justify-between border-t border-line pt-3 mt-3">
               <dt className="font-label text-xs uppercase tracking-wide-2 text-bone">Total</dt>
-              <dd className="font-price text-2xl text-crimson tabular-nums">{(total || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}</dd>
+              <dd className="font-price text-2xl text-bone tabular-nums">{(total || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}</dd>
             </div>
           </dl>
         </aside>
@@ -728,7 +730,7 @@ export function CheckoutPage() {
         {/* Payment state (below the form fields; summary appears after it on mobile) */}
         <div className="lg:col-start-1 border border-line bg-paper-3 p-4">
           <div className="flex items-center gap-3">
-            <ShieldCheck size={18} strokeWidth={1.6} className="text-crimson shrink-0" />
+            <ShieldCheck size={18} strokeWidth={1.6} className="text-bone shrink-0" />
             <div>
               <p className="font-label text-[10px] uppercase tracking-wide-2 text-bone font-semibold">
                 Payment
@@ -747,7 +749,7 @@ export function CheckoutPage() {
         <button
           type="submit"
           disabled={stage === 'placing' || stage === 'confirming'}
-          className="lg:col-start-1 w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 hover:bg-crimson-dark hover:glow-crimson focus-visible:glow-crimson transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:glow-crimson disabled:hover:bg-crimson"
+          className="lg:col-start-1 w-full btn-dark text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 disabled:opacity-60"
         >
           {stage === 'placing' ? (
             <>
@@ -766,11 +768,11 @@ export function CheckoutPage() {
 
         <p className="lg:col-start-1 text-[11px] leading-relaxed text-grey mt-3">
           Secure, backed by our{' '}
-          <a href="#/return-policy" className="text-bone underline hover:text-crimson transition-colors">Return Policy</a>,{' '}
-          <a href="#/shipping-policy" className="text-bone underline hover:text-crimson transition-colors">Shipping Policy</a>{' '}
+          <a href="#/return-policy" className="text-bone underline hover:text-bone transition-colors">Return Policy</a>,{' '}
+          <a href="#/shipping-policy" className="text-bone underline hover:text-bone transition-colors">Shipping Policy</a>{' '}
           and{' '}
-          <a href="#/contact" className="text-bone underline hover:text-crimson transition-colors">support</a>. Review our{' '}
-          <a href="#/privacy-policy" className="text-bone underline hover:text-crimson transition-colors">Privacy Policy</a>{' '}
+          <a href="#/contact" className="text-bone underline hover:text-bone transition-colors">support</a>. Review our{' '}
+          <a href="#/privacy-policy" className="text-bone underline hover:text-bone transition-colors">Privacy Policy</a>{' '}
           any time.
         </p>
       </form>
@@ -804,7 +806,7 @@ function TransitionOverlay({ stage }: { stage: Stage }) {
 
   return (
     <div
-      className="fixed inset-0 z-[300] flex flex-col items-center justify-center bg-ink text-paper transition-opacity duration-300"
+      className="fixed inset-0 z-[300] flex flex-col items-center justify-center bg-white text-bone transition-opacity duration-300"
       style={{ opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none' }}
       role="status"
       aria-live="polite"
@@ -846,7 +848,7 @@ function Field({
   return (
     <label className={`block ${className}`}>
       <span className="font-label text-[10px] uppercase tracking-wide-2 text-grey">
-        {label} {required && <span className="text-crimson">*</span>}
+        {label} {required && <span className="text-bone">*</span>}
       </span>
       <input
         ref={inputRef}
@@ -859,8 +861,8 @@ function Field({
         autoComplete={autoComplete}
         placeholder={placeholder}
         aria-invalid={errorMsg ? true : undefined}
-        className={`mt-1.5 w-full border bg-ink-2 px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:outline-none transition-colors ${
-          errorMsg ? 'border-crimson focus:border-crimson' : 'border-line focus:border-crimson'
+        className={`mt-1.5 w-full border bg-white px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:outline-none transition-colors ${
+          errorMsg ? 'border-crimson focus:border-crimson' : 'border-line focus:border-bone'
         }`}
       />
       {errorMsg && <p className="mt-1.5 text-xs text-crimson" role="alert">{errorMsg}</p>}

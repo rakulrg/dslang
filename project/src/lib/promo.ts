@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { rpc } from '@/lib/rest';
 
 /**
  * Promo code support for the retail bag/checkout flow.
@@ -33,12 +33,10 @@ export async function validatePromo(
   const c = normalizeCode(code);
   if (!c) return { ok: false, promo: null, reason: 'Enter a promo code.' };
   try {
-    const { data, error } = await supabase.rpc('validate_promo_code', {
+    const res = await rpc<{ ok?: boolean; reason?: string; promo?: Promo }>('validate_promo_code', {
       p_code: c,
       p_subtotal: Math.max(0, subtotal),
     });
-    if (error) return { ok: false, promo: null, reason: 'Promo codes are unavailable right now.' };
-    const res = data as { ok?: boolean; reason?: string; promo?: Promo } | null;
     if (!res || res.ok !== true || !res.promo) {
       return { ok: false, promo: null, reason: res?.reason || 'This code is invalid or expired.' };
     }

@@ -7,28 +7,52 @@ import { LoginModal } from '@/components/LoginModal';
 import { HomePage } from '@/pages/HomePage';
 import { CollectionPage } from '@/pages/CollectionPage';
 import { NewDropsPage } from '@/pages/NewDropsPage';
-import { HowItWorksPage } from '@/pages/HowItWorksPage';
-import { AboutPage } from '@/pages/AboutPage';
 import { RetailProductPage } from '@/pages/RetailProductPage';
-import { CheckoutPage } from '@/pages/CheckoutPage';
-import { ContactPage } from '@/pages/ContactPage';
-import { PoliciesPage } from '@/pages/PoliciesPage';
-import { TermsPage } from '@/pages/TermsConditionsPage';
-import { PrivacyPolicyPage } from '@/pages/PrivacyPolicyPage';
-import { RefundCancellationPage } from '@/pages/RefundCancellationPage';
-import { ReturnPolicyPage } from '@/pages/ReturnPolicyPage';
-import { ShippingPolicyPage } from '@/pages/ShippingPolicyPage';
-import { TrackOrderPage } from '@/pages/TrackOrderPage';
-import { SubscriberDashboard } from '@/pages/SubscriberDashboard';
 import { useAuth } from '@/lib/auth';
 import { useSiteSettings } from '@/lib/settings';
 import { useCartDrawer } from '@/lib/cartDrawer';
 import { notFound } from '@/lib/notFound';
 import { LoadingDots } from '@/components/LoadingDots';
 
-// Lazy-load the admin dashboard (large, admin-only) to keep the main bundle small.
+// Lazy-load every non-core page so the initial bundle only ships the shop
+// skeleton (home, collection, new drops, product + admin entry). Each
+// secondary route downloads only the chunk it needs on first visit, and the
+// shop path never loads checkout/account/admin code.
 const AdminDashboard = lazy(() =>
   import('@/pages/admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
+);
+const CheckoutPage = lazy(() =>
+  import('@/pages/CheckoutPage').then((m) => ({ default: m.CheckoutPage }))
+);
+const TrackOrderPage = lazy(() =>
+  import('@/pages/TrackOrderPage').then((m) => ({ default: m.TrackOrderPage }))
+);
+const SubscriberDashboard = lazy(() =>
+  import('@/pages/SubscriberDashboard').then((m) => ({ default: m.SubscriberDashboard }))
+);
+const AboutPage = lazy(() =>
+  import('@/pages/AboutPage').then((m) => ({ default: m.AboutPage }))
+);
+const ContactPage = lazy(() =>
+  import('@/pages/ContactPage').then((m) => ({ default: m.ContactPage }))
+);
+const PoliciesPage = lazy(() =>
+  import('@/pages/PoliciesPage').then((m) => ({ default: m.PoliciesPage }))
+);
+const TermsPage = lazy(() =>
+  import('@/pages/TermsConditionsPage').then((m) => ({ default: m.TermsPage }))
+);
+const PrivacyPolicyPage = lazy(() =>
+  import('@/pages/PrivacyPolicyPage').then((m) => ({ default: m.PrivacyPolicyPage }))
+);
+const RefundCancellationPage = lazy(() =>
+  import('@/pages/RefundCancellationPage').then((m) => ({ default: m.RefundCancellationPage }))
+);
+const ReturnPolicyPage = lazy(() =>
+  import('@/pages/ReturnPolicyPage').then((m) => ({ default: m.ReturnPolicyPage }))
+);
+const ShippingPolicyPage = lazy(() =>
+  import('@/pages/ShippingPolicyPage').then((m) => ({ default: m.ShippingPolicyPage }))
 );
 
 const DEFAULT_TITLE = 'DSLANG — Premium Streetwear | Slang of Design';
@@ -40,8 +64,7 @@ function getPageTitle(path: string): string {
   if (path.startsWith('/product') || path.startsWith('/products') || path.startsWith('/p/')) return 'Product — DSLANG';
   if (path.startsWith('/cart')) return 'Your Bag — DSLANG';
   if (path.startsWith('/checkout')) return 'Checkout — DSLANG';
-  if (path.startsWith('/how-it-works')) return 'How It Works — DSLANG';
-  if (path.startsWith('/stock-dslang') || path.startsWith('/about')) return 'Stock DSLANG — DSLANG';
+  if (path.startsWith('/stock-dslang') || path.startsWith('/about')) return 'About DSLANG — DSLANG';
   if (path.startsWith('/contact')) return 'Contact — DSLANG';
   if (path.startsWith('/policies')) return 'Policies — DSLANG';
   if (path.startsWith('/terms-and-conditions')) return 'Terms & Conditions — DSLANG';
@@ -140,7 +163,6 @@ function App() {
     if (segments[0] === 'p' && segments[1]) return <RetailProductPage slug={segments[1]} />;
     if (segments[0] === 'cart') return <HomePage />;
     if (segments[0] === 'checkout') return <CheckoutPage />;
-    if (segments[0] === 'how-it-works') return <HowItWorksPage />;
     if (segments[0] === 'stock-dslang' || segments[0] === 'about') return <AboutPage />;
     if (segments[0] === 'contact') return <ContactPage />;
     if (segments[0] === 'policies') return <PoliciesPage />;
@@ -171,7 +193,25 @@ function App() {
 
   const isAdminPath = segments[0] === 'admin';
 
-  const announcement = useSiteSettings().settings;
+  // The announcement bar renders ONLY the admin-set text from Settings. The
+  // value is hydrated synchronously from the local settings cache (see
+  // settings.tsx), so the bar appears instantly on page load — it never waits
+  // on the settings fetch, auth, products, or any other async request. If
+  // nothing is cached yet it simply stays hidden until the first fetch lands.
+  const { settings: announcement } = useSiteSettings();
+
+  // The boot loader exists to avoid flashing unauthenticated state (or an empty
+  // page) while auth resolves on PROTECTED routes. Public pages should never
+  // show it — otherwise every hard refresh flashes a full-screen loader.
+  const protectingRoute = segments[0] === 'account' || segments[0] === 'admin';
+
+  // Skip the route fade-in on the very first paint so content is fully visible
+  // immediately after a hard refresh; keep it for internal navigations.
+  const [firstPaint, setFirstPaint] = useState(true);
+  useEffect(() => {
+    const id = window.setTimeout(() => setFirstPaint(false), 0);
+    return () => window.clearTimeout(id);
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col bg-paper">
@@ -180,7 +220,7 @@ function App() {
           <div className="h-8 flex items-center whitespace-nowrap">
             <span className="animate-marquee flex shrink-0 items-center whitespace-nowrap">
               {Array.from({ length: 4 }).map((_, i) => (
-                <span key={i} className="inline-flex shrink-0 items-center gap-8 pr-8 text-[10px] md:text-[11px] uppercase tracking-[0.28em] text-white/90">
+                  <span key={i} className="inline-flex shrink-0 items-center gap-8 pr-8 text-[11px] md:text-[11px] uppercase tracking-[0.28em] text-white/90">
                   <span>{announcement.announcement_text}</span>
                   <span>{announcement.announcement_text}</span>
                 </span>
@@ -193,15 +233,19 @@ function App() {
         currentPath={path}
         onOpenLogin={(mode) => { setLoginMode(mode); setLoginOpen(true); }}
       />
-      <main className="flex-1 pt-[76px] md:pt-[88px] overflow-x-hidden">
-        <div key={path} className="animate-fade-in min-h-full">
-          {isAdminPath ? <div className="min-h-screen bg-paper">{renderPage()}</div> : renderPage()}
+      <main className="flex-1 pt-[80px] md:pt-[88px] overflow-x-hidden">
+        <div key={path} className={`${firstPaint ? '' : 'animate-fade-in'} min-h-full`}>
+          {isAdminPath ? <div className="min-h-screen bg-paper">{renderPage()}</div> : (
+            <Suspense fallback={<div className="min-h-screen w-full flex items-center justify-center"><LoadingDots /></div>}>
+              {renderPage()}
+            </Suspense>
+          )}
         </div>
       </main>
       <Footer />
       <CartDrawer />
       <LoginModal isOpen={loginOpen} onClose={handleLoginClose} initialMode={loginMode} />
-      <FullscreenLoader visible={loading} />
+      <FullscreenLoader visible={loading && protectingRoute} />
     </div>
   );
 }

@@ -138,7 +138,7 @@ export function PrivacyPolicyPage() {
         <PolicyP>
           For any questions or grievances regarding this Privacy Policy or the handling of your
           personal data, you may contact us on WhatsApp or by email at hello.dslang@gmail.com, or
-          through our <a href="#/contact" className="text-crimson underline hover:text-crimson-dark">Contact page</a>.
+          through our <a href="#/contact" className="text-bone underline hover:text-bone-dim">Contact page</a>.
         </PolicyP>
         <p className="text-sm text-grey leading-relaxed">
           {POLICY_ADDRESS}

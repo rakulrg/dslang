@@ -16,21 +16,16 @@ export interface ProductRow {
   sort_order: number;
   created_at: string;
   updated_at: string;
-  // Wholesale fields (added via migration; optional so old rows still load)
+  // Spec fields (added via migration; optional so old rows still load)
   gsm?: number | null;
   wash?: string | null;
-  print_type?: string | null;
-  moq?: number | null;
-  wholesale_price_50?: number | null;
-  wholesale_price_100?: number | null;
   // Storefront visibility (added via migration; optional for older rows)
   published?: boolean;
   new_drop?: boolean;
   // Retail / D2C channel (added via migration; optional for older rows)
   retail_visible?: boolean;
-  // Wholesale rebuild (added via migration; optional for older rows)
+  // Storefront extras (added via migration; optional for older rows)
   details?: string | null;
-  available_sizes?: string[] | null;
 }
 
 export interface RetailOrderItem {
@@ -73,6 +68,10 @@ export interface RetailOrder {
   payment_id?: string;
   txn_id?: string;
   paid_at?: string | null;
+  tracking_id?: string | null;
+  tracking_url?: string | null;
+  shipping_sms_sent_at?: string | null;
+  sms_sent_at?: string | null;
   referral: string | null;
   created_at: string;
   updated_at?: string;
@@ -95,6 +94,10 @@ export interface ProductSizeRow {
   size_label: string;
   available: boolean;
   stock: number;
+  /** Admin-set per-product display order (optional; 0/missing = fall back to
+   * the shared garment/numeric sort). Same value on every colour row for a
+   * given size. */
+  sort_order?: number | null;
 }
 
 export interface SizeChartRow {
@@ -110,15 +113,9 @@ export interface SizeChartRow {
 export interface HeroSlideRow {
   id: string;
   image_url: string;
-  eyebrow: string;
-  title: string;
-  subtitle: string;
   sort_order: number;
   active: boolean;
   created_at: string;
-  // Optional CTA fields shown on the homepage hero
-  cta_text?: string | null;
-  cta_url?: string | null;
 }
 
 export interface CatalogProduct extends ProductRow {
@@ -126,5 +123,3 @@ export interface CatalogProduct extends ProductRow {
   sizes: ProductSizeRow[];
   size_chart: SizeChartRow[];
 }
-
-export const SIZE_LABELS = ['M', 'L', 'XL'] as const;

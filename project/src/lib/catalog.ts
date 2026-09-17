@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { get } from '@/lib/rest';
 import type {
   CatalogProduct,
   HeroSlideRow,
@@ -7,43 +7,19 @@ import type {
   ProductSizeRow,
   SizeChartRow,
 } from '@/lib/types';
-import { SIZE_LABELS } from '@/lib/types';
+import { sortSizeRows } from '@/lib/sizes';
 import { getSiteSettings } from '@/lib/settings';
 
 export type { CatalogProduct, HeroSlideRow };
 
-// Legacy constants kept for internal fallbacks only. The single source of
-// truth for WhatsApp contact and default MOQ is the admin-controlled
-// site_settings row: https://wa.me/... URLs and MOQ gates below read it.
+// Legacy contact fallbacks. The single source of truth for WhatsApp contact is
+// the admin-controlled site_settings row: https://wa.me/... URLs read it.
 export const WHATSAPP_NUMBER = '919944676178';
 export const INSTAGRAM_URL = 'https://instagram.com/dslang.in';
 export const EMAIL = 'hello.dslang@gmail.com';
 
-export const DEFAULT_MOQ = 50;
-export const WHOLESALE_TIER_100 = 100;
-export const WHOLESALE_TIER_DISCOUNT_STEP = 10;
-
-// Fixed color-pack wholesale model (source of truth for pack thresholds).
-// Products are sold in fixed color packs of PACK_SIZE pieces. The wholesale
-// minimum is MIN_PACKS packs (MIN_ORDER_PCS pieces). The two per-product price
-// tiers are pack-compatible thresholds: at/above MIN_ORDER_PCS but below
-// TIER_100_PCS use wholesale_price_50; at/above TIER_100_PCS use
-// wholesale_price_100. PACK_SIZE and the tier boundaries are intentionally
-// derived from the pack size so arbitrary piece quantities are never valid.
-export const PACK_SIZE = 6;
-export const MIN_PACKS = 8;
-export const MIN_ORDER_PCS = PACK_SIZE * MIN_PACKS; // 48
-export const TIER_100_PACKS = 17;
-export const TIER_100_PCS = PACK_SIZE * TIER_100_PACKS; // 102
-
-const ALLOWED_SIZES = new Set<string>(SIZE_LABELS);
-
-const SIZE_ORDER: Record<string, number> = { M: 0, L: 1, XL: 2 };
-
 function sortSizes(sizes: ProductSizeRow[]): ProductSizeRow[] {
-  return sizes
-    .filter((s) => ALLOWED_SIZES.has(s.size_label))
-    .sort((a, b) => (SIZE_ORDER[a.size_label] ?? 99) - (SIZE_ORDER[b.size_label] ?? 99));
+  return sortSizeRows(sizes);
 }
 
 export function cleanImageUrls(images: string[] | null | undefined): string[] {
@@ -53,100 +29,227 @@ export function cleanImageUrls(images: string[] | null | undefined): string[] {
 let publishColumnsAvailable: boolean | null = null;
 
 /**
- * Whether the products table has the published/new_drop columns yet.
+ * Whether the products table has the published column yet.
  * Migration-gated: before the site-control migration the storefront reads all
  * products; after it, only published ones are shown.
  */
 export async function hasPublishColumns(): Promise<boolean> {
   if (publishColumnsAvailable !== null) return publishColumnsAvailable;
-  const { error } = await supabase.from('products').select('published').limit(1);
-  publishColumnsAvailable = !error;
+  try {
+    await get('products', { limit: '1' }, { select: 'published' });
+    publishColumnsAvailable = true;
+  } catch {
+    publishColumnsAvailable = false;
+  }
   return publishColumnsAvailable;
 }
 
-export async function fetchProducts(): Promise<CatalogProduct[]> {
-  let query = supabase.from('products').select('*');
-  if (await hasPublishColumns()) query = query.eq('published', true);
-  const { data: products, error } = await query.order('sort_order', { ascending: true });
+let newDropColumnsAvailable: boolean | null = null;
 
-  if (error) throw error;
-  if (!products || products.length === 0) return [];
+/** Whether the products table has the new_drop column yet. */
+async function hasNewDropColumns(): Promise<boolean> {
+  if (newDropColumnsAvailable !== null) return newDropColumnsAvailable;
+  try {
+    await get('products', { limit: '1' }, { select: 'new_drop' });
+    newDropColumnsAvailable = true;
+  } catch {
+    newDropColumnsAvailable = false;
+  }
+  return newDropColumnsAvailable;
+}
+
+let retailColumnsAvailable: boolean | null = null;
+
+/** Whether the products table has the retail_visible column (migration-gated). */
+async function hasRetailColumns(): Promise<boolean> {
+  if (retailColumnsAvailable !== null) return retailColumnsAvailable;
+  try {
+    await get('products', { limit: '1' }, { select: 'retail_visible' });
+    retailColumnsAvailable = true;
+  } catch {
+    retailColumnsAvailable = false;
+  }
+  return retailColumnsAvailable;
+}
+
+let productSizeOrderAvailable: boolean | null = null;
+
+/** Whether product_sizes.sort_order exists yet (migration-gated). The column
+ * only drives admin-defined size display order; sizes render in the shared
+ * deterministic order without it, so the listing must not fail when absent. */
+async function hasProductSizeOrder(): Promise<boolean> {
+  if (productSizeOrderAvailable !== null) return productSizeOrderAvailable;
+  try {
+    await get('product_sizes', { limit: '1' }, { select: 'sort_order' });
+    productSizeOrderAvailable = true;
+  } catch {
+    productSizeOrderAvailable = false;
+  }
+  return productSizeOrderAvailable;
+}
+
+/* ---- Single shared catalog cache ---- */
+
+let catalogPromise: Promise<CatalogProduct[]> | null = null;
+let catalogLoadedAt = 0;
+const CATALOG_TTL_MS = 60_000;
+
+/** Drops the cached catalog so the next call reads fresh data. Called by the
+ * admin write paths whenever products/colors/sizes/stock change, so admin
+ * edits show up on the storefront immediately (not after the TTL). */
+export function invalidateCatalog(): void {
+  catalogPromise = null;
+  catalogLoadedAt = 0;
+}
+
+/** Forces a fresh catalog load from the database (used by admin reload flows). */
+export function refreshCatalog(): Promise<CatalogProduct[]> {
+  invalidateCatalog();
+  return fetchProducts();
+}
+
+/**
+ * THE catalog data source for every storefront surface (home, shop, new drops,
+ * search, related products, account). All callers share ONE promise, so
+ * Home → Shop → Product → back never refetches the same unchanged catalog, and
+ * concurrent mounters (e.g. StrictMode, search while home renders) coalesce
+ * into a single request. Errors evict the cache so a retry actually refetches;
+ * a short TTL bounds staleness if someone edits the DB out-of-band.
+ *
+ * SAFETY: this caches LISTING data including the current per-variant stock
+ * numbers. Purchase paths never trust it — the product detail page calls
+ * fetchProduct() (always fresh) and cart/checkout re-validate live stock from
+ * product_sizes via fetchLiveVariantStock(). Caching the catalog can never
+ * cause overselling.
+ */
+export function fetchProducts(): Promise<CatalogProduct[]> {
+  const now = Date.now();
+  if (catalogPromise !== null && now - catalogLoadedAt < CATALOG_TTL_MS) {
+    return catalogPromise;
+  }
+  catalogLoadedAt = now;
+  catalogPromise = fetchCatalogFromDb().catch((err) => {
+    catalogPromise = null;
+    catalogLoadedAt = 0;
+    throw err;
+  });
+  return catalogPromise;
+}
+
+/**
+ * Fetches the catalog from the database with LISTING-ONLY data — just what
+ * product cards / search / account stats need:
+ *   - products: identity, retail price/MRP, category, flags, ordering. No
+ *     descriptions, care/fabric/wash info or size charts.
+ *   - colors: identity + swatch + images (required for card visuals).
+ *   - sizes: every variant's identity + live stock (drives sold-out badges;
+ *     purchasable-stock checks on cards), no size-chart payload.
+ * The product detail page independently loads its full data via fetchProduct().
+ */
+async function fetchCatalogFromDb(): Promise<CatalogProduct[]> {
+  const hasPublish = await hasPublishColumns();
+  const hasNewDrop = await hasNewDropColumns();
+  const hasRetail = await hasRetailColumns();
+  const cols: string[] = ['id', 'slug', 'name', 'code', 'price', 'mrp', 'category', 'featured', 'sort_order', 'created_at'];
+  if (hasPublish) cols.push('published');
+  if (hasNewDrop) cols.push('new_drop');
+  if (hasRetail) cols.push('retail_visible');
+
+  const products = (await get<ProductRow>(
+    'products',
+    { ...(hasPublish ? { published: 'eq.true' } : {}), order: 'sort_order.asc' },
+    { select: cols.join(',') },
+  )) ?? [];
+  if (products.length === 0) return [];
 
   const ids = products.map((p) => p.id);
 
-  const [{ data: colors }, { data: sizes }, { data: chart }] = await Promise.all([
-    supabase.from('product_colors').select('*').in('product_id', ids).order('sort_order'),
-    supabase.from('product_sizes').select('*').in('product_id', ids),
-    supabase.from('size_chart_rows').select('*').in('product_id', ids).order('sort_order'),
-  ]);
+  // size ordering is migration-gated: exclude the column when absent so an
+  // optional display column can never break the whole collection.
+  const sizeCols: string[] = ['id', 'product_id', 'color_id', 'size_label', 'stock'];
+  if (await hasProductSizeOrder()) sizeCols.push('sort_order');
 
-  return (products as ProductRow[]).map((p) => ({
+  // The products themselves are the valid result. A failure in the decorative
+  // colour/image or size side-data must NEVER remove products that were
+  // already fetched successfully — those lists degrade to empty and the cards
+  // render with the placeholder instead. Only the product query above throws.
+  let colors: ProductColorRow[] | null = null;
+  let sizes: ProductSizeRow[] | null = null;
+  try {
+    colors = await get<ProductColorRow>('product_colors', { product_id: `in.(${ids.join(',')})`, order: 'sort_order.asc' }, { select: 'id, product_id, name, hex, images, sort_order' });
+  } catch {
+    colors = null;
+  }
+  try {
+    sizes = await get<unknown>('product_sizes', { product_id: `in.(${ids.join(',')})` }, { select: sizeCols.join(',') }) as unknown as ProductSizeRow[];
+  } catch {
+    sizes = null;
+  }
+
+  return products.map((p) => ({
     ...p,
-    colors: ((colors as ProductColorRow[] | null)?.filter((c) => c.product_id === p.id) ?? []).map((color) => ({ ...color, images: cleanImageUrls(color.images) })),
-    sizes: sortSizes(((sizes as ProductSizeRow[] | null)?.filter((s) => s.product_id === p.id) ?? []).map((s) => ({
+    colors: (colors?.filter((c) => c.product_id === p.id) ?? []).map((color) => ({ ...color, images: cleanImageUrls(color.images) })),
+    sizes: sortSizes((sizes?.filter((s) => s.product_id === p.id) ?? []).map((s) => ({
       ...s,
       stock: Number(s.stock ?? 0),
       // Stock is the source of truth: a size is purchasable whenever stock is positive.
       available: Number(s.stock ?? 0) > 0,
     }))),
-    size_chart: (chart as SizeChartRow[] | null)?.filter((r) => r.product_id === p.id) ?? [],
+    // Size charts are only required on the product detail page (loaded fresh by
+    // fetchProduct()), never by listing cards — don't ship them to listings.
+    size_chart: [],
   }));
 }
 
 export async function fetchProduct(slug: string): Promise<CatalogProduct | null> {
-  let query = supabase.from('products').select('*');
-  if (await hasPublishColumns()) query = query.eq('published', true);
-  const { data: product, error } = await query.eq('slug', slug).maybeSingle();
+  const params: Record<string, string> = { slug: `eq.${slug}`, limit: '1' };
+  if (await hasPublishColumns()) params.published = 'eq.true';
+  const products = await get<ProductRow>('products', params, { select: '*' });
+  const p = products[0];
+  if (!p) return null;
 
-  if (error) throw error;
-  if (!product) return null;
+  let colors: ProductColorRow[] | null = null;
+  let sizes: ProductSizeRow[] | null = null;
+  let chart: SizeChartRow[] | null = null;
+  try {
+    colors = await get<ProductColorRow>('product_colors', { product_id: `eq.${p.id}`, order: 'sort_order.asc' }, { select: '*' });
+  } catch {
+    colors = null;
+  }
+  try {
+    sizes = await get<unknown>('product_sizes', { product_id: `eq.${p.id}` }, { select: '*' }) as unknown as ProductSizeRow[];
+  } catch {
+    sizes = null;
+  }
+  try {
+    chart = await get<SizeChartRow>('size_chart_rows', { product_id: `eq.${p.id}`, order: 'sort_order.asc' }, { select: '*' });
+  } catch {
+    chart = null;
+  }
 
-  const p = product as ProductRow;
-  const [{ data: colors }, { data: sizes }, { data: chart }] = await Promise.all([
-    supabase.from('product_colors').select('*').eq('product_id', p.id).order('sort_order'),
-    supabase.from('product_sizes').select('*').eq('product_id', p.id),
-    supabase.from('size_chart_rows').select('*').eq('product_id', p.id).order('sort_order'),
-  ]);
-
+  // Colour/image and size-chart data is decorative side-data: when it fails,
+  // the page still renders (with the placeholder gallery / no chart) rather
+  // than being lost to a secondary query error. Only the product lookup above
+  // can fail the page.
   return {
     ...p,
-    colors: ((colors as ProductColorRow[]) ?? []).map((color) => ({ ...color, images: cleanImageUrls(color.images) })),
-    sizes: sortSizes(((sizes as ProductSizeRow[]) ?? []).map((s) => ({
+    colors: (colors ?? []).map((color) => ({ ...color, images: cleanImageUrls(color.images) })),
+    sizes: sortSizes((sizes ?? []).map((s) => ({
       ...s,
       stock: Number(s.stock ?? 0),
       available: Number(s.stock ?? 0) > 0,
     }))),
-    size_chart: (chart as SizeChartRow[]) ?? [],
+    size_chart: (chart ?? []) as SizeChartRow[],
   };
 }
 
 export async function fetchHeroSlides(): Promise<HeroSlideRow[]> {
-  const { data, error } = await supabase
-    .from('hero_slides')
-    .select('*')
-    .eq('active', true)
-    .order('sort_order');
-  if (error) throw error;
-  return (data as HeroSlideRow[]) ?? [];
-}
-
-/**
- * Sizes offered on a product (M/L/XL). Source of truth is the product-level
- * `available_sizes` column added in the wholesale rebuild migration; older
- * rows fall back to the standard M/L/XL set.
- */
-export function getAvailableSizes(product: ProductRow | CatalogProduct): string[] {
-  const raw = Array.isArray(product.available_sizes) ? product.available_sizes : [];
-  const filtered = raw.filter((s): s is (typeof SIZE_LABELS)[number] => ALLOWED_SIZES.has(s));
-  return filtered.length > 0 ? filtered : [...SIZE_LABELS];
+  const rows = await get<HeroSlideRow>('hero_slides', { active: 'eq.true', order: 'sort_order.asc' }, { select: 'id, image_url, sort_order, active, created_at' });
+  return rows ?? [];
 }
 
 export function formatPrice(n: number): string {
   return `₹\u2009${n.toLocaleString('en-IN')}`;
-}
-
-export function formatPerUnit(n: number): string {
-  return `₹\u2009${n.toLocaleString('en-IN')} / piece`;
 }
 
 /* ---- Retail / D2C helpers ---- */
@@ -168,294 +271,30 @@ export function isRetailVisible(product: ProductRow | CatalogProduct): boolean {
   return (product.published !== false) && (product.retail_visible !== false);
 }
 
-/** Whether customers should see wholesale pricing anywhere. Central feature
- * flag on site_settings (default OFF). Read synchronously via the cached
- * settings so every component shares one decision point. */
-export function wholesalePricingEnabled(): boolean {
-  return getSiteSettings().wholesale_pricing_enabled === true;
-}
-
 /** Per-variant D2C stock for a color/size combination. Returns 0 when missing. */
-export function getVariantStock(
-  product: CatalogProduct,
-  colorId: string,
-  sizeLabel: string
-): number {
-  const size = product.sizes.find(
-    (s) => s.color_id === colorId && s.size_label === sizeLabel
+
+/** The sizes offered for a specific color on a product, derived from the
+ * per-color size rows so stock/availability is per variant. Any size the admin
+ * configured is returned (no hardcoded size set). */
+export function getSizesForColor(product: CatalogProduct, colorId: string): ProductSizeRow[] {
+  return sortSizeRows(
+    product.sizes.filter((s) => s.color_id === colorId)
   );
-  return Math.max(0, Number(size?.stock ?? 0));
 }
 
-/** The sizes offered for a specific color on a product (M/L/XL by default),
- * derived from the per-color size rows so stock/availability is per variant. */
-export function getSizesForColor(product: CatalogProduct, colorId: string): ProductSizeRow[] {
-  return product.sizes
-    .filter((s) => s.color_id === colorId && ALLOWED_SIZES.has(s.size_label))
-    .sort((a, b) => (SIZE_ORDER[a.size_label] ?? 99) - (SIZE_ORDER[b.size_label] ?? 99));
+/** Total available units across every colour/size variant of a product. */
+export function getTotalStock(product: CatalogProduct): number {
+  return product.sizes.reduce((sum, s) => sum + Math.max(0, Number(s.stock ?? 0)), 0);
+}
+
+/** Whether at least one colour/size variant has stock (product is orderable). */
+export function isProductInStock(product: CatalogProduct): boolean {
+  return getTotalStock(product) > 0;
 }
 
 export interface RetailVariant {
   color: ProductColorRow;
   size: ProductSizeRow;
-}
-
-export interface ProductSpecs {
-  // Raw admin-entered values only. Empty strings mean "not entered" and the
-  // storefront hides those rows rather than showing invented defaults.
-  fabric: string;
-  gsm: number | null;
-  wash: string;
-  fit: string;
-  printType: string;
-}
-
-/** Normalized wholesale-facing product specs with NO invented fallbacks. */
-export function getProductSpecs(product: ProductRow | CatalogProduct): ProductSpecs {
-  return {
-    fabric: (product.fabric || '').trim(),
-    gsm: Number(product.gsm ?? 0) || null,
-    wash: (product.wash ?? '').trim(),
-    fit: (product.fit || '').trim(),
-    printType: (product.print_type ?? '').trim(),
-  };
-}
-
-export interface WholesaleSlabs {
-  moq: number;
-  price50: number;
-  price100: number;
-}
-
-/** Wholesale slab pricing for a product. Uses the per-product DB values when
- * present; otherwise falls back to the admin-controlled global site defaults.
- * Never derives a price — the "—" states in the UI mean the admin hasn't set a
- * price for this tier yet.
- */
-export function getWholesaleSlabs(product: ProductRow | CatalogProduct): WholesaleSlabs {
-  const settings = getSiteSettings();
-  const moq = Number(product.moq ?? 0) || settings.default_moq;
-  const price50 = Number(product.wholesale_price_50 ?? 0) || settings.wholesale_price50 || 0;
-  const price100 = Number(product.wholesale_price_100 ?? 0) || settings.wholesale_price100 || 0;
-  return { moq, price50, price100 };
-}
-
-export type WholesaleTier = 'below-moq' | '100' | '50';
-
-export interface WholesaleTierState {
-  tier: WholesaleTier;
-  unitPrice: number; // per-piece price for the applied tier (price50 used as reference below MOQ)
-  total: number;
-}
-
-export function getWholesaleTier(totalQty: number, slabs: WholesaleSlabs): WholesaleTierState {
-  // Pack-based thresholds: totalQty must be a whole number of PACK_SIZE pieces.
-  // 48–96 PCS -> wholesale_price_50; 102+ PCS -> wholesale_price_100.
-  if (totalQty >= TIER_100_PCS && slabs.price100 > 0) {
-    return { tier: '100', unitPrice: slabs.price100, total: slabs.price100 * totalQty };
-  }
-  if (totalQty >= MIN_ORDER_PCS && slabs.price50 > 0) {
-    return { tier: '50', unitPrice: slabs.price50, total: slabs.price50 * totalQty };
-  }
-  return { tier: 'below-moq', unitPrice: slabs.price50, total: slabs.price50 * totalQty };
-}
-
-/**
- * The per-product wholesale unit price for a given total piece quantity across
- * a product's colors. Single source of truth for the 48–96 / 102+ boundary.
- * Returns 0 when below the minimum order or the tier's price is not set.
- */
-export function getWholesaleUnitPrice(qty: number, price50: number, price100: number): number {
-  if (qty >= MIN_ORDER_PCS) {
-    if (qty >= TIER_100_PCS && price100 > 0) return price100;
-    if (price50 > 0) return price50;
-  }
-  return 0;
-}
-
-/* ---- Fixed color-pack model ---- */
-
-export interface PackConfig {
-  packSize: number; // pieces in one pack of a color (6)
-  m: number; // M pieces per pack (2)
-  l: number; // L pieces per pack (2)
-  xl: number; // XL pieces per pack (2)
-}
-
-/** The admin-controlled fixed color-pack ratio (source of truth: site_settings). */
-export function getPackConfig(): PackConfig {
-  const s = getSiteSettings();
-  return {
-    packSize: Math.max(1, s.pack_size || 6),
-    m: Math.max(0, s.pack_m || 0),
-    l: Math.max(0, s.pack_l || 0),
-    xl: Math.max(0, s.pack_xl || 0),
-  };
-}
-
-export interface PackQuantities {
-  packs: number;
-  m: number;
-  l: number;
-  xl: number;
-  qty: number; // packs * packSize
-}
-
-/** Derives the fixed size quantities and total pieces from a whole pack count. */
-export function packToQuantities(packs: number, cfg: PackConfig = getPackConfig()): PackQuantities {
-  const p = Math.max(0, Math.floor(packs));
-  return { packs: p, m: p * cfg.m, l: p * cfg.l, xl: p * cfg.xl, qty: p * cfg.packSize };
-}
-
-/** A single requested color-pack line of a wholesale order. */
-export interface WholesaleSkuLine {
-  productId: string;
-  name: string;
-  code: string;
-  color: string;
-  colorHex: string;
-  image: string;
-  slug: string;
-  packs: number;
-  m: number;
-  l: number;
-  xl: number;
-  qty: number; // packs * packSize
-  price50: number;
-  price100: number;
-}
-
-export interface WholesaleWhatsAppPayload {
-  lines: WholesaleSkuLine[];
-  businessName?: string;
-  phone?: string;
-  city?: string;
-  note?: string;
-  orderRef?: string;
-}
-
-export interface WholesaleOrderSummary {
-  totalQty: number;
-  tiers: { name: string; unitPrice: number }[];
-  total: number;
-}
-
-/**
- * Builds a wholesale order summary from a set of color-pack lines.
- * The per-piece price for each product depends on that product's own total
- * quantity across all its colors (102+ PCS = price100 slab, otherwise the
- * 48–96 PCS slab).
- */
-export function summarizeWholesale(lines: WholesaleSkuLine[]): WholesaleOrderSummary {
-  let totalQty = 0;
-  const tiers: Record<string, number> = {};
-  let total = 0;
-
-  const byProduct = new Map<string, { qty: number; price50: number; price100: number }>();
-  for (const line of lines) {
-    if (line.packs <= 0) continue;
-    if (!byProduct.has(line.productId)) byProduct.set(line.productId, { qty: 0, price50: line.price50, price100: line.price100 });
-    byProduct.get(line.productId)!.qty += line.qty;
-    totalQty += line.qty;
-  }
-
-  for (const [productId, group] of byProduct) {
-    const unit = getWholesaleUnitPrice(group.qty, group.price50, group.price100);
-    if (unit <= 0) continue;
-    tiers[String(unit)] = unit;
-    for (const line of lines) {
-      if (line.productId === productId) total += unit * line.qty;
-    }
-  }
-
-  return {
-    totalQty,
-    tiers: Object.keys(tiers)
-      .map(Number)
-      .sort((a, b) => a - b)
-      .map((p) => ({ name: formatPerUnit(p), unitPrice: p })),
-    total,
-  };
-}
-
-const PACK_LABELS = ['M', 'L', 'XL'] as const;
-
-function packForLine(line: WholesaleSkuLine): string {
-  const parts = PACK_LABELS.map((label) => {
-    const qty = label === 'M' ? line.m : label === 'L' ? line.l : line.xl;
-    return `${qty} ${label}`;
-  });
-  return parts.join(' · ');
-}
-
-/**
- * Pre-filled WhatsApp message for a wholesale order (product page or cart).
- * Message shape: header, product + code, per-color pack breakdown
- * (color, packs, M/L/XL split, PCS), total PCS, price per piece, total.
- * Includes the stored order reference when one exists.
- *
- * When wholesale pricing is disabled via the central feature flag, per-piece
- * and total amounts are omitted from the message entirely — the customer only
- * sends quantities (no wholesale prices leak to the customer-facing flow).
- */
-export function buildWholesaleWhatsAppUrl(payload: WholesaleWhatsAppPayload): string {
-  const summary = summarizeWholesale(payload.lines);
-  const settings = getSiteSettings();
-  const showPrice = settings.wholesale_pricing_enabled === true;
-
-  const sellerDetails = [
-    payload.businessName ? `Business: ${payload.businessName}` : null,
-    payload.phone ? `WhatsApp: ${payload.phone}` : null,
-    payload.city ? `City: ${payload.city}` : null,
-    payload.note ? `Note: ${payload.note}` : null,
-  ].filter(Boolean).join('\n');
-
-  const productBlocks = new Map<string, WholesaleSkuLine[]>();
-  for (const line of payload.lines) {
-    if (line.packs <= 0) continue;
-    const key = line.productId || line.name;
-    if (!productBlocks.has(key)) productBlocks.set(key, []);
-    productBlocks.get(key)!.push(line);
-  }
-
-  const orderable = summary.totalQty >= MIN_ORDER_PCS;
-
-  const message: string[] = [
-    'DSLANG WHOLESALE ORDER',
-    payload.orderRef ? `Ref #${payload.orderRef}` : null,
-    '',
-  ].filter(Boolean) as string[];
-
-  for (const block of productBlocks.values()) {
-    const blockSummary = summarizeWholesale(block);
-    const unit = blockSummary.tiers[0]?.unitPrice ?? 0;
-    const first = block[0];
-    message.push(`Product: ${first.name}`, `Code: ${first.code}`, '');
-    for (const line of block) {
-      message.push(
-        `${line.color}: ${line.packs} pack${line.packs > 1 ? 's' : ''} — ${packForLine(line)} = ${line.qty} PCS`
-      );
-    }
-    if (showPrice) {
-      message.push('', `Price: ${unit > 0 ? formatPerUnit(unit) : '—'}`, '');
-    }
-  }
-
-  message.push(`Total PCS: ${summary.totalQty}`);
-  if (showPrice) {
-    message.push(`Total: ${orderable && summary.total > 0 ? formatPrice(summary.total) : formatPrice(0)}`);
-  }
-  if (!orderable) {
-    message.push(`(Minimum wholesale order: ${MIN_PACKS} packs — ${MIN_ORDER_PCS} PCS.)`);
-  }
-
-  if (sellerDetails) {
-    message.push('', 'My Details:', sellerDetails);
-  }
-
-  message.push('', 'Please confirm availability and dispatch details.');
-
-  return `https://wa.me/${settings.whatsapp_number}?text=${encodeURIComponent(message.join('\n'))}`;
 }
 
 export function buildWhatsAppGeneralUrl(message: string): string {

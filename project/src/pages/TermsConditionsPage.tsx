@@ -3,7 +3,6 @@ import {
   PolicySection,
   PolicyP,
   PolicyOl,
-  PolicyUl,
   PolicyNote,
   POLICY_BUSINESS,
   POLICY_SITE,
@@ -100,11 +99,11 @@ export function TermsPage() {
       <PolicySection num={8} title="Cancellations, Returns & Refunds">
         <PolicyP>
           Your cancellations, returns, exchanges and refunds are governed by our{' '}
-          <a href="#/refund-and-cancellation" className="text-crimson underline hover:text-crimson-dark">
+          <a href="#/refund-and-cancellation" className="text-bone underline hover:text-bone-dim">
             Refund & Cancellation Policy
           </a>{' '}
           and our{' '}
-          <a href="#/return-policy" className="text-crimson underline hover:text-crimson-dark">
+          <a href="#/return-policy" className="text-bone underline hover:text-bone-dim">
             Return Policy
           </a>
           , which form part of these Terms.
@@ -114,7 +113,7 @@ export function TermsPage() {
       <PolicySection num={9} title="Shipping & Delivery">
         <PolicyP>
           Delivery is subject to our{' '}
-          <a href="#/shipping-policy" className="text-crimson underline hover:text-crimson-dark">
+          <a href="#/shipping-policy" className="text-bone underline hover:text-bone-dim">
             Shipping Policy
           </a>
           . Dispatch and delivery timelines, and courier-level delays outside our control, are
@@ -169,7 +168,7 @@ export function TermsPage() {
       <PolicySection num={15} title="Contact Us">
         <PolicyP>
           Questions concerning these Terms may be directed to us through our{' '}
-          <a href="#/contact" className="text-crimson underline hover:text-crimson-dark">Contact page</a>
+          <a href="#/contact" className="text-bone underline hover:text-bone-dim">Contact page</a>
           , on WhatsApp, or by email at hello.dslang@gmail.com.
         </PolicyP>
         <PolicyNote>

@@ -15,15 +15,14 @@ import { lockScroll, unlockScroll } from '@/lib/scrollLock';
 
 /**
  * Bag drawer — slides in from the RIGHT, matching the premium visual language
- * of the left-side navigation menu drawer in Navbar.tsx.
- *
- * Mobile: ~98vw width (small page/overlay visible behind).
- * Desktop: 440px right panel.
- * Both are full-height below the announcement bar / header.
+ * and dimensions of the left-side navigation menu drawer in Navbar.tsx
+ * (top-8, h-[calc(100dvh-2rem)], w-[80vw] max-w-[380px]).
  *
  * Auto-closes when the last line is removed. If opened while empty it
  * auto-closes after 3 seconds. The timer is cancelled immediately if an item
  * is added, and cleared on close/unmount. ESC / backdrop / X close it.
+ * The device/system back button closes the drawer first, then a second back
+ * navigates away (history marker handled in the CartDrawerProvider).
  * Body scrolling is locked while open.
  *
  * Promo codes are validated server-side on APPLY and persisted through the
@@ -35,7 +34,7 @@ import { lockScroll, unlockScroll } from '@/lib/scrollLock';
  */
 export function CartDrawer() {
   const { isOpen, closeCart } = useCartDrawer();
-  const { items, count, subtotal, setQuantity, removeItem, reconcileWithLiveStock, promo, applyPromo, removeAppliedPromo } = useD2cCart();
+  const { items, subtotal, setQuantity, removeItem, reconcileWithLiveStock, promo, applyPromo, removeAppliedPromo } = useD2cCart();
   const { navigate } = useRouter();
   const shipping = computeShipping(subtotal);
 
@@ -142,17 +141,17 @@ export function CartDrawer() {
     <div className="fixed inset-0 z-[60]" style={{ pointerEvents: isOpen ? 'auto' : 'none' }} aria-hidden={!isOpen}>
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity duration-200"
+        className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity duration-[250ms]"
         style={{ opacity: isOpen ? 1 : 0 }}
         onClick={closeCart}
       />
 
-      {/* Panel — slides from RIGHT, full-height below the announcement bar / header */}
+      {/* Panel — slides from RIGHT, same dimensions as the menu drawer */}
       <aside
-        className="absolute right-0 top-8 h-[calc(100dvh-2rem)] w-[98vw] md:w-[440px] bg-paper-2 border-l border-line flex flex-col will-change-transform"
+        className="absolute right-0 top-8 h-[calc(100dvh-2rem)] w-[95vw] lg:w-[80vw] lg:max-w-[380px] bg-white border-l border-line flex flex-col will-change-transform"
         style={{
           transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
-          transition: 'transform 250ms cubic-bezier(0.16, 1, 0.3, 1)',
+          transition: 'transform 250ms cubic-bezier(0.4, 0, 0.2, 1)',
         }}
         role="dialog"
         aria-label="Shopping bag"
@@ -172,7 +171,7 @@ export function CartDrawer() {
             <p className="mt-4 font-display text-2xl uppercase tracking-wide-2 text-bone">Your Bag Is Empty</p>
             <button
               onClick={goToCollection}
-              className="mt-6 inline-flex items-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5 hover:bg-crimson-dark transition-colors"
+              className="mt-6 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
             >
               Explore Collection <ArrowRight size={14} strokeWidth={2} />
             </button>
@@ -182,8 +181,8 @@ export function CartDrawer() {
             {/* Items */}
             <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain">
               {stockNotice && (
-                <div className="px-5 py-3 border-b border-line bg-amber-950/60">
-                  <p className="text-xs text-amber-300 whitespace-pre-line leading-relaxed">{stockNotice}</p>
+                <div className="px-5 py-3 border-b border-line bg-amber-50">
+                  <p className="text-xs text-amber-800 whitespace-pre-line leading-relaxed">{stockNotice}</p>
                 </div>
               )}
               <div className="divide-y divide-line">
@@ -204,7 +203,7 @@ export function CartDrawer() {
                             <a
                               href={`#/product/${item.slug}`}
                               onClick={closeCart}
-                              className="block font-semibold text-[13px] text-bone line-clamp-2 hover:text-crimson transition-colors"
+                              className="block font-semibold text-[13px] text-bone line-clamp-2 hover:text-bone transition-colors"
                             >
                               {item.name}
                             </a>
@@ -214,7 +213,7 @@ export function CartDrawer() {
                           </div>
                           <button
                             onClick={() => removeItem(idx)}
-                            className="text-grey/70 hover:text-crimson transition-colors p-0.5 mt-0.5"
+                            className="text-grey/70 hover:text-bone transition-colors p-0.5 mt-0.5"
                             aria-label="Remove item"
                           >
                             <Trash2 size={15} strokeWidth={1.8} />
@@ -225,7 +224,7 @@ export function CartDrawer() {
                           <div className="inline-flex items-center border border-line">
                             <button
                               onClick={() => setQuantity(idx, Math.max(1, item.quantity - 1))}
-                              className="w-8 h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors"
+                              className="w-8 h-9 flex items-center justify-center text-bone-dim hover:text-bone transition-colors"
                               aria-label="Decrease quantity"
                             >
                               <Minus size={13} strokeWidth={2} />
@@ -236,7 +235,7 @@ export function CartDrawer() {
                             <button
                               onClick={() => setQuantity(idx, item.quantity + 1)}
                               disabled={item.stock > 0 && capped >= item.stock}
-                              className="w-8 h-9 flex items-center justify-center text-bone-dim hover:text-crimson transition-colors disabled:opacity-30"
+                              className="w-8 h-9 flex items-center justify-center text-bone-dim hover:text-bone transition-colors disabled:opacity-30"
                               aria-label="Increase quantity"
                             >
                               <Plus size={13} strokeWidth={2} />
@@ -265,14 +264,14 @@ export function CartDrawer() {
                   </div>
                   <div className="flex items-center justify-between">
                     <dt className="text-grey">Discount</dt>
-                    <dd className={`font-semibold tabular-nums ${discount > 0 ? 'text-green-400' : 'text-grey'}`}>
+                    <dd className={`font-semibold tabular-nums ${discount > 0 ? 'text-green-700' : 'text-grey'}`}>
                       {discount > 0 ? `−${formatPrice(discount)}` : '—'}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between">
                     <dt className="text-grey">Shipping</dt>
                     <dd className="font-semibold text-bone tabular-nums">
-                      {shipping > 0 ? formatPrice(shipping) : <span className="text-green-400">FREE</span>}
+                      {shipping > 0 ? formatPrice(shipping) : <span className="text-green-700">FREE</span>}
                     </dd>
                   </div>
                   <p className="text-[10px] text-grey text-right">
@@ -282,7 +281,7 @@ export function CartDrawer() {
                   </p>
                   <div className="flex items-center justify-between border-t border-line pt-2 mt-2">
                     <dt className="font-label text-xs uppercase tracking-wide-2 text-bone">Total</dt>
-                    <dd className="font-price text-xl text-crimson tabular-nums">
+                    <dd className="font-price text-xl text-bone tabular-nums">
                       {(total || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}
                     </dd>
                   </div>
@@ -297,13 +296,13 @@ export function CartDrawer() {
                 </div>
                 {promo ? (
                   <>
-                    <div className="mt-2 flex items-center justify-between border border-green-900/70 bg-green-950/50 px-3 py-2.5">
-                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-green-400">
+                    <div className="mt-2 flex items-center justify-between border border-green-300 bg-green-50 px-3 py-2.5">
+                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-green-800">
                         <Check size={14} strokeWidth={2.5} /> {promo.code} APPLIED
                       </span>
                       <button
                         onClick={handleRemovePromo}
-                        className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-400 underline underline-offset-2 hover:text-green-300"
+                        className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-800 underline underline-offset-2 hover:text-green-900"
                       >
                         Remove
                       </button>
@@ -325,12 +324,12 @@ export function CartDrawer() {
                         placeholder="Enter promo code"
                         autoCapitalize="characters"
                         spellCheck={false}
-                        className="flex-1 min-w-0 border border-line px-3 py-2.5 text-sm text-bone placeholder:text-grey/60 focus:border-crimson focus:outline-none transition-colors"
+                        className="flex-1 min-w-0 border border-line px-3 py-2.5 text-sm text-bone placeholder:text-grey/60 focus:border-bone focus:outline-none transition-colors"
                       />
                       <button
                         onClick={handleApplyPromo}
                         disabled={applying || !promoInput.trim()}
-                        className="inline-flex items-center gap-1.5 shrink-0 bg-bone text-ink text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
+                        className="btn-soft inline-flex items-center gap-1.5 shrink-0 bg-bone text-white text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
                       >
                         {applying ? <Loader2 size={13} strokeWidth={2} className="animate-spin" /> : 'Apply'}
                       </button>
@@ -344,13 +343,13 @@ export function CartDrawer() {
               <div className="px-5 pt-4 pb-3 space-y-2">
                 <button
                   onClick={goToCheckout}
-                  className="w-full inline-flex items-center justify-center gap-2 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 hover:bg-crimson-dark hover:glow-crimson focus-visible:glow-crimson transition-all duration-150 active:scale-[0.99]"
+                  className="w-full btn-dark text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 active:scale-[0.98]"
                 >
                   Checkout <ArrowRight size={15} strokeWidth={2} />
                 </button>
                 <button
                   onClick={closeCart}
-                  className="w-full font-label text-[11px] uppercase tracking-wide-2 text-grey hover:text-crimson transition-colors py-2.5"
+                  className="w-full font-label text-[11px] uppercase tracking-wide-2 text-bone-dim hover:text-bone transition-colors py-2.5"
                 >
                   Continue Shopping
                 </button>
