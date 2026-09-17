@@ -147,9 +147,15 @@ export function fetchProducts(): Promise<CatalogProduct[]> {
  * The product detail page independently loads its full data via fetchProduct().
  */
 async function fetchCatalogFromDb(): Promise<CatalogProduct[]> {
-  const hasPublish = await hasPublishColumns();
-  const hasNewDrop = await hasNewDropColumns();
-  const hasRetail = await hasRetailColumns();
+  // The migration-gated schema probes are independent of each other — run them
+  // concurrently instead of serially. On a cold load this used to be three
+  // sequential ~600 ms round-trips before the products query could even start.
+  const [hasPublish, hasNewDrop, hasRetail, hasSizeOrder] = await Promise.all([
+    hasPublishColumns(),
+    hasNewDropColumns(),
+    hasRetailColumns(),
+    hasProductSizeOrder(),
+  ]);
   const cols: string[] = ['id', 'slug', 'name', 'code', 'price', 'mrp', 'category', 'featured', 'sort_order', 'created_at'];
   if (hasPublish) cols.push('published');
   if (hasNewDrop) cols.push('new_drop');
@@ -167,24 +173,17 @@ async function fetchCatalogFromDb(): Promise<CatalogProduct[]> {
   // size ordering is migration-gated: exclude the column when absent so an
   // optional display column can never break the whole collection.
   const sizeCols: string[] = ['id', 'product_id', 'color_id', 'size_label', 'stock'];
-  if (await hasProductSizeOrder()) sizeCols.push('sort_order');
+  if (hasSizeOrder) sizeCols.push('sort_order');
 
   // The products themselves are the valid result. A failure in the decorative
   // colour/image or size side-data must NEVER remove products that were
   // already fetched successfully — those lists degrade to empty and the cards
   // render with the placeholder instead. Only the product query above throws.
-  let colors: ProductColorRow[] | null = null;
-  let sizes: ProductSizeRow[] | null = null;
-  try {
-    colors = await get<ProductColorRow>('product_colors', { product_id: `in.(${ids.join(',')})`, order: 'sort_order.asc' }, { select: 'id, product_id, name, hex, images, sort_order' });
-  } catch {
-    colors = null;
-  }
-  try {
-    sizes = await get<unknown>('product_sizes', { product_id: `in.(${ids.join(',')})` }, { select: sizeCols.join(',') }) as unknown as ProductSizeRow[];
-  } catch {
-    sizes = null;
-  }
+  // Colors and sizes are independent of each other, so fetch them concurrently.
+  const [colors, sizes] = await Promise.all([
+    get<ProductColorRow>('product_colors', { product_id: `in.(${ids.join(',')})`, order: 'sort_order.asc' }, { select: 'id, product_id, name, hex, images, sort_order' }).catch(() => null as ProductColorRow[] | null),
+    get<ProductSizeRow>('product_sizes', { product_id: `in.(${ids.join(',')})` }, { select: sizeCols.join(',') }).catch(() => null as ProductSizeRow[] | null),
+  ]);
 
   return products.map((p) => ({
     ...p,
@@ -208,29 +207,16 @@ export async function fetchProduct(slug: string): Promise<CatalogProduct | null>
   const p = products[0];
   if (!p) return null;
 
-  let colors: ProductColorRow[] | null = null;
-  let sizes: ProductSizeRow[] | null = null;
-  let chart: SizeChartRow[] | null = null;
-  try {
-    colors = await get<ProductColorRow>('product_colors', { product_id: `eq.${p.id}`, order: 'sort_order.asc' }, { select: '*' });
-  } catch {
-    colors = null;
-  }
-  try {
-    sizes = await get<unknown>('product_sizes', { product_id: `eq.${p.id}` }, { select: '*' }) as unknown as ProductSizeRow[];
-  } catch {
-    sizes = null;
-  }
-  try {
-    chart = await get<SizeChartRow>('size_chart_rows', { product_id: `eq.${p.id}`, order: 'sort_order.asc' }, { select: '*' });
-  } catch {
-    chart = null;
-  }
+  // Colour/image, size and size-chart data are decorative side-data: when a
+  // request fails, the page still renders (with the placeholder gallery / no
+  // chart) rather than being lost to a secondary query error. Only the product
+  // lookup above can fail the page. They are independent, so fetch concurrently.
+  const [colors, sizes, chart] = await Promise.all([
+    get<ProductColorRow>('product_colors', { product_id: `eq.${p.id}`, order: 'sort_order.asc' }, { select: '*' }).catch(() => null as ProductColorRow[] | null),
+    get<ProductSizeRow>('product_sizes', { product_id: `eq.${p.id}` }, { select: '*' }).catch(() => null as ProductSizeRow[] | null),
+    get<SizeChartRow>('size_chart_rows', { product_id: `eq.${p.id}`, order: 'sort_order.asc' }, { select: '*' }).catch(() => null as SizeChartRow[] | null),
+  ]);
 
-  // Colour/image and size-chart data is decorative side-data: when it fails,
-  // the page still renders (with the placeholder gallery / no chart) rather
-  // than being lost to a secondary query error. Only the product lookup above
-  // can fail the page.
   return {
     ...p,
     colors: (colors ?? []).map((color) => ({ ...color, images: cleanImageUrls(color.images) })),

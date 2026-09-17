@@ -70,6 +70,17 @@ function loadSdk(): Promise<void> {
 }
 
 /**
+ * Warm the SDK cache in the background so that when the customer clicks Pay
+ * the redirect to Cashfree happens with zero additional download wait. Safe to
+ * call early (e.g. when the checkout page renders); failures are swallowed
+ * here and re-surfaced on the actual openCashfreeCheckout() call.
+ */
+export function preloadCashfreeSdk(): void {
+  if (typeof window === 'undefined') return;
+  void loadSdk().catch(() => {});
+}
+
+/**
  * Opens the Cashfree hosted checkout. Resolves when Cashfree responds (either
  * a redirect is being started, or an error occurred). Does NOT navigate the app
  * before opening checkout.

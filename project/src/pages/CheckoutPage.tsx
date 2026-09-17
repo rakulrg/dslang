@@ -13,9 +13,8 @@ import {
   createPaymentSession,
   verifyPayment,
 } from '@/lib/payment';
-import { openCashfreeCheckout } from '@/lib/cashfreeSdk';
+import { openCashfreeCheckout, preloadCashfreeSdk } from '@/lib/cashfreeSdk';
 import { fetchLiveVariantStock, reconcileCartWithLive, describeStockChanges } from '@/lib/cartStock';
-import { LoadingDots } from '@/components/LoadingDots';
 import { lockScroll, unlockScroll } from '@/lib/scrollLock';
 
 /**
@@ -194,6 +193,16 @@ export function CheckoutPage() {
   }, [form]);
 
   const paymentCfg = getPaymentConfig();
+
+  // Warm the Cashfree SDK in the background as soon as checkout loads so that
+  // when the customer clicks Pay the redirect to Cashfree starts without a
+  // script-download wait. Failures are swallowed here — the real open still
+  // guards against a missing SDK at submit time.
+  useEffect(() => {
+    if (!paymentCfg.configured) return;
+    const t = window.setTimeout(() => preloadCashfreeSdk(), 800);
+    return () => window.clearTimeout(t);
+  }, [paymentCfg.configured]);
 
   // Re-validate the cart against live DB stock when checkout loads, so the
   // summary and the Place Order button reflect current availability. If lines
@@ -438,7 +447,8 @@ export function CheckoutPage() {
           Almost there
         </h1>
         <p className="mt-4 text-sm text-grey max-w-md leading-relaxed">
-          Your order has been recorded, but online payment could not be completed. Please contact us for payment assistance.
+          Your payment could not be completed and you have not been charged. Your items are still safe in your bag —
+          try paying again or contact us.
         </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <button
@@ -599,7 +609,7 @@ export function CheckoutPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 md:px-12 lg:px-16 py-8 md:py-14">
-      {(stage === 'placing' || stage === 'confirming') && <TransitionOverlay stage={stage} />}
+      {(stage === 'placing') && <TransitionOverlay stage={stage} />}
       <button
         onClick={() => { openCart(); navigate('/'); }}
         className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey hover:text-bone transition-colors"
@@ -795,10 +805,11 @@ export function CheckoutPage() {
 }
 
 /**
- * Full-screen transition overlay shown while an order is being placed (jump
- * INTO the payment gateway) and while a payment is being verified on return.
- * Pure visual state — it never affects the underlying request/response flow.
- * Auto-hides after 15s as a safety net so it can never trap the customer.
+ * Minimal full-screen transition shown only while an order is being placed and
+ * the customer is being moved into the Cashfree gateway. Pure visual state —
+ * it never affects the underlying request/response flow. Simple white screen,
+ * single line, no blur or heavy animation. Auto-hides after 15s as a safety
+ * net so it can never trap the customer.
  */
 function TransitionOverlay({ stage }: { stage: Stage }) {
   const [visible, setVisible] = useState(true);
@@ -816,7 +827,7 @@ function TransitionOverlay({ stage }: { stage: Stage }) {
     return () => unlockScroll();
   }, [visible]);
 
-  const label = stage === 'placing' ? 'Securing your order' : 'Confirming your payment';
+  const label = stage === 'placing' ? 'Securing your payment' : 'Confirming your payment';
 
   return (
     <div
@@ -825,9 +836,8 @@ function TransitionOverlay({ stage }: { stage: Stage }) {
       role="status"
       aria-live="polite"
     >
-      <LoadingDots />
-      <p className="mt-6 font-display text-xl md:text-2xl uppercase tracking-wide-2">{label}</p>
-      <p className="mt-2 text-[11px] uppercase tracking-wide-2 text-grey">Please do not close this page</p>
+      <p className="font-display text-lg md:text-xl uppercase tracking-wide-2">{label}</p>
+      <p className="mt-1 font-label text-[10px] uppercase tracking-wide-2 text-grey">Cashfree</p>
     </div>
   );
 }
