@@ -1,0 +1,6 @@
+# DSLANG pre-wholesale-removal snapshot
+# Date: 2026-09-17 (before migration 20260921000000_dslang_drop_wholesale_remnants.sql applied)
+# Capture method: supabase db query --linked against live prod DB (project fryxswzrpqujivtbguim)
+# Purpose: durable backup of wholesale/B2B site_settings columns soon to be dropped.
+id,wholesale_pricing_enabled,default_moq,min_order_quantity,per_color_minimum,pack_size,pack_m,pack_l,pack_xl,wholesale_price50,wholesale_price100
+1,false,50,48,6,6,2,2,2,0,0

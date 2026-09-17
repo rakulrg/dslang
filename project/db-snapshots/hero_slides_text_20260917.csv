@@ -1,0 +1,9 @@
+# DSLANG pre-wholesale-removal snapshot
+# Date: 2026-09-17 (before migration 20260921000000_dslang_drop_wholesale_remnants.sql applied)
+# Capture method: supabase db query --linked against live prod DB (project fryxswzrpqujivtbguim)
+# Purpose: durable backup of hero_slides text/CTA columns soon to be dropped
+# (eyebrow/title/subtitle/cta_text/cta_url). image_url included for reference.
+id,eyebrow,title,subtitle,cta_text,cta_url,image_url
+845ad7a3-b055-4906-8169-b34b3e111c94,,"STREET WEAR",,,,,https://fryxswzrpqujivtbguim.supabase.co/storage/v1/object/public/product-images/hero/33278476-c26a-43ce-ba82-dc3a4f66bc42.jpg
+2a91f18e-0c2f-46ae-a7bc-5787f6d49b04,"Stay moving. Leave a mark","SLANG OF DESIGN",,,,,https://fryxswzrpqujivtbguim.supabase.co/storage/v1/object/public/product-images/hero/70406715-e0d6-4bff-ab2d-22c0275c01e8.jpg
+5c7d4b28-8e60-4c0d-a0c2-116799b1591e,,,,,,,https://fryxswzrpqujivtbguim.supabase.co/storage/v1/object/public/product-images/hero/8c9a9211-46ed-48dd-b667-ef7cfc01702f.webp

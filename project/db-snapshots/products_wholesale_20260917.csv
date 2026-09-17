@@ -1,0 +1,14 @@
+# DSLANG pre-wholesale-removal snapshot
+# Date: 2026-09-17 (before migration 20260921000000_dslang_drop_wholesale_remnants.sql applied)
+# Capture method: supabase db query --linked against live prod DB (project fryxswzrpqujivtbguim)
+# Purpose: durable backup of wholesale/B2B pricing + MOQ data soon to be dropped.
+id,slug,name,moq,wholesale_price_50,wholesale_price_100
+10259500-f655-4ccc-b974-5f165a84a20f,dslang-original,"DSLANG Original - Relaxed Fit T-shirt - Optic Wash",50,270,260
+54203c43-d8a8-4fbc-a12d-7acc21d940ac,one-piece-anime,"One Piece Anime - Relaxed Fit T-shirt - Optic Wash",50,270,260
+818a6694-d122-4abb-9631-6b78a37d2987,create-over-consume,"Create Over Consume - Relaxed Fit T-shirt - Optic Wash",50,270,260
+c08bf3a6-0389-43b3-b689-6d290e645f0d,white-flame,"White Flame - Relaxed Fit T-shirt - Optic Wash",50,270,260
+b722809c-5dc8-4e97-a467-63bdec36f558,jujutsukaisen-sukuna,"Sukuna - Jujutsu Kaisen - Relaxed Fit T-shirt - Optic Wash",50,270,260
+ba939d05-3746-41ce-800a-69f38ef78e0b,no-wasted-potential,"No Wasted Potential - Relaxed Fit T-shirt - Optic Wash",50,270,260
+06d5bd0f-f1d2-4e37-b148-1bd36e2a819a,loyalty-over-life,"Loyalty Over Life - Relaxed Fit T-shirt - Optic Wash",50,270,260
+08cd475c-90e9-40ef-b65c-062c819052b5,fallen-flower,"Fallen Flower - Relaxed Fit T-shirt - Optic Wash",50,270,260
+dc9ea5d1-ae0f-42e8-99fb-11244c67891f,fallen-halo,Fallen Halo - Relaxed Fit T-shirt,50,NULL,NULL
