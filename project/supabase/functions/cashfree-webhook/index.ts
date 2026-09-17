@@ -136,10 +136,20 @@ Deno.serve(async (req) => {
         // Missing/unconfigured SMS function must not fail the payment callback.
       }
     } else if (status === 'CANCELLED' || status === 'USER_DROPPED' || status === 'FAILED') {
+      // Confirmed failure (not provisional/pending): mark failed and return the
+      // line-item stock to product_sizes so failed/cancelled checkouts stop
+      // leaking inventory. Idempotent via stock_restored_at + skip-rule-aware
+      // in SQL (never restocks a paid/shipped/delivered/refunded order).
+      // Best-effort — a restock hiccup must not fail the webhook ack.
       await supabase
         .from('retail_orders')
         .update({ payment_status: 'failed' })
         .eq('id', order.id);
+      try {
+        await supabase.rpc('restock_retail_order_items', { p_order_id: order.id });
+      } catch (e) {
+        console.error('restock_retail_order_items failed', e);
+      }
     }
   }
 
