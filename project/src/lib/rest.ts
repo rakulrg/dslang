@@ -30,9 +30,37 @@ export class RestError extends Error {
   }
 }
 
+const DEFAULT_TIMEOUT_MS = 20000;
+
+/**
+ * fetch() with an abort timeout. A stalled network request must never hang the
+ * checkout/UI forever — the caller gets a RestError(0, ...) the same way a
+ * non-2xx response would, so every existing try/catch path already recovers.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new RestError(0, `Request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface GetOptions {
   /** PostgREST `select`. Defaults to `*`. */
   select?: string;
+  /** Abort the request after this many ms. */
+  timeoutMs?: number;
 }
 
 /** GET a table — `params` are raw PostgREST filters/operators, e.g.
@@ -48,9 +76,9 @@ export async function get<Row>(
     if (value !== null && value !== undefined && value !== '') qs.set(key, value);
   }
 
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}?${qs.toString()}`, {
+  const res = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${path}?${qs.toString()}`, {
     headers: HEADERS,
-  });
+  }, options.timeoutMs);
   if (!res.ok) {
     throw new RestError(res.status, `Supabase GET ${path} failed (${res.status})`);
   }
@@ -59,7 +87,7 @@ export async function get<Row>(
 
 /** POST a SECURITY DEFINER RPC function (anon role, granted via GRANT EXECUTE). */
 export async function rpc<Result>(fn: string, body: unknown): Promise<Result> {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+  const res = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: 'POST',
     headers: HEADERS,
     body: JSON.stringify(body ?? {}),
@@ -73,7 +101,7 @@ export async function rpc<Result>(fn: string, body: unknown): Promise<Result> {
 /** POST to a Supabase Edge Function with the anon key (gateway accepts the
  *  publishable key as a valid JWT). Used for password-less public functions. */
 export async function invokeFunction<Result>(name: string, body: unknown): Promise<Result> {
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
+  const res = await fetchWithTimeout(`${SUPABASE_URL}/functions/v1/${name}`, {
     method: 'POST',
     headers: HEADERS,
     body: JSON.stringify(body ?? {}),

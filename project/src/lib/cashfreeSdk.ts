@@ -28,25 +28,42 @@ function toCashfreeMode(environment: 'TEST' | 'PROD'): 'sandbox' | 'production' 
 
 let sdkPromise: Promise<void> | null = null;
 
+const SDK_LOAD_TIMEOUT_MS = 15000;
+const CHECKOUT_TIMEOUT_MS = 20000;
+
 function loadSdk(): Promise<void> {
   if (sdkPromise) return sdkPromise;
+  if (window.Cashfree) return Promise.resolve();
   sdkPromise = new Promise<void>((resolve, reject) => {
     if (typeof window === 'undefined') {
       reject(new Error('Cashfree SDK is only supported in the browser.'));
       return;
     }
-    if (window.Cashfree) {
-      resolve();
-      return;
-    }
     const script = document.createElement('script');
     script.src = SDK_URL;
     script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => {
-      sdkPromise = null;
-      reject(new Error('Could not load the payment gateway. Please try again.'));
+
+    let settled = false;
+    const finish = (err: Error | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) {
+        sdkPromise = null;
+        reject(err);
+      } else {
+        resolve();
+      }
     };
+
+    script.onload = () => finish(null);
+    script.onerror = () => finish(new Error('Could not load the payment gateway. Please try again.'));
+
+    const timer = window.setTimeout(
+      () => finish(new Error('Could not load the payment gateway. Please try again.')),
+      SDK_LOAD_TIMEOUT_MS
+    );
+
     document.head.appendChild(script);
   });
   return sdkPromise;
@@ -67,10 +84,27 @@ export async function openCashfreeCheckout(opts: {
     throw new Error('Could not open the payment gateway. Please try again.');
   }
   const cashfree = window.Cashfree({ mode: toCashfreeMode(opts.environment) });
-  const result = await cashfree.checkout({
-    paymentSessionId: opts.paymentSessionId,
-    redirectTarget: opts.redirectTarget ?? '_self',
-  });
+
+  // The SDK's checkout() promise must not be able to hang the checkout page
+  // forever (e.g. the hosted page stalls before it can start a redirect).
+  let result: { error?: { message?: string }; redirect?: boolean } | undefined;
+  let timedOut = false;
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    result = { error: { message: 'The payment window timed out.' } };
+  }, CHECKOUT_TIMEOUT_MS);
+  try {
+    const settled = await cashfree.checkout({
+      paymentSessionId: opts.paymentSessionId,
+      redirectTarget: opts.redirectTarget ?? '_self',
+    });
+    if (!timedOut) result = settled;
+  } catch (err) {
+    if (!timedOut) throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
   if (result?.redirect) {
     // The hosted checkout is redirecting the customer; the SPA will verify the
     // payment server-side when they land back on the return URL.

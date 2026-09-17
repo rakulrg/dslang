@@ -1,4 +1,4 @@
-import { invokeFunction } from '@/lib/rest';
+import { fetchWithTimeout, invokeFunction } from '@/lib/rest';
 
 /**
  * Payment abstraction layer — the only place payment-provider specifics live.
@@ -98,11 +98,15 @@ export async function createPaymentSession(req: PaymentSessionRequest): Promise<
     };
   }
 
-  const response = await fetch(apiUrl('/cashfree-order'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ orderId: req.orderId, orderRef: req.orderRef }),
-  });
+  const response = await fetchWithTimeout(
+    apiUrl('/cashfree-order'),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: req.orderId, orderRef: req.orderRef }),
+    },
+    25000
+  );
   let data: any;
   try {
     data = await response.json();

@@ -235,8 +235,8 @@ export function CheckoutPage() {
         // Possession gate: the edge function only returns order data to a
         // caller who knows the ref AND the customer's 10-digit phone.
         const v = await verifyPayment(pending.ref, form.phone);
-        if (cancelled || !v || !v.order) return;
-        if (v.verified) {
+        if (cancelled) return;
+        if (v?.verified && v.order) {
           window.sessionStorage.removeItem(PENDING_PAYMENT_KEY);
           window.sessionStorage.removeItem(CHECKOUT_FORM_KEY);
           clear();
@@ -256,14 +256,26 @@ export function CheckoutPage() {
             customer: (v.order.customer as RetailCustomer) ?? undefined,
           });
           setStage('success');
-        } else if (v.status === 'failed') {
+        } else if (v?.status === 'failed') {
           window.sessionStorage.removeItem(PENDING_PAYMENT_KEY);
           setStage('failure');
+        } else if (v?.order && v.status === 'pending') {
+          // Still awaiting the gateway's authoritative answer. Keep the pending
+          // key so a retry/refresh re-verifies, but never trap the customer in
+          // a perpetual 'confirming' state.
+          setStage('error');
+          setErrorMsg("We're still confirming your payment. If you have been charged, your order is safe — please contact us.");
         } else {
-          setStage('confirming');
+          // Verification unavailable / timed out. The pending key is kept so a
+          // refresh re-checks; give the customer a clear, recoverable state.
+          setStage('error');
+          setErrorMsg("We couldn't confirm your payment right now. Nothing has been charged unless you saw a bank/SMS confirmation — please try again or contact us.");
         }
       } catch {
-        // Keep the current stage; the customer can retry payment.
+        // Keep the pending key; surface an honest error so this never becomes
+        // an endless 'confirming' spinner.
+        setStage('error');
+        setErrorMsg("We couldn't confirm your payment right now. Please try again or contact us — your order is safe.");
       }
     };
     confirm();
@@ -550,8 +562,10 @@ export function CheckoutPage() {
             redirectTarget: '_self',
           });
           // If Cashfree did not navigate the window (e.g. the customer closed
-          // it) the order simply stays safely pending — restore the button.
+          // it) the order simply stays safely pending — restore the button so
+          // the customer can retry instead of being stuck in 'placing'.
           placingRef.current = false;
+          setStage('form');
           return;
         } catch (err) {
           // Never surface the raw gateway/technical error. Log it, then present
