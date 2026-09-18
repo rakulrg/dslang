@@ -152,26 +152,21 @@ Deno.serve(async (req) => {
       .select('*')
       .eq('id', order.id)
       .maybeSingle();
-    // Best-effort order-confirmation SMS (idempotent via sms_sent_at). Never
-    // blocks or fails the verified payment state.
-    try {
-      await supabase.functions.invoke('send-order-sms', { body: { orderRef: String(order.ref) } });
-    } catch {
-      // A missing/unconfigured SMS function must not fail the payment callback.
-    }
     return json({ verified: true, status: 'paid', order: fresh || order });
   }
 
   if (paymentStatus === 'CANCELLED' || paymentStatus === 'USER_DROPPED' || paymentStatus === 'FAILED') {
     // Confirmed failure (not a provisional/pending state): mark the order
-    // failed and return its stock to product_sizes so abandoned/failed
-    // checkouts stop leaking inventory. restock_retail_order_items is
-    // idempotent (stock_restored_at) and skip-rule-aware (never restocks a
-    // paid, shipped, delivered or refunded order). Best-effort: a restock
-    // error must not fail the status response.
+    // failed + cancelled and return its stock to product_sizes so
+    // abandoned/failed checkouts stop leaking inventory. Order status always
+    // stays consistent: a failed payment is a cancelled order, never
+    // 'processing'. restock_retail_order_items is idempotent
+    // (stock_restored_at) and skip-rule-aware (never restocks a paid,
+    // shipped, delivered or refunded order). Best-effort: a restock error
+    // must not fail the status response.
     await supabase
       .from('retail_orders')
-      .update({ payment_status: 'failed' })
+      .update({ payment_status: 'failed', order_status: 'cancelled' })
       .eq('id', order.id);
     try {
       await supabase.rpc('restock_retail_order_items', { p_order_id: order.id });

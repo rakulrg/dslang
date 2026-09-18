@@ -105,7 +105,7 @@ export async function createPaymentSession(req: PaymentSessionRequest): Promise<
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderId: req.orderId, orderRef: req.orderRef }),
     },
-    25000
+    15000
   );
   let data: any;
   try {
@@ -167,7 +167,7 @@ export function paymentStatusMessage(): string {
   const cfg = getPaymentConfig();
   if (cfg.status === 'ready') return 'Payment is processed securely by ' + cfg.provider.toUpperCase() + '.';
   if (cfg.status === 'pending') {
-    return 'Online payment is being set up. Your order is recorded and a confirmation SMS is sent.';
+    return 'Online payment is being set up. Your order is recorded and will be confirmed by our team.';
   }
-  return 'Online payment is not configured. Your order is recorded and a confirmation SMS is sent.';
+  return 'Online payment is not configured. Your order is recorded and will be confirmed by our team.';
 }

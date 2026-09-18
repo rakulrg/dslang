@@ -11,6 +11,8 @@ import {
   promoApplies,
 } from '@/lib/promo';
 import { fetchLiveVariantStock, reconcileCartWithLive, describeStockChanges } from '@/lib/cartStock';
+import { getPaymentConfig } from '@/lib/payment';
+import { preloadCashfreeSdk } from '@/lib/cashfreeSdk';
 import { lockScroll, unlockScroll } from '@/lib/scrollLock';
 
 /**
@@ -57,6 +59,16 @@ export function CartDrawer() {
     const t = window.setTimeout(() => closeCart(), 3000);
     return () => window.clearTimeout(t);
   }, [isOpen, items.length, closeCart]);
+
+  // Warm the Cashfree SDK in the background the moment the bag opens with items
+  // in it, so by the time the customer reaches Pay Now the hosted-checkout
+  // script is already downloaded (one less wait in the handoff hop).
+  useEffect(() => {
+    if (!isOpen || items.length === 0) return;
+    if (!getPaymentConfig().configured) return;
+    const t = window.setTimeout(() => preloadCashfreeSdk(), 0);
+    return () => window.clearTimeout(t);
+  }, [isOpen, items.length]);
 
   // Re-validate the cart against live DB stock each time the drawer opens.
   useEffect(() => {

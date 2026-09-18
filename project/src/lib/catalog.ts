@@ -22,6 +22,21 @@ function sortSizes(sizes: ProductSizeRow[]): ProductSizeRow[] {
   return sortSizeRows(sizes);
 }
 
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+/** Returns a clean #rgb/#rrggbb when the stored value holds one, else ''.
+ *
+ * The product_colors.hex column is filled by hand in the admin UI, so values
+ * can carry stray whitespace (e.g. " #093624") or be null/empty. Every colour
+ * consumer — card swatches, detail-page selectors, the colorHex written to
+ * cart line items — must read the ACTUAL colour, not a byte-for-byte string
+ * that the browser/CSS refuses to parse. Invalid rows degrade to '' and the
+ * UI falls back to its pattern swatch instead of a transparent "broken" dot. */
+export function normalizeHexColor(raw: string | null | undefined): string {
+  const value = String(raw ?? '').trim();
+  return HEX_COLOR_RE.test(value) ? value : '';
+}
+
 export function cleanImageUrls(images: string[] | null | undefined): string[] {
   return (images ?? []).filter((image): image is string => typeof image === 'string' && image.trim().length > 0).map((image) => image.trim());
 }
@@ -187,7 +202,7 @@ async function fetchCatalogFromDb(): Promise<CatalogProduct[]> {
 
   return products.map((p) => ({
     ...p,
-    colors: (colors?.filter((c) => c.product_id === p.id) ?? []).map((color) => ({ ...color, images: cleanImageUrls(color.images) })),
+    colors: (colors?.filter((c) => c.product_id === p.id) ?? []).map((color) => ({ ...color, hex: normalizeHexColor(color.hex), images: cleanImageUrls(color.images) })),
     sizes: sortSizes((sizes?.filter((s) => s.product_id === p.id) ?? []).map((s) => ({
       ...s,
       stock: Number(s.stock ?? 0),
@@ -219,7 +234,7 @@ export async function fetchProduct(slug: string): Promise<CatalogProduct | null>
 
   return {
     ...p,
-    colors: (colors ?? []).map((color) => ({ ...color, images: cleanImageUrls(color.images) })),
+    colors: (colors ?? []).map((color) => ({ ...color, hex: normalizeHexColor(color.hex), images: cleanImageUrls(color.images) })),
     sizes: sortSizes((sizes ?? []).map((s) => ({
       ...s,
       stock: Number(s.stock ?? 0),

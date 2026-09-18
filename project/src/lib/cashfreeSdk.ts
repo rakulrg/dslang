@@ -28,8 +28,8 @@ function toCashfreeMode(environment: 'TEST' | 'PROD'): 'sandbox' | 'production' 
 
 let sdkPromise: Promise<void> | null = null;
 
-const SDK_LOAD_TIMEOUT_MS = 15000;
-const CHECKOUT_TIMEOUT_MS = 20000;
+const SDK_LOAD_TIMEOUT_MS = 10000;
+const CHECKOUT_TIMEOUT_MS = 12000;
 
 function loadSdk(): Promise<void> {
   if (sdkPromise) return sdkPromise;
@@ -84,12 +84,15 @@ export function preloadCashfreeSdk(): void {
  * Opens the Cashfree hosted checkout. Resolves when Cashfree responds (either
  * a redirect is being started, or an error occurred). Does NOT navigate the app
  * before opening checkout.
+ *
+ * Returns true when Cashfree has started its redirect (the customer is being
+ * handed off to the hosted page), false if it settled without redirecting.
  */
 export async function openCashfreeCheckout(opts: {
   paymentSessionId: string;
   environment: 'TEST' | 'PROD';
   redirectTarget?: string;
-}): Promise<void> {
+}): Promise<boolean> {
   await loadSdk();
   if (!window.Cashfree) {
     throw new Error('Could not open the payment gateway. Please try again.');
@@ -125,7 +128,7 @@ export async function openCashfreeCheckout(opts: {
   if (settled?.redirect) {
     // The hosted checkout is redirecting the customer; the SPA will verify the
     // payment server-side when they land back on the return URL.
-    return;
+    return true;
   }
   if (settled?.error?.message) {
     // NEVER surface the raw gateway message to the customer — it can contain
@@ -139,4 +142,5 @@ export async function openCashfreeCheckout(opts: {
     console.error('[checkout] Payment gateway threw:', checkoutError);
     throw new Error('The payment window could not be opened. Your order has not been charged.');
   }
+  return false;
 }

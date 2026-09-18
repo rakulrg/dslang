@@ -94,9 +94,13 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
     }
     if (order.order_status === 'cancelled') return 'This order has been cancelled.';
     if (order.order_status === 'refunded') return 'This order has been refunded.';
-    if (order.order_status === 'pending') return 'Your order is confirmed. We are reviewing it and will confirm dispatch on SMS.';
+    if (order.order_status === 'pending') {
+      return order.payment_status === 'success'
+        ? 'Your order is confirmed. We are reviewing it and will confirm dispatch.'
+        : 'Your order is placed but payment is still being verified. It is not confirmed yet.';
+    }
     if (order.order_status === 'processing') return 'Your order is being prepared for dispatch.';
-    if (order.order_status === 'shipped') return 'Your order is on its way. You will receive delivery details on SMS.';
+    if (order.order_status === 'shipped') return 'Your order is on its way. You can track delivery details below.';
     if (order.order_status === 'delivered') return 'Your order has been delivered. Thank you for shopping with DSLANG.';
     return '';
   }, [order]);

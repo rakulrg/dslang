@@ -126,24 +126,19 @@ Deno.serve(async (req) => {
           paid_at: new Date().toISOString(),
           txn_id: String(last?.cf_payment_id ?? gatewayId?.gateway_transaction_id ?? '') || order.txn_id,
           payment_provider: 'cashfree',
-        })
-        .eq('id', order.id);
-      // Best-effort order-confirmation SMS (idempotent via sms_sent_at). Never
-      // fails the webhook ack or blocks the verified payment.
-      try {
-        await supabase.functions.invoke('send-order-sms', { body: { orderRef: String(order.ref) } });
-      } catch {
-        // Missing/unconfigured SMS function must not fail the payment callback.
-      }
+})
+      .eq('id', order.id);
     } else if (status === 'CANCELLED' || status === 'USER_DROPPED' || status === 'FAILED') {
-      // Confirmed failure (not provisional/pending): mark failed and return the
-      // line-item stock to product_sizes so failed/cancelled checkouts stop
-      // leaking inventory. Idempotent via stock_restored_at + skip-rule-aware
-      // in SQL (never restocks a paid/shipped/delivered/refunded order).
-      // Best-effort — a restock hiccup must not fail the webhook ack.
+      // Confirmed failure (not provisional/pending): mark failed + cancelled
+      // and return the line-item stock to product_sizes so failed/cancelled
+      // checkouts stop leaking inventory. Order status always stays
+      // consistent: a failed payment is a cancelled order, never 'processing'.
+      // Idempotent via stock_restored_at + skip-rule-aware in SQL (never
+      // restocks a paid/shipped/delivered/refunded order). Best-effort — a
+      // restock hiccup must not fail the webhook ack.
       await supabase
         .from('retail_orders')
-        .update({ payment_status: 'failed' })
+        .update({ payment_status: 'failed', order_status: 'cancelled' })
         .eq('id', order.id);
       try {
         await supabase.rpc('restock_retail_order_items', { p_order_id: order.id });

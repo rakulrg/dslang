@@ -845,7 +845,7 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
     setUploadError('');
     try {
       const imgs = newImages.split('\n').map((s) => s.trim()).filter(Boolean);
-      const created = await adminAddColor(product.id, newName.trim(), newHex, imgs);
+      const created = await adminAddColor(product.id, newName.trim(), newHex.trim(), imgs);
       // Seed zero-stock variant rows so every existing size gets a cell for
       // this new colour (the inventory grid covers the full color × size set).
       const existingSizes = sortSizeLabels(
@@ -895,7 +895,7 @@ function ColorManager({ product, onChanged }: { product: CatalogProduct; onChang
   const handleSaveColor = async (id: string, name: string, hex: string, images: string[]) => {
     setUploadError('');
     try {
-      await adminUpdateColor(id, { name, hex, images });
+      await adminUpdateColor(id, { name: name.trim(), hex: hex.trim(), images });
       await onChanged();
       const warning = latestImageCleanupWarning();
       if (warning) setUploadError(warning);
@@ -1103,7 +1103,7 @@ function ColorRow({ color, onDelete, onSave }: {
                 <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Selected image preview</p>
                 <button type="button" onClick={() => setIsImageViewerOpen(true)} className="text-[10px] font-semibold uppercase tracking-wide-2 text-bone hover:text-bone-dim">Open full size</button>
               </div>
-              <img src={selectedImage} alt={`${name} selected`} className="max-h-80 w-full object-contain" />
+              <img src={selectedImage} alt={`${name} selected`} className="max-h-80 w-full bg-paper-3 object-contain" />
             </div>
           )}
           {isImageViewerOpen && selectedImage && (
@@ -2124,7 +2124,8 @@ function RetailOrdersPanel() {
     return () => window.clearTimeout(t);
   }, [actionMessage]);
 
-  // --- Shipment tracking (manual save; automated SMS/WhatsApp parked) ---
+  // --- Shipment tracking (manual save; automated notifications are OUT of
+  // scope — the admin updates the customer directly on WhatsApp) ---
   const [shipDrafts, setShipDrafts] = useState<Record<string, { tracking_id: string; tracking_url: string }>>({});
 
   const draftFor = (o: RetailOrder) =>
@@ -2315,6 +2316,13 @@ function RetailOrdersPanel() {
                       value={o.order_status}
                       onChange={async (e) => {
                         const next = e.target.value;
+                        // Consistency guard: never mark an unpaid order as
+                        // processing/shipped/delivered — payment status comes
+                        // from the verified provider, not from fulfillment.
+                        if (o.payment_status !== 'success' && ['processing', 'shipped', 'delivered'].includes(next)) {
+                          setLoadError('Cannot mark an unpaid order as processing/shipped/delivered. Payment must be verified first.');
+                          return;
+                        }
                         const draft = draftFor(o);
                         const patch: Record<string, unknown> = {
                           order_status: next,

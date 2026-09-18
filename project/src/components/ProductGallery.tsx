@@ -169,7 +169,7 @@ const Slide = memo(function Slide({
 
   return (
     <div
-      className="relative shrink-0 w-full cursor-pointer"
+      className="relative shrink-0 w-full cursor-pointer bg-paper-3"
       style={{ flex: '0 0 100%', scrollSnapAlign: 'center', aspectRatio: '4 / 5' }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
@@ -252,7 +252,7 @@ export function DesktopGallery({
               key={i}
               type="button"
               onClick={() => select(i)}
-              className={`w-[90px] h-[113px] shrink-0 overflow-hidden border transition-all duration-150 ${
+              className={`w-[90px] h-[113px] shrink-0 overflow-hidden border bg-paper-3 transition-all duration-150 ${
                 i === activeIdx ? 'border-bone' : 'border-line opacity-60 hover:opacity-100'
               }`}
             >
@@ -265,7 +265,7 @@ export function DesktopGallery({
         <button
           type="button"
           onClick={onImageClick}
-          className="relative block w-full max-w-[650px] mx-auto cursor-zoom-in border border-line overflow-hidden"
+          className="relative block w-full max-w-[650px] mx-auto cursor-zoom-in border border-line bg-paper-3 overflow-hidden"
           style={{ aspectRatio: '4 / 5' }}
         >
           <img
