@@ -64,6 +64,25 @@ export interface PaymentVerification {
   order: Record<string, unknown> | null;
 }
 
+/**
+ * Failure while initiating a payment session, carrying an optional machine-
+ * readable server code. Retry flows inspect `code` (e.g. 'ORDER_EXPIRED') to
+ * tell a dead reservation from a transient error and adapt their CTA.
+ */
+export class PaymentSessionError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = 'PaymentSessionError';
+    this.code = code;
+  }
+}
+
+/** An order that was swept/restocked can no longer be paid for — its stock is
+ *  back on the shelf and a successful retry would over-sell those units. */
+export const ORDER_EXPIRED_MESSAGE =
+  'This order has expired and its items were returned to stock. Please place a new order.';
+
 const PROVIDER = (import.meta.env.VITE_PAYMENT_PROVIDER ?? 'none') as PaymentProvider;
 
 /**
@@ -117,6 +136,12 @@ export async function createPaymentSession(req: PaymentSessionRequest): Promise<
     // Log the technical detail server/debug side; surface only a clean message.
     // eslint-disable-next-line no-console
     console.error('[checkout] Payment session init failed:', response.status, data ?? response.statusText);
+    if (data?.code === 'ORDER_EXPIRED') {
+      throw new PaymentSessionError(ORDER_EXPIRED_MESSAGE, 'ORDER_EXPIRED');
+    }
+    if (data?.code === 'ORDER_NOT_FOUND') {
+      throw new PaymentSessionError('This order is no longer available. Please place a new order.', 'ORDER_NOT_FOUND');
+    }
     throw new Error('The online payment could not be started. Your order has not been charged.');
   }
   return {

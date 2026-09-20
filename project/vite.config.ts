@@ -6,6 +6,19 @@ import { defineConfig } from 'vite';
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  server: {
+    proxy: {
+      // Dev only: the live Vercel function (api/cashfree-order) does not send
+      // Access-Control-Allow-Origin on its POST responses, so a cross-origin
+      // fetch from localhost is CORS-blocked. Routing /api through the Vite
+      // dev proxy keeps the request server-forwarded (no browser CORS) while
+      // still exercising the real deployed function.
+      '/api': {
+        target: 'https://dslang.in',
+        changeOrigin: true,
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

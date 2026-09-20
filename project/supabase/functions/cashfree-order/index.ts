@@ -80,13 +80,27 @@ Deno.serve(async (req) => {
 
   const { data: order, error } = await supabase
     .from('retail_orders')
-    .select('id, ref, customer, total_amount, payment_status, payment_id, payment_provider')
+    .select('id, ref, customer, total_amount, payment_status, payment_id, payment_provider, stock_restored_at')
     .eq('id', body.orderId)
     .eq('ref', body.orderRef)
     .maybeSingle();
-  if (error || !order) return json({ success: false, error: 'Order not found.' }, 404);
+  if (error || !order) return json({ success: false, code: 'ORDER_NOT_FOUND', error: 'Order not found.' }, 404);
   if (order.payment_status === 'success') {
     return json({ success: false, error: 'This order is already paid.' }, 409);
+  }
+  if (order.stock_restored_at) {
+    // The reservation is gone — the sweep (or an admin) already restocked this
+    // order's inventory. Retrying it could sell a unit that is back on the
+    // shelf, so refuse the session and make the frontend direct the shopper to
+    // start a new checkout.
+    return json(
+      {
+        success: false,
+        code: 'ORDER_EXPIRED',
+        error: 'This order has expired and its items were returned to stock. Please place a new order.',
+      },
+      409
+    );
   }
 
   const amount = Number(order.total_amount);
@@ -117,7 +131,9 @@ Deno.serve(async (req) => {
       customer_phone: phone || undefined,
     },
     order_meta: {
-      return_url: `${origin}/#/checkout?order_id={order_id}`,
+      // Same fix as api/cashfree-order.ts: land the shopper on the dedicated
+      // result page with the DSLANG ref, never the checkout form.
+      return_url: `${origin}/#/order-status?ref=${order.ref}`,
       notify_url: webhookUrl,
     },
   };
@@ -172,6 +188,6 @@ Deno.serve(async (req) => {
     orderId,
     paymentSessionId: api.payment_session_id,
     environment: env.toUpperCase() === 'PRODUCTION' ? 'PROD' : 'TEST',
-    returnUrl: `${origin}/#/checkout?order_id=${orderId}`,
+    returnUrl: `${origin}/#/order-status?ref=${order.ref}`,
   });
 });

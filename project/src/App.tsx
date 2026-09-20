@@ -13,6 +13,8 @@ import { useSiteSettings } from '@/lib/settings';
 import { useCartDrawer } from '@/lib/cartDrawer';
 import { notFound } from '@/lib/notFound';
 import { LoadingDots } from '@/components/LoadingDots';
+import { getPaymentConfig } from '@/lib/payment';
+import { preloadCashfreeSdk } from '@/lib/cashfreeSdk';
 
 // Lazy-load every non-core page so the initial bundle only ships the shop
 // skeleton (home, collection, new drops, product + admin entry). Each
@@ -26,6 +28,9 @@ const CheckoutPage = lazy(() =>
 );
 const TrackOrderPage = lazy(() =>
   import('@/pages/TrackOrderPage').then((m) => ({ default: m.TrackOrderPage }))
+);
+const OrderStatusPage = lazy(() =>
+  import('@/pages/OrderStatusPage').then((m) => ({ default: m.OrderStatusPage }))
 );
 const SubscriberDashboard = lazy(() =>
   import('@/pages/SubscriberDashboard').then((m) => ({ default: m.SubscriberDashboard }))
@@ -64,6 +69,7 @@ function getPageTitle(path: string): string {
   if (path.startsWith('/product') || path.startsWith('/products') || path.startsWith('/p/')) return 'Product — DSLANG';
   if (path.startsWith('/cart')) return 'Your Bag — DSLANG';
   if (path.startsWith('/checkout')) return 'Checkout — DSLANG';
+  if (path.startsWith('/order-status')) return 'Order Status — DSLANG';
   if (path.startsWith('/stock-dslang') || path.startsWith('/about')) return 'About DSLANG — DSLANG';
   if (path.startsWith('/contact')) return 'Contact — DSLANG';
   if (path.startsWith('/policies')) return 'Policies — DSLANG';
@@ -118,6 +124,15 @@ function App() {
     document.title = getPageTitle(path);
   }, [path]);
 
+  // Warm the Cashfree SDK the moment the app boots (not just when checkout
+  // mounts) so that Pay Now's hand-off to the gateway needs zero script
+  // download wait. Fire-and-forget: a failure merely means the checkout path
+  // re-attempts the load with its own guard.
+  useEffect(() => {
+    if (!getPaymentConfig().configured) return;
+    preloadCashfreeSdk();
+  }, []);
+
   // Legacy /cart links open the bag drawer instead of a separate page.
   useEffect(() => {
     if (segments[0] === 'cart') {
@@ -163,6 +178,7 @@ function App() {
     if (segments[0] === 'p' && segments[1]) return <RetailProductPage slug={segments[1]} />;
     if (segments[0] === 'cart') return <HomePage />;
     if (segments[0] === 'checkout') return <CheckoutPage />;
+    if (segments[0] === 'order-status') return <OrderStatusPage />;
     if (segments[0] === 'stock-dslang' || segments[0] === 'about') return <AboutPage />;
     if (segments[0] === 'contact') return <ContactPage />;
     if (segments[0] === 'policies') return <PoliciesPage />;

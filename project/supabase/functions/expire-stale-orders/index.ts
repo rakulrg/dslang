@@ -2,13 +2,14 @@
 //
 // Problem: an order can sit at payment_status='pending' forever when Cashfree
 // never fires a webhook — the customer left the checkout, or Cashfree never
-// created a payment record. Stock locked by such orders never returns (the
-// cashfree-status endpoint only restocks on an explicit FAILED/CANCELLED/
-// USER_DROPPED response; empty/never-charmed payments report 'pending' forever).
+// created a payment record. Stock locked by such orders never returns. Also,
+// since definitive payment failures no longer restock at status-verification
+// time (the order stays reserved so "Try Again" can reuse the same order), a
+// failed order keeps its reservation until the sweep reclaims it here.
 //
 // This function runs on a schedule (pg_cron → net.http_post) and reclaims:
-//   * candidates: payment_status='pending' AND stock_restored_at IS NULL AND
-//     created_at <= now() - minutes (default 30).
+//   * candidates: payment_status IN ('pending','failed') AND
+//     stock_restored_at IS NULL AND created_at <= now() - minutes (default 30).
 //   * for each, consult Cashfree (mirrors the cashfree-status decision table):
 //       - never charmed (no payment record)      -> EXPIRE + restock (RPC)
 //       - last payment terminal-failed           -> EXPIRE + restock (RPC)
@@ -16,8 +17,8 @@
 //       - same, amount mismatch / non-terminal   -> SKIP (may still settle)
 //       - Cashfree API error                     -> SKIP
 //   * the expire+restock write is a single gated SQL RPC
-//     (expire_stale_retail_order) that CAS-updates pending->failed then calls
-//     restock_retail_order_items — atomic, idempotent, race-safe.
+//     (expire_stale_retail_order) that CAS-updates pending|failed -> failed then
+//     calls restock_retail_order_items — atomic, idempotent, race-safe.
 //
 // Security:
 //   * Authorization must be 'Bearer <service_role>' (Primary — the pg_cron job
@@ -143,7 +144,7 @@ Deno.serve(async (req) => {
     const { data, error } = await supabase
       .from('retail_orders')
       .select('id, ref, customer, payment_id, total_amount, created_at')
-      .eq('payment_status', 'pending')
+      .in('payment_status', ['pending', 'failed'])
       .is('stock_restored_at', null)
       .lt('created_at', cutoff)
       .order('created_at', { ascending: true })

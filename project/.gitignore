@@ -22,3 +22,4 @@ dist-ssr
 *.sw?
 .env
 supabase/.temp
+.vite-pid.txt

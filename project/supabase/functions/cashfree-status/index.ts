@@ -157,22 +157,18 @@ Deno.serve(async (req) => {
 
   if (paymentStatus === 'CANCELLED' || paymentStatus === 'USER_DROPPED' || paymentStatus === 'FAILED') {
     // Confirmed failure (not a provisional/pending state): mark the order
-    // failed + cancelled and return its stock to product_sizes so
-    // abandoned/failed checkouts stop leaking inventory. Order status always
-    // stays consistent: a failed payment is a cancelled order, never
-    // 'processing'. restock_retail_order_items is idempotent
-    // (stock_restored_at) and skip-rule-aware (never restocks a paid,
-    // shipped, delivered or refunded order). Best-effort: a restock error
-    // must not fail the status response.
+    // failed + cancelled. Order status always stays consistent: a failed
+    // payment is a cancelled order, never 'processing'.
+    //
+    // Stock is deliberately NOT returned here. The order stays reserved so
+    // "Try Again" can reuse the same order (same Cashfree session id) without
+    // double-selling a unit that was already put back on the shelf. Inventory
+    // is reclaimed later by the expire-stale-orders sweep, which expires any
+    // failed/pending order older than the window and restocks it exactly once.
     await supabase
       .from('retail_orders')
       .update({ payment_status: 'failed', order_status: 'cancelled' })
       .eq('id', order.id);
-    try {
-      await supabase.rpc('restock_retail_order_items', { p_order_id: order.id });
-    } catch (e) {
-      console.error('restock_retail_order_items failed', e);
-    }
     return json({ verified: false, status: 'failed', order });
   }
 

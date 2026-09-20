@@ -68,7 +68,7 @@ export default async function handler(req: any, res: any) {
 const supabase = createClient(supabaseUrl, serviceRole);
   const { data: order, error } = await supabase
     .from('retail_orders')
-    .select('id, ref, customer, total_amount, payment_status, payment_id, payment_provider')
+    .select('id, ref, customer, total_amount, payment_status, payment_id, payment_provider, stock_restored_at')
     .eq('id', body.orderId)
     .eq('ref', body.orderRef)
     .maybeSingle();
@@ -83,6 +83,7 @@ const supabase = createClient(supabaseUrl, serviceRole);
 
   return res.status(404).json({
     success: false,
+    code: 'ORDER_NOT_FOUND',
     error: 'Order not found.',
   });
 }
@@ -94,6 +95,17 @@ console.log('[cashfree-order] Order loaded successfully', {
 });
   if (order.payment_status === 'success') {
     return res.status(409).json({ success: false, error: 'This order is already paid.' });
+  }
+  if (order.stock_restored_at) {
+    // The reservation is gone — the sweep (or an admin) already restocked this
+    // order's inventory. Retrying it could sell a unit that is back on the
+    // shelf, so refuse the session and make the frontend direct the shopper to
+    // start a new checkout.
+    return res.status(409).json({
+      success: false,
+      code: 'ORDER_EXPIRED',
+      error: 'This order has expired and its items were returned to stock. Please place a new order.',
+    });
   }
 
   const amount = Number(order.total_amount);
@@ -120,7 +132,10 @@ console.log('[cashfree-order] Order loaded successfully', {
       customer_phone: phone || undefined,
     },
     order_meta: {
-      return_url: `${origin}/#/checkout?order_id={order_id}`,
+      // Send the shopper to a dedicated result page (NOT the checkout form)
+      // after payment, carrying the DSLANG order ref so the page can look up
+      // the live status. Cashfree appends its own payment params onto this URL.
+      return_url: `${origin}/#/order-status?ref=${order.ref}`,
       // Cashfree posts payment updates here. This points at the Supabase Edge
       // Function cashfree-webhook (HMAC + Cashfree re-verification inside). The
       // function must be deployed WITHOUT JWT verification — Cashfree posts
@@ -192,7 +207,7 @@ console.log('[cashfree-order] Order loaded successfully', {
     orderId,
     paymentSessionId: api.payment_session_id,
     environment: env.toUpperCase() === 'PRODUCTION' ? 'PROD' : 'TEST',
-    returnUrl: `${origin}/#/checkout?order_id=${orderId}`,
+    returnUrl: `${origin}/#/order-status?ref=${order.ref}`,
   });
 }
 
