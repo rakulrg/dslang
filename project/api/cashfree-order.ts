@@ -114,7 +114,14 @@ console.log('[cashfree-order] Order loaded successfully', {
   }
 
   const orderAmount = amount.toFixed(2);
-  const orderId = cashfreeOrderId(order.ref, order.id, order.payment_id ?? null);
+  // Reuse the previous Cashfree order_id on the FIRST attempt (a double-click
+  // of "Pay Now" is idempotent: Cashfree returns the existing order/session).
+  // But a retry after a FAILED payment MUST get a fresh order id — Cashfree
+  // keeps the old order in a terminal state and rejects a new session for it,
+  // which surfaced as an opaque 502 "Payment could not be initialized" on
+  // Try Again. Mint a new unique id so a brand-new payment session can start.
+  const retry = order.payment_status === 'failed';
+  const orderId = cashfreeOrderId(order.ref, order.id, retry ? null : (order.payment_id ?? null), retry ? retryAttemptSuffix() : null);
 
   const customer = (order.customer as Record<string, unknown>) || {};
   const customerId = `dsl-${shortish(order.ref, 12)}`;
@@ -215,7 +222,14 @@ function shortish(s: string, n: number): string {
   return s.replace(/[^0-9a-zA-Z]/g, '').toUpperCase().slice(0, n);
 }
 
-function cashfreeOrderId(ref: string, orderId: string, fallback: string | null): string {
+function retryAttemptSuffix(): string {
+  // A fresh, unique suffix (timestamp + random) so a failed order's retry gets
+  // a brand-new Cashfree order id instead of reusing the terminal-stated one.
+  return `R${Date.now().toString(36).toUpperCase().slice(-4)}${Math.random().toString(36).toUpperCase().slice(2, 6)}`;
+}
+
+function cashfreeOrderId(ref: string, orderId: string, fallback: string | null, attemptSuffix: string | null = null): string {
   if (fallback) return fallback;
-  return `DSL${shortish(ref, 10)}${shortish(orderId, 8)}`;
+  const base = `DSL${shortish(ref, 10)}${shortish(orderId, 8)}`;
+  return attemptSuffix ? `${base}${attemptSuffix}` : base;
 }

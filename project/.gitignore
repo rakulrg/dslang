@@ -23,3 +23,6 @@ dist-ssr
 .env
 supabase/.temp
 .vite-pid.txt
+
+.vercel
+.env*

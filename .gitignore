@@ -20,3 +20,4 @@ _committed_main.tsx
 
 # Nested duplicate of the project
 project-bolt-sb1-jvrepgxb/
+.env*
