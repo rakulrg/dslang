@@ -61,6 +61,11 @@ interface D2cCartContextValue {
    * clamps quantities above the live stock, and refreshes each item's stock
    * snapshot. Returns a summary of what changed. */
   reconcileWithLiveStock: (live: Record<string, number>) => CartReconcileResult;
+  /** Re-reads persisted cart lines from localStorage. Landing on /#/checkout
+   * directly (cold load, bookmark, shared link, or a late write from another
+   * tab) must reflect whatever cart is stored even when this context booted
+   * before the items existed. */
+  reloadFromStorage: () => void;
   /** Currently applied promo (single source of truth shared by Cart & Checkout). */
   promo: Promo | null;
   /** Persist + apply a validated promo. */
@@ -79,6 +84,7 @@ const D2cCartContext = createContext<D2cCartContextValue>({
   clear: () => {},
   isEmpty: true,
   reconcileWithLiveStock: () => ({ removedCount: 0, clampedCount: 0, changed: false }),
+  reloadFromStorage: () => {},
   promo: null,
   applyPromo: () => {},
   removeAppliedPromo: () => {},
@@ -173,6 +179,28 @@ export function D2cCartProvider({ children }: { children: ReactNode }) {
 
   const clear = useCallback(() => setItems([]), []);
 
+  const reloadFromStorage = useCallback(() => {
+    const fresh = loadCart();
+    setItems((prev) => {
+      // Never regress a context that already knows about lines the storage
+      // read can't see (e.g. a just-added line mid-hydration) — only adopt the
+      // stored cart when the context is genuinely stale/empty.
+      if (prev.length > 0) return prev;
+      return fresh;
+    });
+  }, []);
+
+  // Cross-tab sync: when a cart change is written in ANOTHER tab (same origin),
+  // refresh this context from storage so badges/drawer/checkout always reflect
+  // the persisted cart regardless of which tab the user acts in.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY) setItems(loadCart());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   // Promo state is owned here (not in the drawer/checkout) so Cart and Checkout
   // always read the SAME applied promo — one source of truth, no stale copies.
   const [promo, setPromo] = useState<Promo | null>(() => getPromo());
@@ -211,7 +239,7 @@ export function D2cCartProvider({ children }: { children: ReactNode }) {
 
   return (
     <D2cCartContext.Provider
-      value={{ items, count, subtotal, addItem, setQuantity, removeItem, clear, isEmpty, reconcileWithLiveStock, promo, applyPromo, removeAppliedPromo }}
+      value={{ items, count, subtotal, addItem, setQuantity, removeItem, clear, isEmpty, reconcileWithLiveStock, promo, applyPromo, removeAppliedPromo, reloadFromStorage }}
     >
       {children}
     </D2cCartContext.Provider>

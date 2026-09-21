@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Check, CheckCircle2, Clock, Loader2, ShieldCheck, Tag, Truck, XCircle } from 'lucide-react';
+import { ArrowLeft, Check, CheckCircle2, ChevronDown, Clock, HelpCircle, Loader2, Search, ShieldCheck, Tag, Truck, XCircle } from 'lucide-react';
 import { useD2cCart } from '@/lib/d2cCart';
 import { useCartDrawer } from '@/lib/cartDrawer';
 import { useRouter } from '@/lib/router';
@@ -38,6 +38,13 @@ type ResultVerdict = 'checking' | 'success' | 'failed' | 'pending';
 const PENDING_PAYMENT_KEY = 'dslang_pending_order_v1';
 const LIVE_ORDER_KEY = 'dslang_live_order_v1';
 const CHECKOUT_FORM_KEY = 'dslang_checkout_form_v1';
+/** Opt-in "Save this information for next time" copy of the delivery form, kept
+ *  across sessions so a returning shopper starts pre-filled. */
+const SAVED_CHECKOUT_KEY = 'dslang_saved_checkout_v1';
+/** Last confirmed order, kept by OrderStatusPage so a fresh status visit can
+ *  reach it without the URL ref. It must be dropped whenever a NEW checkout
+ *  begins, otherwise an old order ref would leak onto the next result page. */
+const RESULT_KEY = 'dslang_order_result_v1';
 
 /**
  * Minimal handle of a successfully placed order, kept so a failed or interrupted
@@ -96,6 +103,29 @@ function clearPendingKey(): void {
   }
 }
 
+function clearResultKey(): void {
+  try {
+    window.localStorage.removeItem(RESULT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function readPendingPayload(): PendingPayload | null {
+  return readSessionValue<PendingPayload | null>(PENDING_PAYMENT_KEY, (raw) => {
+    const v = JSON.parse(raw) as PendingPayload;
+    if (typeof v?.ref !== 'string' || !v.ref) return null;
+    return {
+      ref: v.ref,
+      order_id: typeof v.order_id === 'string' ? v.order_id : '',
+      amount: Number(v.amount ?? 0),
+      itemsKey: typeof v.itemsKey === 'string' ? v.itemsKey : '',
+      at: Number(v.at ?? 0),
+      phone: typeof v.phone === 'string' ? v.phone : undefined,
+    };
+  });
+}
+
 /** Resolves 'unloaded' if the document starts navigating away (the Cashfree
  *  handoff), or 'stalled' if it hasn't after timeoutMs — so the checkout can
  *  recover with an inline error instead of silently doing nothing. */
@@ -126,10 +156,12 @@ function itemsKeyOf(
 }
 
 interface CheckoutForm {
-  name: string;
+  firstName: string;
+  lastName: string;
   phone: string;
   email: string;
   address: string;
+  apartment: string;
   city: string;
   state: string;
   pincode: string;
@@ -137,7 +169,7 @@ interface CheckoutForm {
 
 function toCustomer(f: CheckoutForm): RetailCustomer {
   return {
-    name: f.name,
+    name: [f.firstName, f.lastName].filter(Boolean).join(' '),
     phone: f.phone,
     email: f.email || undefined,
     address: f.address,
@@ -151,14 +183,16 @@ function asDigits(v: string, max: number): string {
   return v.replace(/\D/g, '').slice(0, max);
 }
 
-const REQUIRED_FIELDS = ['name', 'phone', 'address', 'city', 'state', 'pincode'] as const;
+const REQUIRED_FIELDS = ['firstName', 'lastName', 'phone', 'address', 'city', 'state', 'pincode'] as const;
 type RequiredField = (typeof REQUIRED_FIELDS)[number];
 
 function validateField(key: keyof CheckoutForm, value: string): string | null {
   const v = value.trim();
   switch (key) {
-    case 'name':
-      return v ? null : 'Please enter your name';
+    case 'firstName':
+      return v ? null : 'Please enter your first name';
+    case 'lastName':
+      return v ? null : 'Please enter your last name';
     case 'phone':
       return v.replace(/\D/g, '').length === 10 ? null : 'Please enter a valid 10-digit mobile number';
     case 'address':
@@ -169,6 +203,9 @@ function validateField(key: keyof CheckoutForm, value: string): string | null {
       return v ? null : 'Please enter your state';
     case 'pincode':
       return v.replace(/\D/g, '').length === 6 ? null : 'Please enter a valid PIN code';
+    case 'apartment':
+    case 'email':
+      return null;
     default:
       return null;
   }
@@ -194,56 +231,103 @@ function readSessionValue<T>(key: string, parse: (raw: string) => T | null): T |
 }
 
 export function CheckoutPage() {
-  const { items, count, subtotal, clear, reconcileWithLiveStock, promo, applyPromo, removeAppliedPromo } = useD2cCart();
+  const { items, count, subtotal, clear, reconcileWithLiveStock, promo, applyPromo, removeAppliedPromo, reloadFromStorage } = useD2cCart();
   const { openCart } = useCartDrawer();
   const { navigate } = useRouter();
   const shipping = computeShipping(subtotal);
   const placingRef = useRef(false);
 
   const [form, setForm] = useState<CheckoutForm>(() => {
-    try {
-      const raw = window.sessionStorage.getItem(CHECKOUT_FORM_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw) as Partial<CheckoutForm>;
-        return {
-          name: typeof saved.name === 'string' ? saved.name : '',
-          phone: typeof saved.phone === 'string' ? saved.phone : '',
-          email: typeof saved.email === 'string' ? saved.email : '',
-          address: typeof saved.address === 'string' ? saved.address : '',
-          city: typeof saved.city === 'string' ? saved.city : '',
-          state: typeof saved.state === 'string' ? saved.state : '',
-          pincode: typeof saved.pincode === 'string' ? saved.pincode : '',
-        };
+    const empty: CheckoutForm = {
+      firstName: '', lastName: '', phone: '', email: '',
+      address: '', apartment: '', city: '', state: '', pincode: '',
+    };
+    const readRaw = (key: string): Partial<CheckoutForm & { name?: string }> | null => {
+      try {
+        const raw = window.sessionStorage.getItem(key);
+        if (!raw) return null;
+        const saved = JSON.parse(raw) as Partial<CheckoutForm & { name?: string }>;
+        return saved && typeof saved === 'object' ? saved : null;
+      } catch {
+        return null;
       }
-    } catch {
-      // ignore — fall back to an empty form
-    }
-    return { name: '', phone: '', email: '', address: '', city: '', state: '', pincode: '' };
+    };
+    // This session's form first; fall back to the saved-for-next-time copy so
+    // a shopper who opted in gets their address back on the next checkout.
+    const saved = readRaw(CHECKOUT_FORM_KEY) ?? readRaw(SAVED_CHECKOUT_KEY);
+    if (!saved) return empty;
+    const parts = (typeof saved.name === 'string' ? saved.name.trim() : '').split(/\s+/).filter(Boolean);
+    const get = (k: keyof CheckoutForm, legacy?: string) =>
+      typeof saved[k] === 'string' ? (saved[k] as string) : legacy ?? '';
+    return {
+      firstName: get('firstName', parts[0] ?? ''),
+      lastName: get('lastName', parts.slice(1).join(' ') ?? ''),
+      phone: get('phone'),
+      email: get('email'),
+      address: get('address'),
+      apartment: get('apartment'),
+      city: get('city'),
+      state: get('state'),
+      pincode: get('pincode'),
+    };
   });
   // Landing back from the payment gateway (a pending order ref is stored) opens
-  // straight into the single result page — never a flash of the form.
-  const [stage, setStage] = useState<Stage>(() =>
-    readSessionValue(PENDING_PAYMENT_KEY, () => true) ? 'result' : 'form'
-  );
+  // straight into the single result page — never a flash of the form. BUT only
+  // when the pending order still belongs to the current cart. If the bag has
+  // changed since that order was placed (e.g. an old failed order A from a
+  // previous cart), the pending/live/result handles are stale: drop them so a
+  // brand-new checkout is created instead of resurrecting the old order ref.
+  const [stage, setStage] = useState<Stage>(() => {
+    const pending = readPendingPayload();
+    if (!pending) return 'form';
+    const bagEmpty = items.length === 0;
+    const matches = bagEmpty || pending.itemsKey === itemsKeyOf(items);
+    if (!matches) {
+      clearPendingKey();
+      clearLiveOrderKey();
+      clearResultKey();
+      return 'form';
+    }
+    return 'result';
+  });
   const [verdict, setVerdict] = useState<ResultVerdict>('checking');
   const [placing, setPlacing] = useState(false);
   const [checkingNote, setCheckingNote] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [result, setResult] = useState<RetailOrderResult | null>(null);
   const [errors, setErrors] = useState<Partial<Record<RequiredField, string>>>({});
-  const [liveOrder, setLiveOrder] = useState<LiveOrder | null>(() =>
-    readSessionValue(LIVE_ORDER_KEY, (raw) => {
-      const v = JSON.parse(raw) as LiveOrder;
-      if (typeof v?.ref === 'string' && typeof v?.order_id === 'string' && typeof v?.amount === 'number') {
-        return { ref: v.ref, order_id: v.order_id, amount: v.amount, itemsKey: typeof v.itemsKey === 'string' ? v.itemsKey : '' };
+  const [liveOrder, setLiveOrder] = useState<LiveOrder | null>(() => {
+    const v = readSessionValue<LiveOrder | null>(LIVE_ORDER_KEY, (raw) => {
+      const parsed = JSON.parse(raw) as LiveOrder;
+      if (typeof parsed?.ref === 'string' && typeof parsed?.order_id === 'string' && typeof parsed?.amount === 'number') {
+        return { ref: parsed.ref, order_id: parsed.order_id, amount: parsed.amount, itemsKey: typeof parsed.itemsKey === 'string' ? parsed.itemsKey : '' };
       }
       return null;
-    })
-  );
+    });
+    if (!v) return null;
+    // A live order only belongs to THIS checkout if it still matches the bag.
+    // A stale one (old cart) must never be reused for retry or shown as the ref.
+    if (items.length > 0 && v.itemsKey !== itemsKeyOf(items)) {
+      clearLiveOrderKey();
+      return null;
+    }
+    return v;
+  });
   const [verifyAttempt, setVerifyAttempt] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const [expired, setExpired] = useState(false);
-  const fieldRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  // Escape hatch: a stuck (pending/failed) order must never be a dead end.
+  // After 2-3 manual re-checks or a ~45s window without a resolution, surface
+  // "Start New Order" so the customer can always begin a fresh checkout.
+  const [recheckCount, setRecheckCount] = useState(0);
+  const [showNewOrder, setShowNewOrder] = useState(false);
+  // New Shopify-style checkout UI state (layout only — no order data impact).
+  const [saveNext, setSaveNext] = useState(false);
+  const [billingSame, setBillingSame] = useState(true);
+  const [discountOpen, setDiscountOpen] = useState(false);
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  const [phoneHelpOpen, setPhoneHelpOpen] = useState(false);
+  const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
 
   // Promo code — single source of truth shared with the Cart drawer via the
   // cart context (backed by lib/promo.ts + localStorage). Applying or removing
@@ -308,7 +392,32 @@ export function CheckoutPage() {
     }
   }, [form]);
 
+  // "Save this information for next time": while ticked, mirror the form into a
+  // cross-session key so the NEXT checkout (fresh visit, cleared session) can
+  // start pre-filled. Unticking removes the copy.
+  useEffect(() => {
+    try {
+      if (saveNext) {
+        window.localStorage.setItem(SAVED_CHECKOUT_KEY, JSON.stringify(form));
+      } else {
+        window.localStorage.removeItem(SAVED_CHECKOUT_KEY);
+      }
+    } catch {
+      // ignore — persistence is best-effort
+    }
+  }, [saveNext, form]);
+
   const paymentCfg = getPaymentConfig();
+
+  // Landing directly on /#/checkout (cold load, bookmark, shared link) must
+  // render whatever cart is persisted, even when this context booted BEFORE the
+  // items were written (e.g. a late write from another tab). Guarded to 'empty'
+  // only: if the context already holds lines the storage read can't see we keep
+  // the live context. A genuinely empty cart keeps the empty state below.
+  useEffect(() => {
+    if (items.length === 0) reloadFromStorage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Warm the Cashfree SDK in the background as soon as checkout loads so that
   // when the customer clicks Pay the redirect to Cashfree starts without a
@@ -519,6 +628,16 @@ export function CheckoutPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentCfg.configured, verifyAttempt, clear, removeAppliedPromo]);
 
+  // Time-window escape hatch: if payment never resolves (stuck "Still
+  // Confirming" / "Payment Not Completed"), offer "Start New Order" after a
+  // short wait so the customer is never trapped on a stale result screen.
+  useEffect(() => {
+    if (stage !== 'result' || verdict === 'success') return;
+    if (verdict !== 'pending' && verdict !== 'failed' && verdict !== 'checking') return;
+    const t = window.setTimeout(() => setShowNewOrder(true), 45000);
+    return () => window.clearTimeout(t);
+  }, [stage, verdict]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (items.length === 0 || placingRef.current) return;
@@ -578,6 +697,10 @@ export function CheckoutPage() {
           })),
           promoCode: promo?.code ?? null,
         });
+        // A brand-new order was created for this cart — anything the gateway
+        // result page might remember from an OLD order is stale, drop it so a
+        // later order-status visit can never resurrect the previous ref.
+        clearResultKey();
         const liveOrderHandle: LiveOrder = {
           ref: res.ref,
           order_id: res.order_id,
@@ -631,7 +754,7 @@ export function CheckoutPage() {
         orderRef: order.ref,
         orderId: order.order_id,
         amount: order.total_amount,
-        customer: { name: form.name, phone: form.phone, email: form.email || undefined },
+        customer: { name: toCustomer(form).name, phone: form.phone, email: form.email || undefined },
       });
     } catch {
       throw new Error("We couldn't start the online payment. Your order has not been charged — please try again.");
@@ -676,24 +799,27 @@ export function CheckoutPage() {
 
   /** Resolves the existing order for a retry — NEVER creates a new one. The
    *  reservation (and promo/cart state) belongs to the original order, so a
-   *  retry reuses its ref/id/amount regardless of what is in the bag now. */
+   *  retry reuses its ref/id/amount. The order is ONLY retried while it still
+   *  matches the current bag (itemsKey) — if the cart has changed since the
+   *  order was placed, it must not be resurrected and paid for a new cart. */
   const retryHandle = (): LiveOrder | null => {
-    if (liveOrder?.order_id) return liveOrder;
+    const bagEmpty = items.length === 0;
+    const matchesBag = (key: string) => bagEmpty || key === itemsKeyOf(items);
+    if (liveOrder?.order_id && matchesBag(liveOrder.itemsKey)) return liveOrder;
     if (result?.order_id && result?.ref && (result?.total_amount ?? 0) > 0) {
       return { ref: result.ref, order_id: result.order_id, amount: result.total_amount, itemsKey: itemsKeyOf(items) };
     }
-    return readSessionValue<LiveOrder | null>(PENDING_PAYMENT_KEY, (raw) => {
-      const p = JSON.parse(raw) as PendingPayload;
-      if (typeof p?.ref === 'string' && typeof p?.order_id === 'string' && typeof p?.amount === 'number') {
-        return { ref: p.ref, order_id: p.order_id, amount: p.amount, itemsKey: typeof p.itemsKey === 'string' ? p.itemsKey : '' };
-      }
-      return null;
-    });
+    const pending = readPendingPayload();
+    if (pending?.order_id && pending.amount > 0 && matchesBag(pending.itemsKey)) {
+      return { ref: pending.ref, order_id: pending.order_id, amount: pending.amount, itemsKey: pending.itemsKey };
+    }
+    return null;
   };
 
   const startNewCheckout = () => {
     clearPendingKey();
     clearLiveOrderKey();
+    clearResultKey();
     setLiveOrder(null);
     setResult(null);
     setExpired(false);
@@ -726,7 +852,7 @@ export function CheckoutPage() {
         orderRef: handle.ref,
         orderId: handle.order_id,
         amount: handle.amount,
-        customer: { name: form.name || 'DSLANG Customer', phone: form.phone, email: form.email || undefined },
+        customer: { name: toCustomer(form).name || 'DSLANG Customer', phone: form.phone, email: form.email || undefined },
       });
       if (session.status !== 'pending' || !session.paymentSessionId) {
         throw new Error('The online payment could not be started. Your order has not been charged.');
@@ -913,7 +1039,8 @@ export function CheckoutPage() {
   }
 
   if (stage === 'result') {
-    // Failed / pending / still-checking — ONE clean result page, same layout.
+    // Success / pending / still-checking / failed — ONE clean result page.
+    const isSuccess = verdict === 'success';
     const isChecking = verdict === 'checking';
     const isPending = verdict === 'pending';
     const isFailed = verdict === 'failed';
@@ -924,24 +1051,29 @@ export function CheckoutPage() {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
         <div
-          className="flex h-10 w-10 items-center justify-center"
+          className="relative flex h-14 w-14 items-center justify-center rounded-full bg-blush"
           role={isChecking ? 'status' : undefined}
           aria-live={isChecking ? 'polite' : undefined}
         >
-          {isChecking ? (
-            <Loader2 size={34} strokeWidth={1.4} className="animate-spin text-bone" />
+          {isSuccess ? (
+            <>
+              <CheckCircle2 size={36} strokeWidth={1.5} className="text-crimson animate-scale-in" />
+              <span className="absolute inset-0 rounded-full border border-crimson/25 animate-fade-in" aria-hidden />
+            </>
+          ) : isChecking ? (
+            <Loader2 size={32} strokeWidth={1.5} className="animate-spin text-crimson" />
           ) : isPending ? (
-            <Clock size={32} strokeWidth={1.4} className="text-crimson" />
+            <Clock size={30} strokeWidth={1.4} className="text-crimson" />
           ) : (
-            <XCircle size={34} strokeWidth={1.4} className="text-crimson" />
+            <XCircle size={32} strokeWidth={1.4} className="text-crimson" />
           )}
         </div>
 
         <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">
-          {isChecking ? 'Payment' : isPending ? 'Payment Pending' : 'Order'}
+          {isSuccess ? 'Order Confirmed' : isChecking ? 'Payment' : isPending ? 'Payment Pending' : 'Order'}
         </p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
-          {isChecking ? 'Confirming Payment' : isPending ? 'Still Confirming' : 'Payment Not Completed'}
+          {isSuccess ? 'Order Complete' : isChecking ? 'Confirming Payment' : isPending ? 'Still Confirming' : 'Payment Not Completed'}
         </h1>
 
         <div className="mt-4 space-y-1 text-sm text-grey">
@@ -974,6 +1106,8 @@ export function CheckoutPage() {
               type="button"
               onClick={() => {
                 if (isPending) {
+                  setRecheckCount((n) => n + 1);
+                  if (recheckCount + 1 >= 2) setShowNewOrder(true);
                   setVerifyAttempt((n) => n + 1);
                 } else if (expired) {
                   startNewCheckout();
@@ -1004,7 +1138,21 @@ export function CheckoutPage() {
           >
             Continue Shopping
           </button>
+          {showNewOrder && !expired && (isPending || isFailed) && (
+            <button
+              type="button"
+              onClick={startNewCheckout}
+              className="btn-soft border border-crimson/60 text-crimson text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-crimson hover:text-paper transition-colors"
+            >
+              Start New Order
+            </button>
+          )}
         </div>
+        {showNewOrder && !expired && (isPending || isFailed) && (
+          <p className="mt-4 text-[11px] text-grey max-w-md leading-relaxed">
+            Still stuck? Start a fresh order instead — your current bag is untouched and a new reference will be created.
+          </p>
+        )}
 
         {isFailed && (
           <p className="mt-6 text-[11px] text-grey">
@@ -1019,165 +1167,349 @@ export function CheckoutPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-6 md:px-12 lg:px-16 py-8 md:py-14">
+    <div className="mx-auto max-w-2xl px-6 md:px-8 py-8">
       <button
         onClick={() => { openCart(); navigate('/'); }}
         className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey hover:text-bone transition-colors"
       >
         <ArrowLeft size={14} strokeWidth={2} /> Back To Bag
       </button>
-      <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-3">
-        Checkout
-      </h1>
 
-      <form
-        onSubmit={handleSubmit}
-        noValidate
-        className="mt-8 grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-8 items-start"
-      >
-        {/* Contact & Delivery */}
-        <div className="lg:col-start-1 border border-line p-5 md:p-7">
-          <h2 className="font-label text-xs uppercase tracking-wide-2 text-bone font-semibold">Contact & Delivery</h2>
+      <form onSubmit={handleSubmit} noValidate className="mt-7">
+        {errorMsg && (
+          <p className="mb-6 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3" role="alert">
+            {errorMsg}
+          </p>
+        )}
 
-          {errorMsg && (
-            <p className="mt-4 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3" role="alert">
-              {errorMsg}
+        {/* Delivery — full-width stacked fields with in-box placeholder labels */}
+        <section>
+          <h2 className="font-label text-xl font-bold tracking-tight text-bone">Delivery</h2>
+          <div className="mt-5 space-y-3">
+            <SelectField label="Country/Region" value="India" onChange={() => {}} autoComplete="country">
+              <option value="India">India</option>
+            </SelectField>
+            <Field
+              label="First name"
+              value={form.firstName}
+              onChange={(v) => set('firstName', v)}
+              autoComplete="given-name"
+              required
+              inputRef={(el) => { fieldRefs.current.firstName = el; }}
+              errorMsg={errors.firstName}
+            />
+            <Field
+              label="Last name"
+              value={form.lastName}
+              onChange={(v) => set('lastName', v)}
+              autoComplete="family-name"
+              required
+              inputRef={(el) => { fieldRefs.current.lastName = el; }}
+              errorMsg={errors.lastName}
+            />
+            <Field
+              label="Address"
+              value={form.address}
+              onChange={(v) => set('address', v)}
+              autoComplete="street-address"
+              required
+              inputRef={(el) => { fieldRefs.current.address = el; }}
+              errorMsg={errors.address}
+              icon={<Search size={16} strokeWidth={2} />}
+            />
+            <Field
+              label="Apartment, suite, etc. (optional)"
+              value={form.apartment}
+              onChange={(v) => set('apartment', v)}
+              autoComplete="address-line2"
+            />
+            <Field
+              label="City"
+              value={form.city}
+              onChange={(v) => set('city', v)}
+              autoComplete="address-level2"
+              required
+              inputRef={(el) => { fieldRefs.current.city = el; }}
+              errorMsg={errors.city}
+            />
+            <SelectField
+              label="State"
+              value={form.state}
+              onChange={(v) => set('state', v)}
+              autoComplete="address-level1"
+              required
+              elRef={(el) => { fieldRefs.current.state = el; }}
+              errorMsg={errors.state}
+              placeholder="State"
+            >
+              {form.state && !INDIAN_STATES.includes(form.state) && <option value={form.state}>{form.state}</option>}
+              {INDIAN_STATES.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </SelectField>
+            <Field
+              label="PIN code"
+              value={form.pincode}
+              onChange={(v) => set('pincode', v)}
+              inputMode="numeric"
+              autoComplete="postal-code"
+              required
+              maxLength={6}
+              inputRef={(el) => { fieldRefs.current.pincode = el; }}
+              errorMsg={errors.pincode}
+            />
+            <Field
+              label="Phone"
+              value={form.phone}
+              onChange={(v) => set('phone', v)}
+              type="tel"
+              inputMode="numeric"
+              autoComplete="tel"
+              required
+              maxLength={10}
+              inputRef={(el) => { fieldRefs.current.phone = el; }}
+              errorMsg={errors.phone}
+              icon={
+                <button
+                  type="button"
+                  onClick={() => setPhoneHelpOpen((o) => !o)}
+                  aria-expanded={phoneHelpOpen}
+                  aria-label="Why we need your phone number"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-2 text-grey transition-colors hover:border-bone-dim hover:text-bone"
+                >
+                  <HelpCircle size={11} strokeWidth={2} />
+                </button>
+              }
+            />
+            {phoneHelpOpen && (
+              <p className="rounded-soft border border-line bg-paper-3 px-3.5 py-2.5 text-xs leading-relaxed text-bone-soft">
+                We use this number to send delivery updates and to confirm your order.
+              </p>
+            )}
+            <Field
+              label="Email (optional)"
+              value={form.email}
+              onChange={(v) => set('email', v)}
+              type="email"
+              autoComplete="email"
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setSaveNext((s) => !s)}
+            className="mt-4 inline-flex items-center gap-2.5 text-left"
+          >
+            <CheckboxSquare checked={saveNext} />
+            <span className="text-[13px] text-grey">Save this information for next time</span>
+          </button>
+        </section>
+
+        {/* Shipping method */}
+        <section className="mt-9">
+          <h2 className="font-label text-xl font-bold tracking-tight text-bone">Shipping method</h2>
+          <div className="mt-4">
+            {!form.address.trim() ? (
+              <div className="rounded-soft border border-line bg-paper-3 px-4 py-4 text-[13px] italic text-bone-soft">
+                Enter your shipping address to view available shipping methods.
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 rounded-soft border border-line bg-white px-4 py-4">
+                <Truck size={20} strokeWidth={1.6} className="shrink-0 text-bone-soft" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-bone">Standard Shipping</p>
+                  <p className="text-xs text-grey">
+                    {shipping === 0 ? 'FREE' : formatPrice(shipping)}
+                    {form.city ? ` to ${form.city}` : ''}{form.state ? `, ${form.state}` : ''}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Payment — one live method (Cashfree). COD/Snapmint are NOT enabled — business decisions, per spec. */}
+        <section className="mt-9">
+          <h2 className="font-label text-xl font-bold tracking-tight text-bone">Payment</h2>
+          <p className="mt-1 text-xs text-grey">All transactions are secure and encrypted.</p>
+          <div className="mt-4">
+            <RadioOption
+              selected
+              title="Cashfree Payments"
+              sub="(UPI, Cards, Int'l cards, Wallets)"
+              onClick={() => {}}
+              badges={
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <span className="rounded border border-line px-1.5 py-0.5 font-label text-[9px] uppercase tracking-wide-2 text-bone-soft">UPI</span>
+                  <span className="rounded border border-line px-1.5 py-0.5 font-label text-[9px] uppercase tracking-wide-2 text-bone-soft">Card</span>
+                  <span className="rounded border border-line px-1.5 py-0.5 font-label text-[9px] uppercase tracking-wide-2 text-bone-soft">+11</span>
+                </span>
+              }
+            />
+          </div>
+        </section>
+
+        {/* Billing address */}
+        <section className="mt-9">
+          <h2 className="font-label text-xl font-bold tracking-tight text-bone">Billing address</h2>
+          <div className="mt-4 space-y-2.5">
+            <RadioOption
+              selected={billingSame}
+              title="Same as shipping address"
+              onClick={() => setBillingSame(true)}
+            />
+            <RadioOption
+              selected={!billingSame}
+              title="Use a different billing address"
+              onClick={() => setBillingSame(false)}
+            />
+          </div>
+          {!billingSame && (
+            <p className="mt-3 rounded-soft border border-line bg-paper-3 px-4 py-3 text-xs leading-relaxed text-bone-soft">
+              Your billing details are collected securely by the payment gateway when you pay.
+              The delivery address above is always used for shipping.
             </p>
           )}
+        </section>
 
-          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Full Name" value={form.name} onChange={(v) => set('name', v)} autoComplete="name" required inputRef={(el) => { fieldRefs.current.name = el; }} errorMsg={errors.name} />
-            <Field label="Phone" value={form.phone} onChange={(v) => set('phone', v)} inputMode="numeric" autoComplete="tel" required placeholder="10-digit mobile number" maxLength={10} inputRef={(el) => { fieldRefs.current.phone = el; }} errorMsg={errors.phone} />
-            <Field label="Email (optional)" value={form.email} onChange={(v) => set('email', v)} type="email" autoComplete="email" className="md:col-span-2" />
-            <Field label="Address" value={form.address} onChange={(v) => set('address', v)} autoComplete="street-address" required className="md:col-span-2" inputRef={(el) => { fieldRefs.current.address = el; }} errorMsg={errors.address} />
-            <Field label="City" value={form.city} onChange={(v) => set('city', v)} autoComplete="address-level2" required inputRef={(el) => { fieldRefs.current.city = el; }} errorMsg={errors.city} />
-            <Field label="State" value={form.state} onChange={(v) => set('state', v)} autoComplete="address-level1" required inputRef={(el) => { fieldRefs.current.state = el; }} errorMsg={errors.state} />
-            <Field label="PIN Code" value={form.pincode} onChange={(v) => set('pincode', v)} inputMode="numeric" autoComplete="postal-code" required maxLength={6} inputRef={(el) => { fieldRefs.current.pincode = el; }} errorMsg={errors.pincode} />
-          </div>
+        {/* Discount — collapsed pill that opens the promo entry */}
+        <div className="mt-8">
+          {!promo && (
+            <button
+              type="button"
+              onClick={() => setDiscountOpen((o) => !o)}
+              aria-expanded={discountOpen}
+              className="flex w-full items-center justify-center gap-2 rounded-full border border-line-2 bg-white px-5 py-3 text-sm font-semibold text-bone transition-colors hover:border-bone-dim"
+            >
+              <Tag size={15} strokeWidth={2} className="text-bone-soft" />
+              Add discount
+              <ChevronDown size={15} strokeWidth={2} className={`text-bone-soft transition-transform ${discountOpen ? 'rotate-180' : ''}`} />
+            </button>
+          )}
+          {discountOpen && !promo && (
+            <div className="mt-2.5 animate-slide-down">
+              <div className="flex gap-2">
+                <input
+                  value={promoInput}
+                  onChange={(e) => setPromoInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleApplyPromo(); }}
+                  placeholder="Enter promo code"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  className="min-w-0 flex-1 rounded-soft border border-line-2 bg-white px-3.5 py-3 text-sm text-bone placeholder:text-grey focus:border-bone focus:outline-none transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={handleApplyPromo}
+                  disabled={applying || !promoInput.trim()}
+                  className="btn-dark shrink-0 text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 disabled:opacity-40"
+                >
+                  {applying ? <Loader2 size={14} strokeWidth={2} className="animate-spin" /> : 'Apply'}
+                </button>
+              </div>
+              {promoError && <p className="mt-1.5 text-xs text-crimson">{promoError}</p>}
+            </div>
+          )}
+          {promo && (
+            <div className="flex items-center justify-between rounded-soft border border-green-300 bg-green-50 px-4 py-3">
+              <span className="inline-flex items-center gap-2 text-sm font-semibold text-green-800">
+                <Check size={15} strokeWidth={2.5} /> {promo.code} APPLIED
+              </span>
+              <button
+                type="button"
+                onClick={handleRemovePromo}
+                className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-800 underline underline-offset-2 hover:text-green-900"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+          {promo && !promoApplies(subtotal, promo) && (
+            <p className="mt-1.5 text-xs text-grey">
+              Add {formatPrice((promo.min_order_value || 0) - subtotal)} more to use this code — it will not
+              apply at checkout below that amount.
+            </p>
+          )}
         </div>
 
-        {/* Order Summary — on desktop sits in the right column, on mobile between
-            the delivery form and the payment/place-order block */}
-        <aside className="lg:col-start-2 lg:row-span-3 border border-line bg-paper-3 p-5 md:p-7">
-          <h2 className="font-display text-2xl uppercase tracking-wide-2 text-bone">Order Summary</h2>
-          <div className="mt-4 divide-y divide-line border-t border-line">
-            {items.map((item) => (
-              <div key={`${item.productId}-${item.colorId}-${item.sizeLabel}`} className="flex gap-3 py-3">
-                <div className="w-14 h-[72px] shrink-0 border border-line bg-paper-3 overflow-hidden">
-                  {item.image && <img src={item.image} alt={item.name} className="w-full h-full object-cover" loading="lazy" />}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-bone line-clamp-2">{item.name}</p>
-                  <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mt-0.5">
-                    {item.color} · {item.sizeLabel} × {item.quantity}
-                  </p>
-                </div>
-                <p className="font-price text-sm font-semibold text-bone tabular-nums whitespace-nowrap">
-                  {formatPrice(item.unitPrice * item.quantity)}
-                </p>
-              </div>
-            ))}
-          </div>
-
-          {/* Promo code — same component/logic as the Cart drawer */}
-          <div className="mt-4 border-t border-line pt-4">
-            <div className="flex items-center gap-2">
-              <Tag size={13} strokeWidth={1.8} className="text-bone-dim" />
-              <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold">Promo Code</p>
-            </div>
-            {promo ? (
-              <>
-                <div className="mt-2 flex items-center justify-between border border-green-300 bg-green-50 px-3 py-2.5">
-                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-green-800">
-                    <Check size={14} strokeWidth={2.5} /> {promo.code} APPLIED
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleRemovePromo}
-                    className="text-[10px] uppercase tracking-wide-2 font-semibold text-green-800 underline underline-offset-2 hover:text-green-900"
-                  >
-                    Remove
-                  </button>
-                </div>
-                {!promoApplies(subtotal, promo) && (
-                  <p className="mt-1.5 text-xs text-grey">
-                    Add {formatPrice((promo.min_order_value || 0) - subtotal)} more to use this code — it will not
-                    apply at checkout below that amount.
-                  </p>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="mt-2 flex gap-2">
-                  <input
-                    value={promoInput}
-                    onChange={(e) => setPromoInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleApplyPromo(); }}
-                    placeholder="Enter promo code"
-                    autoCapitalize="characters"
-                    spellCheck={false}
-                    className="flex-1 min-w-0 border border-line bg-white px-3 py-2.5 text-sm text-bone placeholder:text-grey/60 focus:border-bone focus:outline-none transition-colors"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleApplyPromo}
-                    disabled={applying || !promoInput.trim()}
-                    className="inline-flex items-center gap-1.5 shrink-0 bg-bone text-white text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
-                  >
-                    {applying ? <Loader2 size={13} strokeWidth={2} className="animate-spin" /> : 'Apply'}
-                  </button>
-                </div>
-                {promoError && <p className="mt-1.5 text-xs text-crimson">{promoError}</p>}
-              </>
-            )}
-          </div>
-
-          <dl className="mt-3 space-y-2.5 text-sm">
-            <div className="flex items-center justify-between">
-              <dt className="text-grey">Items ({count})</dt>
-              <dd className="font-semibold text-bone tabular-nums">{formatPrice(subtotal)}</dd>
-            </div>
-            {discount > 0 && (
-              <div className="flex items-center justify-between">
-                <dt className="text-grey">Discount ({promo?.code})</dt>
-                <dd className="font-semibold text-green-700 tabular-nums">−{formatPrice(discount)}</dd>
-              </div>
-            )}
-            <div className="flex items-center justify-between">
-              <dt className="text-grey">Shipping</dt>
-              <dd className="font-semibold text-bone tabular-nums">
-                {shipping > 0 ? formatPrice(shipping) : <span className="text-green-700">FREE</span>}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between">
-              <p className="text-[10px] text-grey">
-                {shipping > 0 ? 'FREE shipping on orders ₹999+' : "You've unlocked FREE shipping"}
-              </p>
-            </div>
-            <div className="flex items-center justify-between border-t border-line pt-3 mt-3">
-              <dt className="font-label text-xs uppercase tracking-wide-2 text-bone">Total</dt>
-              <dd className="font-price text-2xl text-bone tabular-nums">{(total || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}</dd>
-            </div>
-          </dl>
-        </aside>
-
-        {/* Payment state (below the form fields; summary appears after it on mobile) */}
-        <div className="lg:col-start-1 border border-line bg-paper-3 p-4">
+        {/* Total — compact row; chevron opens the itemized breakdown */}
+        <div className="mt-8">
           <div className="flex items-center gap-3">
-            <ShieldCheck size={18} strokeWidth={1.6} className="text-bone shrink-0" />
-            <div>
-              <p className="font-label text-[10px] uppercase tracking-wide-2 text-bone font-semibold">
-                Payment
-              </p>
-              <p className="text-xs text-grey mt-0.5 leading-relaxed">{paymentStatusMessage()}</p>
+            <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-line bg-paper-3">
+              {items[0]?.image && (
+                <img src={items[0].image} alt={items[0].name} className="h-full w-full object-cover" loading="lazy" />
+              )}
             </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[15px] font-bold leading-tight text-bone">Total</p>
+              <p className="text-xs text-grey">{count} {count === 1 ? 'item' : 'items'}</p>
+            </div>
+            <span className="text-xs text-grey">INR</span>
+            <span className="font-price text-xl font-bold text-bone tabular-nums">
+              {(total || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowBreakdown((o) => !o)}
+              aria-expanded={showBreakdown}
+              aria-label={showBreakdown ? 'Hide order summary' : 'Show order summary'}
+              className="shrink-0 text-grey transition-colors hover:text-bone"
+            >
+              <ChevronDown size={18} strokeWidth={2} className={`transition-transform ${showBreakdown ? 'rotate-180' : ''}`} />
+            </button>
           </div>
+
+          {showBreakdown && (
+            <div className="mt-4 animate-slide-down rounded-soft border border-line bg-paper-2 p-4">
+              <div className="divide-y divide-line">
+                {items.map((item) => (
+                  <div key={`${item.productId}-${item.colorId}-${item.sizeLabel}`} className="flex gap-3 py-2.5">
+                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded border border-line bg-paper-3">
+                      {item.image && <img src={item.image} alt={item.name} className="h-full w-full object-cover" loading="lazy" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 text-xs font-semibold text-bone">{item.name}</p>
+                      <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mt-0.5">
+                        {item.color} · {item.sizeLabel} × {item.quantity}
+                      </p>
+                    </div>
+                    <p className="font-price text-sm font-semibold text-bone tabular-nums whitespace-nowrap">
+                      {formatPrice(item.unitPrice * item.quantity)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <dl className="mt-3 space-y-2 border-t border-line pt-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <dt className="text-grey">Items ({count})</dt>
+                  <dd className="font-semibold text-bone tabular-nums">{formatPrice(subtotal)}</dd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <dt className="text-grey">Shipping</dt>
+                  <dd className="font-semibold text-bone tabular-nums">
+                    {shipping > 0 ? formatPrice(shipping) : <span className="text-green-700">FREE</span>}
+                  </dd>
+                </div>
+                {discount > 0 && (
+                  <div className="flex items-center justify-between">
+                    <dt className="text-grey">Discount ({promo?.code})</dt>
+                    <dd className="font-semibold text-green-700 tabular-nums">−{formatPrice(discount)}</dd>
+                  </div>
+                )}
+                <div className="flex items-center justify-between border-t border-line pt-3">
+                  <dt className="font-label text-xs uppercase tracking-wide-2 text-bone">Total</dt>
+                  <dd className="font-price text-xl text-bone tabular-nums">{(total || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                </div>
+              </dl>
+            </div>
+          )}
         </div>
 
+        {/* Primary CTA — same order + Cashfree redirect flow as before */}
         <button
           type="submit"
           disabled={placing}
-          className="lg:col-start-1 w-full btn-dark text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 disabled:opacity-60"
+          className="mt-6 w-full btn-dark text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 disabled:opacity-60"
         >
           {placing ? (
             <>
@@ -1190,20 +1522,19 @@ export function CheckoutPage() {
           )}
         </button>
 
-        <p className="lg:col-start-1 text-[11px] leading-relaxed text-grey mt-3">
-          Secure, backed by our{' '}
-          <a href="#/return-policy" className="text-bone underline hover:text-bone transition-colors">Return Policy</a>,{' '}
-          <a href="#/shipping-policy" className="text-bone underline hover:text-bone transition-colors">Shipping Policy</a>{' '}
-          and{' '}
-          <a href="#/contact" className="text-bone underline hover:text-bone transition-colors">support</a>. Review our{' '}
-          <a href="#/privacy-policy" className="text-bone underline hover:text-bone transition-colors">Privacy Policy</a>{' '}
-          any time.
-        </p>
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-[11px] text-grey">
+          <a href="#/return-policy" className="underline underline-offset-2 transition-colors hover:text-bone">Refund policy</a>
+          <a href="#/shipping-policy" className="underline underline-offset-2 transition-colors hover:text-bone">Shipping</a>
+          <a href="#/privacy-policy" className="underline underline-offset-2 transition-colors hover:text-bone">Privacy policy</a>
+          <a href="#/terms-and-conditions" className="underline underline-offset-2 transition-colors hover:text-bone">Terms of service</a>
+        </div>
       </form>
     </div>
   );
 }
 
+/** Middle-rounded bordered text input with an in-box placeholder label (no
+ *  floating label above). Trailing `icon` renders inside the box's right edge. */
 function Field({
   label,
   value,
@@ -1214,9 +1545,9 @@ function Field({
   inputMode,
   maxLength,
   autoComplete,
-  placeholder,
   errorMsg,
   inputRef,
+  icon,
 }: {
   label: string;
   value: string;
@@ -1227,31 +1558,153 @@ function Field({
   inputMode?: 'text' | 'numeric' | 'tel' | 'email';
   maxLength?: number;
   autoComplete?: string;
-  placeholder?: string;
   errorMsg?: string | null;
   inputRef?: React.Ref<HTMLInputElement>;
+  icon?: React.ReactNode;
 }) {
   return (
     <label className={`block ${className}`}>
-      <span className="font-label text-[10px] uppercase tracking-wide-2 text-grey">
-        {label} {required && <span className="text-bone">*</span>}
-      </span>
-      <input
-        ref={inputRef}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        required={required}
-        inputMode={inputMode}
-        maxLength={maxLength}
-        autoComplete={autoComplete}
-        placeholder={placeholder}
-        aria-invalid={errorMsg ? true : undefined}
-        className={`mt-1.5 w-full border bg-white px-3 py-3 text-sm text-bone placeholder:text-grey/60 focus:outline-none transition-colors ${
-          errorMsg ? 'border-crimson focus:border-crimson' : 'border-line focus:border-bone'
+      <span className="sr-only">{label}{required ? ' (required)' : ''}</span>
+      <span
+        className={`relative flex w-full items-center rounded-soft border bg-white transition-colors focus-within:border-bone ${
+          errorMsg ? 'border-crimson' : 'border-line-2'
         }`}
-      />
+      >
+        <input
+          ref={inputRef}
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required={required}
+          inputMode={inputMode}
+          maxLength={maxLength}
+          autoComplete={autoComplete}
+          placeholder={label}
+          aria-invalid={errorMsg ? true : undefined}
+          className="w-full min-w-0 bg-transparent px-3.5 py-3 text-[15px] leading-snug text-bone placeholder:text-grey focus:outline-none"
+        />
+        {icon && <span className="relative z-10 shrink-0 pr-3 text-grey">{icon}</span>}
+      </span>
       {errorMsg && <p className="mt-1.5 text-xs text-crimson" role="alert">{errorMsg}</p>}
     </label>
   );
 }
+
+/** Dropdown variant of the bordered box — custom chevron on the right edge. */
+function SelectField({
+  label,
+  value,
+  onChange,
+  required,
+  className = '',
+  autoComplete,
+  errorMsg,
+  elRef,
+  placeholder,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  required?: boolean;
+  className?: string;
+  autoComplete?: string;
+  errorMsg?: string | null;
+  elRef?: React.Ref<HTMLSelectElement>;
+  placeholder?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className={`block ${className}`}>
+      <span className="sr-only">{label}{required ? ' (required)' : ''}</span>
+      <span
+        className={`relative flex w-full items-center rounded-soft border bg-white transition-colors focus-within:border-bone ${
+          errorMsg ? 'border-crimson' : 'border-line-2'
+        }`}
+      >
+        <select
+          ref={elRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required={required}
+          autoComplete={autoComplete}
+          aria-invalid={errorMsg ? true : undefined}
+          className={`w-full min-w-0 appearance-none bg-transparent px-3.5 py-3 text-[15px] leading-snug focus:outline-none ${
+            value ? 'text-bone' : 'text-grey'
+          }`}
+        >
+          {placeholder && <option value="" disabled>{placeholder}</option>}
+          {children}
+        </select>
+        <span className="pointer-events-none shrink-0 pr-3 text-grey">
+          <ChevronDown size={16} strokeWidth={2} />
+        </span>
+      </span>
+      {errorMsg && <p className="mt-1.5 text-xs text-crimson" role="alert">{errorMsg}</p>}
+    </label>
+  );
+}
+
+/** Full-width option card with a radio dot — crimson for the selected state. */
+function RadioOption({
+  selected,
+  title,
+  sub,
+  onClick,
+  badges,
+}: {
+  selected: boolean;
+  title: string;
+  sub?: string;
+  onClick: () => void;
+  badges?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      className={`flex w-full items-center gap-3 rounded-soft border px-4 py-3.5 text-left transition-colors ${
+        selected ? 'border-crimson bg-crimson/5' : 'border-line-2 bg-white hover:border-bone-dim'
+      }`}
+    >
+      <span
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+          selected ? 'border-crimson' : 'border-bone-dim/50'
+        }`}
+        aria-hidden
+      >
+        {selected && <span className="h-2.5 w-2.5 rounded-full bg-crimson" />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[15px] font-semibold leading-snug text-bone">{title}</span>
+        {sub && <span className="mt-0.5 block text-xs leading-snug text-grey">{sub}</span>}
+      </span>
+      {badges}
+    </button>
+  );
+}
+
+/** Small square checkbox used for the "Save this information for next time" row. */
+function CheckboxSquare({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] border transition-colors ${
+        checked ? 'border-crimson bg-crimson text-white' : 'border-line-2 bg-white text-transparent'
+      }`}
+      aria-hidden
+    >
+      <Check size={12} strokeWidth={3} />
+    </span>
+  );
+}
+
+const INDIAN_STATES = [
+  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
+  'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh',
+  'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab',
+  'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh',
+  'Uttarakhand', 'West Bengal', 'Andaman and Nicobar Islands', 'Chandigarh',
+  'Dadra and Nagar Haveli and Daman and Diu', 'Delhi', 'Jammu and Kashmir', 'Ladakh',
+  'Lakshadweep', 'Puducherry',
+];

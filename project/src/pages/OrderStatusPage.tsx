@@ -242,10 +242,14 @@ export function OrderStatusPage() {
     const fromHash = readHashRef();
     if (fromHash) return fromHash;
     if (pendingRef.current?.ref) return pendingRef.current.ref;
+    // The live order (this session's most recent placement) is more current
+    // than the persistent last-confirmed result — prefer it so a stale result
+    // from a previous checkout can never hijack the status page.
+    const live = readLive();
+    if (live?.ref) return live.ref;
     const result = readResult();
     if (result?.ref) return result.ref;
-    const live = readLive();
-    return live?.ref ?? '';
+    return '';
   })();
   const initialPhone = (() => {
     const p = pendingRef.current?.phone ?? readResult()?.phone ?? readFormPhone();
@@ -261,6 +265,11 @@ export function OrderStatusPage() {
   const [busy, setBusy] = useState(false);
   const [verifyTick, setVerifyTick] = useState(0);
   const [expired, setExpired] = useState(false);
+  // Escape hatch: a stuck (pending/failed) order must never be a dead end.
+  // After 2-3 manual re-checks or a ~45s window without a resolution, surface
+  // "Start New Order" so the customer can always begin a fresh checkout.
+  const [recheckCount, setRecheckCount] = useState(0);
+  const [showNewOrder, setShowNewOrder] = useState(false);
 
   const settlePaid = (order: Record<string, unknown>) => {
     const orderId = String(order.id ?? pendingRef.current?.order_id ?? '');
@@ -393,14 +402,27 @@ export function OrderStatusPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref, phone, verifyTick]);
 
+  // Time-window escape hatch: if confirmation never comes to a head (stuck
+  // "Still Confirming" / "Payment Not Completed"), offer "Start New Order"
+  // after a short wait so the customer is never trapped on a stale screen.
+  useEffect(() => {
+    if (verdict !== 'pending' && verdict !== 'failed') return;
+    if (expired) return;
+    const t = window.setTimeout(() => setShowNewOrder(true), 45000);
+    return () => window.clearTimeout(t);
+  }, [verdict, expired, ref, verifyTick]);
+
   const retryHandle = (): LiveOrder | null => {
+    // NEVER resurrect a different order: the retry must pay the SAME order
+    // this page is showing (ref), otherwise a newer/older handle from storage
+    // would stray to a previous checkout.
     const live = readLive();
-    if (live) return live;
+    if (live && live.ref === ref) return live;
     const p = readPending();
-    if (p && p.order_id && p.amount) {
+    if (p && p.ref === ref && p.order_id && p.amount) {
       return { ref: p.ref, order_id: p.order_id, amount: p.amount, itemsKey: p.itemsKey };
     }
-    if (snap && snap.order_id && snap.total_amount) {
+    if (snap && snap.ref === ref && snap.order_id && snap.total_amount) {
       return { ref: snap.ref, order_id: snap.order_id, amount: snap.total_amount, itemsKey: '' };
     }
     return null;
@@ -476,7 +498,10 @@ export function OrderStatusPage() {
   if (verdict === 'paid' && snap) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
-        <CheckCircle2 size={40} strokeWidth={1.4} className="text-bone" />
+        <div className="relative flex h-14 w-14 items-center justify-center rounded-full bg-blush">
+          <CheckCircle2 size={36} strokeWidth={1.5} className="text-crimson animate-scale-in" />
+          <span className="absolute inset-0 rounded-full border border-crimson/25 animate-fade-in" aria-hidden />
+        </div>
         <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">Order Confirmed</p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
           Thank You
@@ -608,14 +633,14 @@ export function OrderStatusPage() {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
         <div
-          className="flex h-10 w-10 items-center justify-center"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-blush"
           role={!isFailed ? 'status' : undefined}
           aria-live={!isFailed ? 'polite' : undefined}
         >
           {isFailed ? (
-            <XCircle size={34} strokeWidth={1.4} className="text-crimson" />
+            <XCircle size={32} strokeWidth={1.4} className="text-crimson" />
           ) : (
-            <Clock size={32} strokeWidth={1.4} className="text-crimson" />
+            <Clock size={30} strokeWidth={1.4} className="text-crimson" />
           )}
         </div>
 
@@ -655,6 +680,8 @@ export function OrderStatusPage() {
                 if (expired) navigate('/checkout');
                 else void handleTryAgain();
               } else {
+                setRecheckCount((n) => n + 1);
+                if (recheckCount + 1 >= 2) setShowNewOrder(true);
                 setVerifyTick((n) => n + 1);
               }
             }}
@@ -682,7 +709,27 @@ export function OrderStatusPage() {
           >
             Continue Shopping
           </button>
+          {showNewOrder && !expired && (
+            <button
+              type="button"
+              onClick={() => {
+                // Drop the stuck order handles first — otherwise the checkout
+                // would re-open on its result screen and never reach the form.
+                clearPending();
+                clearLive();
+                navigate('/checkout');
+              }}
+              className="btn-soft border border-crimson/60 text-crimson text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-crimson hover:text-paper transition-colors"
+            >
+              Start New Order
+            </button>
+          )}
         </div>
+        {showNewOrder && !expired && (
+          <p className="mt-4 text-[11px] text-grey max-w-md leading-relaxed">
+            Still stuck? Start a fresh order instead — your bag is untouched and a new reference will be created.
+          </p>
+        )}
 
         <p className="mt-6 text-[11px] text-grey">
           Need help?{' '}
@@ -697,7 +744,9 @@ export function OrderStatusPage() {
   if (verdict === 'checking') {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
-        <Loader2 size={34} strokeWidth={1.4} className="animate-spin text-bone" />
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blush" role="status" aria-live="polite">
+          <Loader2 size={32} strokeWidth={1.5} className="animate-spin text-crimson" />
+        </div>
         <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">Payment</p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
           Confirming Payment

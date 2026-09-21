@@ -2,7 +2,7 @@ import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const BASE = 'https://dslang.in';
+const BASE = process.env.BASE || 'https://dslang.in';
 const SHOT_DIR = 'C:/Users/Admin/AppData/Local/Temp/opencode/smoke';
 fs.mkdirSync(SHOT_DIR, { recursive: true });
 
@@ -35,7 +35,8 @@ const CART_ITEM = {
   addedAt: Date.now(),
 };
 const FORM = {
-  name: 'Test User',
+  firstName: 'Test',
+  lastName: 'User',
   phone: '9833399999',
   email: 'test@dslang.in',
   address: '12 Test Road',
@@ -76,17 +77,24 @@ async function setupCart(page, clearKeys = true) {
 }
 
 async function fillCheckout(page) {
-  await page.waitForSelector('input[autocomplete="name"]', { timeout: 30000 });
+  await page.waitForSelector('input[autocomplete="given-name"]', { timeout: 30000 });
   const set = async (sel, val) => {
     const el = page.locator(sel).first();
-    await el.fill(val);
+    if ((await el.count()) === 0) return;
+    const tag = await el.evaluate((n) => n.tagName).catch(() => '');
+    if (tag === 'SELECT') {
+      await el.selectOption({ label: String(val) });
+    } else {
+      await el.fill(String(val));
+    }
   };
-  await set('input[autocomplete="name"]', FORM.name);
+  await set('input[autocomplete="given-name"]', FORM.firstName);
+  await set('input[autocomplete="family-name"]', FORM.lastName);
   await set('input[autocomplete="tel"]', FORM.phone);
   await set('input[autocomplete="email"]', FORM.email);
   await set('input[autocomplete="street-address"]', FORM.address);
   await set('input[autocomplete="address-level2"]', FORM.city);
-  await set('input[autocomplete="address-level1"]', FORM.state);
+  await set('select[autocomplete="address-level1"]', FORM.state);
   await set('input[autocomplete="postal-code"]', FORM.pincode);
 }
 
