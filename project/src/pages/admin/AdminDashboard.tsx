@@ -12,14 +12,18 @@ import {
   ChevronRight,
   GripVertical,
   Check,
+  Clock,
   ExternalLink,
   Upload,
   Settings as SettingsIcon,
   ShoppingBag,
   Copy,
+  Pencil,
   Phone,
   Ticket,
   Loader2,
+  Truck,
+  Printer,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
@@ -2034,14 +2038,19 @@ const PAYMENT_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
 
 const ORDER_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
   pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
+  cod_partial_paid: { label: 'COD — Advance Paid', cls: 'bg-sky-100 text-sky-700' },
   processing: { label: 'Processing', cls: 'bg-sky-100 text-sky-700' },
   shipped: { label: 'Shipped', cls: 'bg-indigo-100 text-indigo-700' },
   delivered: { label: 'Delivered', cls: 'bg-green-600/10 text-green-700' },
+  rto: { label: 'Returned to Origin (RTO)', cls: 'bg-amber-100 text-amber-700' },
   cancelled: { label: 'Cancelled', cls: 'bg-crimson/10 text-crimson' },
   refunded: { label: 'Refunded', cls: 'bg-grey/15 text-grey' },
 };
 
-const ORDER_STATUS_FLOW = ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'] as const;
+const ORDER_STATUS_FLOW = ['pending', 'cod_partial_paid', 'processing', 'shipped', 'delivered', 'rto', 'cancelled', 'refunded'] as const;
+
+/** Which orders qualify for the "Ship Order" (Delhivery) action. */
+const SHIPPABLE_ORDER_STATUSES = new Set(['pending', 'cod_partial_paid', 'processing']);
 
 function formatOrderDate(iso: string): string {
   try {
@@ -2161,13 +2170,165 @@ function RetailOrdersPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shipDrafts]);
 
+  // --- Ship via Delhivery (real shipment locked to production; fail-closed) ---
+  const [confirmShipId, setConfirmShipId] = useState<string | null>(null);
+  const [shippingOrderId, setShippingOrderId] = useState<string | null>(null);
+  const [shipErrors, setShipErrors] = useState<Record<string, string>>({});
+
+  const hasLiveShipment = (o: RetailOrder): boolean =>
+    Boolean(
+      o.awb_number ||
+        o.tracking_id ||
+        (o.shiprocket_order_id && o.shiprocket_order_id !== 'creating')
+    );
+
+  const canShip = (o: RetailOrder): boolean =>
+    o.payment_status === 'success' &&
+    SHIPPABLE_ORDER_STATUSES.has(o.order_status) &&
+    !hasLiveShipment(o);
+
+  /** Delivery-address lines for the clipboard copy (copies name, phone,
+   *  address, city, state, PIN — no internal ids). */
+  const copyAddress = async (o: RetailOrder) => {
+    const c = o.customer ?? ({} as RetailOrder['customer']);
+    const lines = [
+      c.name,
+      c.phone,
+      c.address,
+      [c.city, c.state].filter(Boolean).join(', '),
+      c.pincode,
+      c.country && c.country !== 'India' ? c.country : null,
+    ].filter(Boolean).join('\n');
+    try {
+      await navigator.clipboard.writeText(lines);
+      setActionMessage('Delivery address copied.');
+    } catch {
+      setActionMessage('Could not copy the address.');
+    }
+  };
+
+  const shipOrder = async (o: RetailOrder) => {
+    setShippingOrderId(o.id);
+    setConfirmShipId(null);
+    setShipErrors((prev) => ({ ...prev, [o.id]: '' }));
+    try {
+      const res = await supabase.functions.invoke<{ ok: boolean; error?: string; awbNumber?: string }>(
+        'delhivery-order',
+        { body: { orderId: o.id } }
+      );
+      if (res.error) {
+        let msg = 'Creating the shipment failed.';
+        const ctx = (res.error as { context?: Response }).context;
+        if (ctx) {
+          try {
+            const j = (await ctx.json()) as { error?: string };
+            if (j?.error) msg = j.error;
+          } catch {
+            /* keep the default message */
+          }
+        }
+        setShipErrors((prev) => ({ ...prev, [o.id]: msg }));
+        return;
+      }
+      if (!res.data?.ok) {
+        setShipErrors((prev) => ({ ...prev, [o.id]: res.data?.error ?? 'Creating the shipment failed.' }));
+        return;
+      }
+      setActionMessage(`Shipped — AWB ${res.data.awbNumber ?? ''}`.trim());
+      load();
+    } catch (err) {
+      setShipErrors((prev) => ({ ...prev, [o.id]: err instanceof Error ? err.message : 'Creating the shipment failed.' }));
+    } finally {
+      setShippingOrderId(null);
+    }
+  };
+
+  // --- Cancel-before-ship / edit-address during the auto-ship grace window ---
+  const [confirmCancelShipId, setConfirmCancelShipId] = useState<string | null>(null);
+  const [cancellingShip, setCancellingShip] = useState(false);
+  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
+  const [addressDraft, setAddressDraft] = useState<RetailOrder['customer'] | null>(null);
+  const [savingAddress, setSavingAddress] = useState(false);
+  // Re-render every minute so the "auto-ship in ~N min" countdown stays honest.
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setClockTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  /** True when this order is inside its Cashfree auto-ship grace window (paid,
+   *  shippable, no shipment yet, no failed attempt). */
+  const awaitingAutoShip = (o: RetailOrder): boolean =>
+    Boolean(o.auto_ship_at) &&
+    o.payment_status === 'success' &&
+    SHIPPABLE_ORDER_STATUSES.has(o.order_status) &&
+    !hasLiveShipment(o) &&
+    !o.ship_attempt_error;
+
+  /** Countdown vs the stored auto_ship_at stamp (server-authoritative). */
+  const autoShipInfo = (o: RetailOrder) => {
+    const dueMs = o.auto_ship_at ? new Date(o.auto_ship_at).getTime() : 0;
+    if (!dueMs) return null;
+    const diff = dueMs - Date.now();
+    return {
+      dueAt: o.auto_ship_at ?? '',
+      overdue: diff <= 0,
+      minsLeft: Math.max(0, Math.round(diff / 60_000)),
+    };
+  };
+
+  const cancelBeforeShip = async (o: RetailOrder) => {
+    setCancellingShip(true);
+    setShipErrors((prev) => ({ ...prev, [o.id]: '' }));
+    try {
+      const { error } = await supabase
+        .from('retail_orders')
+        .update({ order_status: 'cancelled', auto_ship_at: null })
+        .eq('id', o.id);
+      if (error) throw new Error(describeSupabaseError(error, 'Could not cancel the order before shipping.'));
+      setConfirmCancelShipId(null);
+      setActionMessage(`Order ${o.ref} cancelled — it will NOT be auto-shipped.`);
+      load();
+    } catch (err) {
+      setShipErrors((prev) => ({ ...prev, [o.id]: err instanceof Error ? err.message : 'Could not cancel the order before shipping.' }));
+    } finally {
+      setCancellingShip(false);
+    }
+  };
+
+  const startEditAddress = (o: RetailOrder) => {
+    setAddressDraft({ ...o.customer });
+    setEditingAddressId(o.id);
+  };
+
+  const saveAddress = async (o: RetailOrder) => {
+    if (!addressDraft) return;
+    setSavingAddress(true);
+    setShipErrors((prev) => ({ ...prev, [o.id]: '' }));
+    try {
+      const { error } = await supabase
+        .from('retail_orders')
+        .update({ customer: { ...o.customer, ...addressDraft } })
+        .eq('id', o.id);
+      if (error) throw new Error(describeSupabaseError(error, 'Could not save the delivery address.'));
+      setEditingAddressId(null);
+      setAddressDraft(null);
+      setActionMessage('Delivery address updated.');
+      load();
+    } catch (err) {
+      setShipErrors((prev) => ({ ...prev, [o.id]: err instanceof Error ? err.message : 'Could not save the delivery address.' }));
+    } finally {
+      setSavingAddress(false);
+    }
+  };
+
   const updateWhatsAppLink = (o: RetailOrder): string => {
     const draft = draftFor(o);
     const phone = (o.customer?.phone ?? '').replace(/\D/g, '').slice(-10);
     const trackUrl = `${window.location.origin}/#/track-order/${o.ref}`;
     const shipped = o.order_status === 'shipped' || o.order_status === 'delivered';
-    const trackingId = draft.tracking_id.trim();
-    const trackingUrl = draft.tracking_url.trim();
+    const trackingId = draft.tracking_id.trim() || o.awb_number || '';
+    const trackingUrl = draft.tracking_url.trim() || o.label_url || '';
     const items = o.items
       .map((it) => `${it.quantity}× ${it.name} (${it.color} · ${it.size_label}) — ${formatPrice(it.line_total)}`)
       .join('\n');
@@ -2187,6 +2348,11 @@ function RetailOrdersPanel() {
           items,
           '',
           `Order total: ${formatPrice(o.total_amount)}`,
+          o.is_cod
+            ? `COD — ${formatPrice(o.amount_paid_upfront ?? 0)} paid up front, ${formatPrice(o.amount_due_on_delivery ?? 0)} due on delivery.`
+            : (o.payment_discount ?? 0) > 0
+              ? `Online payment discount ${formatPrice(o.payment_discount ?? 0)} applied — paid ${formatPrice((o.total_amount ?? 0) - (o.payment_discount ?? 0))} online.`
+              : null,
           `Track your order here: ${trackUrl}`,
         ];
     return `https://wa.me/91${phone}?text=${encodeURIComponent(lines.filter(Boolean).join('\n'))}`;
@@ -2228,6 +2394,7 @@ function RetailOrdersPanel() {
       {orders.map((o) => {
         const isOpen = expanded === o.id;
         const pay = PAYMENT_STATUS_LABEL[o.payment_status];
+        const autoInfo = autoShipInfo(o);
         return (
           <div key={o.id} className="bg-white border border-line rounded overflow-hidden">
             <button
@@ -2247,6 +2414,7 @@ function RetailOrdersPanel() {
                   >
                     <Copy size={13} />
                   </button>
+                  {o.is_cod && <span className="text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-0.5 rounded bg-bone/10 text-bone">COD</span>}
                   {pay && <span className={`text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-0.5 rounded ${pay.cls}`}>{pay.label}</span>}
                 </div>
                 <p className="text-xs text-grey mt-0.5 truncate">{o.customer.name} · {o.customer.phone}</p>
@@ -2278,7 +2446,16 @@ function RetailOrdersPanel() {
                         <div className="flex justify-between"><span className="text-bone-dim">Discount</span><span className="font-medium text-green-700">−{formatPrice(o.discount)}</span></div>
                       )}
                       <div className="flex justify-between"><span className="text-bone-dim">Shipping</span><span className="font-medium text-bone">{formatPrice(o.shipping)}</span></div>
-                      <div className="flex justify-between border-t border-line pt-1"><span className="text-bone">Total</span><span className="font-semibold text-bone">{formatPrice(o.total_amount)}</span></div>
+                      <div className="flex justify-between border-t border-line pt-1"><span className="text-bone">Total (Sale)</span><span className="font-semibold text-bone">{formatPrice(o.total_amount)}</span></div>
+                      {o.is_cod && (
+                        <>
+                          <div className="flex justify-between"><span className="text-bone-dim">COD Advance (min ₹100)</span><span className="font-medium text-green-700">{formatPrice(o.amount_paid_upfront ?? 0)}</span></div>
+                          <div className="flex justify-between"><span className="text-bone-dim">Pay at Delivery</span><span className="font-medium text-bone">{formatPrice(o.amount_due_on_delivery ?? 0)}</span></div>
+                        </>
+                      )}
+                      {!o.is_cod && Number(o.payment_discount) > 0 && (
+                        <div className="flex justify-between"><span className="text-bone-dim">Online Payment Discount</span><span className="font-medium text-green-700">−{formatPrice(o.payment_discount ?? 0)}</span></div>
+                      )}
                       <div className="flex justify-between text-xs text-grey"><span>Qty</span><span>{o.total_qty}</span></div>
                       {o.promo_code && <div className="flex justify-between text-xs text-grey"><span>Promo</span><span>{o.promo_code}</span></div>}
                     </div>
@@ -2317,10 +2494,16 @@ function RetailOrdersPanel() {
                       onChange={async (e) => {
                         const next = e.target.value;
                         // Consistency guard: never mark an unpaid order as
-                        // processing/shipped/delivered — payment status comes
-                        // from the verified provider, not from fulfillment.
-                        if (o.payment_status !== 'success' && ['processing', 'shipped', 'delivered'].includes(next)) {
-                          setLoadError('Cannot mark an unpaid order as processing/shipped/delivered. Payment must be verified first.');
+                        // partial-paid/processing/shipped/delivered — payment
+                        // status comes from the verified provider, not from
+                        // fulfillment. cod_partial_paid additionally only
+                        // applies to COD orders (an advance was verified).
+                        if (o.payment_status !== 'success' && ['cod_partial_paid', 'processing', 'shipped', 'delivered'].includes(next)) {
+                          setLoadError('Cannot mark an unpaid order as paid/processing/shipped/delivered. Payment must be verified first.');
+                          return;
+                        }
+                        if (next === 'cod_partial_paid' && !o.is_cod) {
+                          setLoadError('COD — Advance Paid only applies to COD orders.');
                           return;
                         }
                         const draft = draftFor(o);
@@ -2353,6 +2536,315 @@ function RetailOrdersPanel() {
                 <div className="border-t border-line pt-3">
                     <div className="bg-white border border-line rounded p-3 sm:p-4">
                       <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Shipment</p>
+                      <div className="mb-3 pb-3 border-b border-line space-y-2">
+                        <div className="flex items-center gap-1.5">
+                          <Truck size={13} strokeWidth={1.8} className="text-grey" />
+                          <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Delhivery</span>
+                        </div>
+                        {hasLiveShipment(o) && o.shiprocket_order_id !== 'creating' ? (
+                          <>
+                            <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide-2 text-green-700">
+                              <Check size={13} strokeWidth={2.5} />
+                              Shipment created {['auto', 'webhook', 'fastrr', 'cashfree'].includes(o.ship_source ?? '') ? 'automatically' : 'manually'}
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wide-2 text-grey">Courier</p>
+                                <p className="text-bone font-medium mt-0.5">{o.courier_name || '…'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wide-2 text-grey">AWB / Tracking</p>
+                                <p className="text-bone font-medium mt-0.5 tabular-nums">{o.awb_number || o.tracking_id || '…'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wide-2 text-grey">Latest status</p>
+                                <p className="text-bone font-medium mt-0.5 capitalize">
+                                  {o.tracking_current_status || o.shiprocket_current_status || '—'}
+                                  {o.tracking_location || o.shiprocket_location ? ` · ${o.tracking_location || o.shiprocket_location}` : ''}
+                                  {(() => {
+                                    const ts = o.last_tracking_sync_at ?? o.shiprocket_updated_at;
+                                    return ts ? ` · ${formatOrderDate(ts)}` : '';
+                                  })()}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap pt-0.5">
+                              {o.label_url && (
+                                <a
+                                  href={o.label_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-2 border border-bone/40 text-bone bg-white hover:bg-bone/5 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded transition-colors"
+                                >
+                                  <Printer size={14} strokeWidth={2} /> Print Label
+                                </a>
+                              )}
+                              <a
+                                href={linkHref(`/admin/print-delivery/${o.id}`)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 border border-bone/40 text-bone bg-white hover:bg-bone/5 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded transition-colors"
+                              >
+                                <Printer size={14} strokeWidth={2} /> Print Delivery Details
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => copyAddress(o)}
+                                className="inline-flex items-center gap-2 border border-bone/40 text-bone bg-white hover:bg-bone/5 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded transition-colors"
+                              >
+                                <Copy size={14} strokeWidth={2} /> Copy Address
+                              </button>
+                            </div>
+                          </>
+                        ) : o.shiprocket_order_id === 'creating' ? (
+                          <p className="text-xs text-grey flex items-center gap-1.5">
+                            <Loader2 size={13} strokeWidth={2} className="animate-spin" /> Creating the shipment on Delhivery…
+                          </p>
+                        ) : o.ship_attempt_error ? (
+                          confirmShipId === o.id ? (
+                            <div className="space-y-2">
+                              <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide-2 text-crimson">
+                                <X size={13} strokeWidth={2.5} /> Shipment failed — needs manual action
+                              </p>
+                              <p className="text-xs text-crimson bg-crimson/5 border border-crimson/20 px-3 py-2 rounded">
+                                {o.ship_attempt_error}
+                              </p>
+                              {o.last_ship_attempt_at && (
+                                <p className="text-[10px] text-grey">Last attempt: {formatOrderDate(o.last_ship_attempt_at)}</p>
+                              )}
+                              <p className="text-xs text-crimson bg-crimson/5 border border-crimson/20 px-3 py-2 rounded">
+                                Retrying fails closed — a shipment is only created when Delhivery is configured and this order is eligible.
+                              </p>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={() => shipOrder(o)}
+                                  disabled={shippingOrderId === o.id}
+                                  className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-ink transition-colors disabled:opacity-50"
+                                >
+                                  {shippingOrderId === o.id ? (
+                                    <Loader2 size={14} strokeWidth={2.5} className="animate-spin" />
+                                  ) : (
+                                    <Truck size={14} strokeWidth={2} />
+                                  )}
+                                  {shippingOrderId === o.id ? 'Shipping…' : 'Confirm — retry shipment'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmShipId(null)}
+                                  disabled={shippingOrderId === o.id}
+                                  className="text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone border border-line rounded px-4 py-2.5 transition-colors disabled:opacity-50"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide-2 text-crimson">
+                                <X size={13} strokeWidth={2.5} /> Shipment failed — needs manual action
+                              </p>
+                              <p className="text-xs text-crimson bg-crimson/5 border border-crimson/20 px-3 py-2 rounded">
+                                {o.ship_attempt_error}
+                              </p>
+                              {o.last_ship_attempt_at && (
+                                <p className="text-[10px] text-grey">Last attempt: {formatOrderDate(o.last_ship_attempt_at)}</p>
+                              )}
+                              <div className="flex items-center justify-between gap-3 flex-wrap">
+                                <p className="text-xs text-grey">Fix the reason, then retry the shipment. This order was flagged for manual action and will NOT be auto-retried.</p>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmShipId(o.id)}
+                                  disabled={shippingOrderId === o.id}
+                                  className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-ink transition-colors disabled:opacity-50"
+                                >
+                                  <Truck size={14} strokeWidth={2} /> Retry Shipment
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        ) : canShip(o) ? (
+                          <div className="space-y-2">
+                            {autoInfo && (
+                              <>
+                                <div className="flex items-center gap-1.5">
+                                  <Clock size={13} strokeWidth={1.8} className="text-grey" />
+                                  <span className="text-[11px] font-semibold uppercase tracking-wide-2 text-bone">
+                                    Auto-ship {autoInfo.overdue ? 'ready / pending' : 'scheduled'}
+                                    {!autoInfo.overdue && ` · ${formatOrderDate(autoInfo.dueAt)}`}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-grey">
+                                  {autoInfo.overdue
+                                    ? 'The due time has passed but the auto-ship sweep has not run yet — this order will be shipped on the next scheduled run, or ship it manually now.'
+                                    : `This order will be handed to Delhivery automatically in ~${autoInfo.minsLeft} min. Cancel it (or fix the address) before then to stop the parcel.`}
+                                </p>
+                                {confirmCancelShipId === o.id ? (
+                                  <div className="flex items-center gap-2 flex-wrap text-xs bg-crimson/5 border border-crimson/20 rounded px-3 py-2">
+                                    <span className="text-crimson">Cancel this order? It will NOT be auto-shipped. Stock stays reserved and any refund is handled manually.</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => cancelBeforeShip(o)}
+                                      disabled={cancellingShip || shippingOrderId === o.id}
+                                      className="inline-flex items-center gap-1.5 bg-crimson text-white text-[11px] uppercase tracking-wide-2 font-semibold px-3 py-1.5 rounded hover:bg-bone transition-colors disabled:opacity-50"
+                                    >
+                                      {cancellingShip ? (
+                                        <Loader2 size={13} strokeWidth={2.5} className="animate-spin" />
+                                      ) : (
+                                        <X size={13} strokeWidth={2.5} />
+                                      )}
+                                      {cancellingShip ? 'Cancelling…' : 'Confirm cancel'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmCancelShipId(null)}
+                                      disabled={cancellingShip || shippingOrderId === o.id}
+                                      className="text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone disabled:opacity-50"
+                                    >
+                                      Keep order
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmCancelShipId(o.id)}
+                                      disabled={cancellingShip || shippingOrderId === o.id}
+                                      className="inline-flex items-center gap-2 border border-crimson/50 text-crimson bg-white hover:bg-crimson/5 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded transition-colors disabled:opacity-50"
+                                    >
+                                      <X size={14} strokeWidth={2} /> Cancel before ship
+                                    </button>
+                                    {editingAddressId === o.id && addressDraft ? (
+                                      <div className="w-full space-y-2 border border-line rounded p-3 bg-white">
+                                        <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Edit delivery address (before auto-ship)</p>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                          <input
+                                            value={addressDraft.name}
+                                            onChange={(e) => setAddressDraft({ ...addressDraft, name: e.target.value })}
+                                            placeholder="Name"
+                                            className={inputCls}
+                                          />
+                                          <input
+                                            value={addressDraft.phone}
+                                            onChange={(e) => setAddressDraft({ ...addressDraft, phone: e.target.value })}
+                                            placeholder="Phone"
+                                            className={inputCls}
+                                          />
+                                          <input
+                                            value={addressDraft.address}
+                                            onChange={(e) => setAddressDraft({ ...addressDraft, address: e.target.value })}
+                                            placeholder="Street address"
+                                            className={inputCls}
+                                          />
+                                          <input
+                                            value={addressDraft.city}
+                                            onChange={(e) => setAddressDraft({ ...addressDraft, city: e.target.value })}
+                                            placeholder="City"
+                                            className={inputCls}
+                                          />
+                                          <input
+                                            value={addressDraft.state}
+                                            onChange={(e) => setAddressDraft({ ...addressDraft, state: e.target.value })}
+                                            placeholder="State"
+                                            className={inputCls}
+                                          />
+                                          <input
+                                            value={addressDraft.pincode}
+                                            onChange={(e) => setAddressDraft({ ...addressDraft, pincode: e.target.value })}
+                                            placeholder="Pincode"
+                                            className={inputCls}
+                                          />
+                                        </div>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <button
+                                            type="button"
+                                            onClick={() => saveAddress(o)}
+                                            disabled={savingAddress || shippingOrderId === o.id}
+                                            className="inline-flex items-center gap-1.5 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-ink transition-colors disabled:opacity-50"
+                                          >
+                                            {savingAddress ? (
+                                              <Loader2 size={13} strokeWidth={2.5} className="animate-spin" />
+                                            ) : (
+                                              <Save size={13} strokeWidth={2} />
+                                            )}
+                                            {savingAddress ? 'Saving…' : 'Save address'}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => { setEditingAddressId(null); setAddressDraft(null); }}
+                                            disabled={savingAddress || shippingOrderId === o.id}
+                                            className="text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone disabled:opacity-50"
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => startEditAddress(o)}
+                                        disabled={shippingOrderId === o.id}
+                                        className="inline-flex items-center gap-2 border border-line text-bone-dim hover:text-bone bg-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded transition-colors disabled:opacity-50"
+                                      >
+                                        <Pencil size={14} strokeWidth={2} /> Edit address
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </>
+                            )}
+                            {confirmShipId === o.id ? (
+                              <div className="space-y-2">
+                                <p className="text-xs text-crimson bg-crimson/5 border border-crimson/20 px-3 py-2 rounded">
+                                  This fails closed — a shipment is only created when Delhivery is configured and this order is eligible.
+                                </p>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => shipOrder(o)}
+                                    disabled={shippingOrderId === o.id}
+                                    className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-ink transition-colors disabled:opacity-50"
+                                  >
+                                    {shippingOrderId === o.id ? (
+                                      <Loader2 size={14} strokeWidth={2.5} className="animate-spin" />
+                                    ) : (
+                                      <Truck size={14} strokeWidth={2} />
+                                    )}
+                                    {shippingOrderId === o.id ? 'Shipping…' : 'Confirm — ship order'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmShipId(null)}
+                                    disabled={shippingOrderId === o.id}
+                                    className="text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone border border-line rounded px-4 py-2.5 transition-colors disabled:opacity-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between gap-3 flex-wrap">
+                                <p className="text-xs text-grey">
+                                  {autoInfo
+                                    ? 'Fallback — ship this order manually right now, bypassing the grace window.'
+                                    : 'Create the shipment on Delhivery and assign a courier.'}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmShipId(o.id)}
+                                  disabled={shippingOrderId === o.id}
+                                  className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-ink transition-colors disabled:opacity-50"
+                                >
+                                  <Truck size={14} strokeWidth={2} /> Ship Order
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-grey">Not shippable — this order is not paid or not in a shippable state.</p>
+                        )}
+                        {shipErrors[o.id] && <p className="text-xs text-crimson">{shipErrors[o.id]}</p>}
+                      </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <label className="block">
                           <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Tracking ID</span>

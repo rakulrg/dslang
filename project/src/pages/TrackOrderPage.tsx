@@ -32,21 +32,36 @@ interface TrackedOrder {
   discount: number;
   shipping: number;
   total_amount: number;
+  is_cod?: boolean;
+  payment_discount?: number;
+  amount_paid_upfront?: number;
+  amount_due_on_delivery?: number;
   tracking_id?: string | null;
   tracking_url?: string | null;
+  courier_name?: string | null;
+  awb_number?: string | null;
+  shipping_provider?: string | null;
+  tracking_current_status?: string | null;
+  tracking_location?: string | null;
+  last_tracking_sync_at?: string | null;
+  shiprocket_current_status?: string | null;
+  shiprocket_location?: string | null;
+  shiprocket_updated_at?: string | null;
   items: TrackItem[];
 }
 
-const STATUS_ORDER = ['pending', 'processing', 'shipped', 'delivered'] as const;
+const STATUS_ORDER = ['confirmed', 'processing', 'packed', 'shipped', 'out_for_delivery', 'delivered'] as const;
 
 const STATUS_META: Record<string, { label: string; icon: typeof Clock }> = {
-  pending: { label: 'Order Placed', icon: Clock },
+  confirmed: { label: 'Order Confirmed', icon: Check },
   processing: { label: 'Processing', icon: Package },
+  packed: { label: 'Packed', icon: Package },
   shipped: { label: 'Shipped', icon: Truck },
+  out_for_delivery: { label: 'Out for Delivery', icon: Truck },
   delivered: { label: 'Delivered', icon: Check },
 };
 
-const TERMINAL_STATUSES = ['cancelled', 'refunded'];
+const TERMINAL_STATUSES = ['cancelled', 'refunded', 'rto'];
 
 export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
   const { navigate } = useRouter();
@@ -81,8 +96,25 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
 
   const current = useMemo(() => {
     if (!order) return -1;
-    const idx = STATUS_ORDER.indexOf(order.order_status as (typeof STATUS_ORDER)[number]);
-    return idx === -1 ? -1 : idx;
+    // Nothing is "confirmed" until the payment/advance is verified.
+    if (order.payment_status !== 'success') return -1;
+    const raw = (order.tracking_current_status ?? order.shiprocket_current_status ?? '').toUpperCase();
+    if (order.order_status === 'delivered') return 5;
+    if (raw.includes('DELIVERED')) return 5;
+    if (
+      raw.includes('OUT FOR DELIVERY') ||
+      raw.includes('OUT_FOR_DELIVERY') ||
+      raw.includes('ON THE WAY') ||
+      raw.includes('OUTFOR')
+    ) {
+      return 4;
+    }
+    if (order.order_status === 'shipped' && raw) return 3; // picked up / in transit
+    if (order.order_status === 'shipped') return 2; // packed, awaiting courier pickup
+    if (order.order_status === 'processing') return 1;
+    if (order.order_status === 'cod_partial_paid') return 0;
+    if (order.order_status === 'pending') return 0; // paid but not yet processed
+    return -1;
   }, [order]);
 
   const isTerminal = !!order && TERMINAL_STATUSES.includes(order.order_status);
@@ -94,10 +126,16 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
     }
     if (order.order_status === 'cancelled') return 'This order has been cancelled.';
     if (order.order_status === 'refunded') return 'This order has been refunded.';
+    if (order.order_status === 'rto') {
+      return 'Your parcel could not be delivered and is being returned to us. We will contact you about the resolution.';
+    }
     if (order.order_status === 'pending') {
       return order.payment_status === 'success'
         ? 'Your order is confirmed. We are reviewing it and will confirm dispatch.'
         : 'Your order is placed but payment is still being verified. It is not confirmed yet.';
+    }
+    if (order.order_status === 'cod_partial_paid') {
+      return 'Your order is confirmed — the advance is received and the remaining amount will be collected from you at delivery.';
     }
     if (order.order_status === 'processing') return 'Your order is being prepared for dispatch.';
     if (order.order_status === 'shipped') return 'Your order is on its way. You can track delivery details below.';
@@ -184,7 +222,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
         <button
           type="submit"
           disabled={loading}
-          className="btn-soft btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-[13px] disabled:opacity-60"
+          className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-[13px] disabled:opacity-60"
         >
           {loading ? <Loader2 size={15} strokeWidth={2} className="animate-spin" /> : <Search size={15} strokeWidth={2} />}
           <span>{loading ? 'Checking…' : 'Track'}</span>
@@ -192,7 +230,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
       </form>
 
       {error && !loading && (
-        <div className="mt-5 border border-crimson/20 bg-crimson/5 px-4 py-3 text-sm text-crimson">{error}</div>
+        <div className="mt-5 rounded-soft border border-line bg-paper-2 px-4 py-3 text-sm text-bone-dim">{error}</div>
       )}
 
       {!order && didLookup && !error && !loading && (
@@ -200,7 +238,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
       )}
 
       {order && (
-        <div className="mt-8 border border-line bg-paper-3 p-5 md:p-7">
+        <div className="mt-8 panel p-5 md:p-7">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
             <div>
               <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey">Order</p>
@@ -214,12 +252,12 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
           </div>
 
           {order.payment_status === 'failed' ? (
-            <div className="mt-5 flex gap-3 border border-crimson/20 bg-crimson/5 px-4 py-3 text-sm text-crimson">
+            <div className="mt-5 flex gap-3 rounded-soft border border-line bg-paper-2 px-4 py-3 text-sm text-bone-dim">
               <XCircle size={18} strokeWidth={1.8} className="shrink-0" /> {statusNote}
             </div>
           ) : isTerminal ? (
             <div className="mt-5 flex gap-3 border border-line bg-paper px-4 py-3 text-sm text-grey">
-              <RotateCcw size={18} strokeWidth={1.8} className="shrink-0 text-crimson" /> {statusNote}
+              <RotateCcw size={18} strokeWidth={1.8} className="shrink-0 text-bone-dim" /> {statusNote}
             </div>
           ) : (
             <div className="mt-6">
@@ -227,7 +265,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
                 {STATUS_ORDER.map((s, i) => {
                   const meta = STATUS_META[s];
                   const Icon = meta.icon;
-                  const reached = i <= current || i === 0;
+                  const reached = i <= current;
                   return (
                     <div key={s} className="flex items-center gap-2">
                       <div
@@ -248,26 +286,59 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
               <p className="mt-1 text-xs text-grey flex items-center gap-1.5">
                 <ShieldCheck size={13} strokeWidth={1.8} />
                 Payment {order.payment_status === 'success' ? 'confirmed' : order.payment_status}.
+                {order.is_cod && order.payment_status === 'success' && (
+                  <span className="font-medium text-bone">
+                    (COD — {formatPrice(order.amount_paid_upfront ?? 0)} paid now · {formatPrice(order.amount_due_on_delivery ?? 0)} on delivery)
+                  </span>
+                )}
               </p>
+              {order.is_cod && order.payment_status === 'success' && (
+                <p className="mt-0.5 text-xs text-grey">
+                  Keep {formatPrice(order.amount_due_on_delivery ?? 0)} ready for your delivery partner. If the parcel is returned or refused, the advance is kept as the restocking fee.
+                </p>
+              )}
             </div>
           )}
 
-          {(order.order_status === 'shipped' || order.order_status === 'delivered') &&
-            (order.tracking_id || order.tracking_url) && (
+          {(order.order_status === 'shipped' || order.order_status === 'delivered' || order.order_status === 'rto') &&
+            (order.tracking_id || order.tracking_url || order.awb_number || order.courier_name) && (
               <div className="mt-6 border border-line bg-paper px-4 py-3">
                 <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-2 flex items-center gap-1.5">
                   <Truck size={13} strokeWidth={1.8} /> Shipment Tracking
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                  {order.tracking_id && (
+                  {order.courier_name && (
                     <div>
-                      <p className="text-[10px] uppercase tracking-wide-2 text-grey">Tracking Number</p>
-                      <p className="text-bone font-medium mt-0.5">{order.tracking_id}</p>
+                      <p className="text-[10px] uppercase tracking-wide-2 text-grey">Courier</p>
+                      <p className="text-bone font-medium mt-0.5">{order.courier_name}</p>
+                    </div>
+                  )}
+                  {(order.awb_number || order.tracking_id) && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide-2 text-grey">AWB / Tracking Number</p>
+                      <p className="text-bone font-medium mt-0.5 tabular-nums">{order.awb_number || order.tracking_id}</p>
+                    </div>
+                  )}
+                  {(order.tracking_current_status || order.shiprocket_current_status) && (
+                    <div className="sm:col-span-2">
+                      <p className="text-[10px] uppercase tracking-wide-2 text-grey">Live Status</p>
+                      <p className="text-bone font-medium mt-0.5 capitalize">
+                        {order.tracking_current_status ?? order.shiprocket_current_status}
+                        {order.tracking_location
+                          ? ` · ${order.tracking_location}`
+                          : order.shiprocket_location
+                            ? ` · ${order.shiprocket_location}`
+                            : ''}
+                        {order.last_tracking_sync_at
+                          ? ` · ${fmtDate(order.last_tracking_sync_at)}`
+                          : order.shiprocket_updated_at
+                            ? ` · ${fmtDate(order.shiprocket_updated_at)}`
+                            : ''}
+                      </p>
                     </div>
                   )}
                   {order.tracking_url && (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wide-2 text-grey">Track Shipment</p>
+                    <div className="sm:col-span-2">
                       <a
                         href={order.tracking_url}
                         target="_blank"
@@ -303,6 +374,19 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
                   <div className="flex justify-between"><span>Discount</span><span className="text-green-700">−{formatPrice(order.discount)}</span></div>
                 )}
                 <div className="flex justify-between"><span>Shipping</span><span className="text-bone">{order.shipping > 0 ? formatPrice(order.shipping) : 'FREE'}</span></div>
+                {order.is_cod && order.payment_status === 'success' && (
+                  <>
+                    <div className="flex justify-between"><span>COD Advance</span><span className="text-green-700">{formatPrice(order.amount_paid_upfront ?? 0)}</span></div>
+                    <div className="flex justify-between"><span>Pay at Delivery</span><span className="text-bone">{formatPrice(order.amount_due_on_delivery ?? 0)}</span></div>
+                  </>
+                )}
+                {!order.is_cod && (order.payment_discount ?? 0) > 0 && (
+                  <div className="flex justify-between"><span>Online Payment Discount</span><span className="text-green-700">−{formatPrice(order.payment_discount ?? 0)}</span></div>
+                )}
+                <div className="flex justify-between border-t border-line pt-1.5 font-semibold text-bone">
+                  <span>{order.is_cod ? 'Total Order Value' : (order.payment_discount ?? 0) > 0 ? 'Online Payment Total' : 'Total'}</span>
+                  <span>{formatPrice(order.is_cod || !(order.payment_discount ?? 0) ? order.total_amount : (order.total_amount - (order.payment_discount ?? 0)))}</span>
+                </div>
               </div>
             </div>
           )}

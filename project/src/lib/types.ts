@@ -53,6 +53,7 @@ export interface RetailOrder {
     city: string;
     state: string;
     pincode: string;
+    country?: string;
   };
   items: RetailOrderItem[];
   total_qty: number;
@@ -62,6 +63,16 @@ export interface RetailOrder {
   total_amount: number;
   payment_status: string;
   order_status: string;
+  // Cash on Delivery + online-payment discount (added via migration; optional
+  // so old rows still load). Canonical pricing (server-authoritative):
+  //   online: amount_paid_upfront = total_amount - payment_discount (fixed ₹50)
+  //   COD:    amount_paid_upfront = min(100, total_amount) — fixed ₹100 advance
+  //           (capped at the order value),
+  //           amount_due_on_delivery = balance
+  is_cod?: boolean;
+  payment_discount?: number;
+  amount_paid_upfront?: number;
+  amount_due_on_delivery?: number;
   promo_code: string | null;
   currency?: string;
   payment_provider?: string;
@@ -70,8 +81,32 @@ export interface RetailOrder {
   paid_at?: string | null;
   tracking_id?: string | null;
   tracking_url?: string | null;
+  // Delhivery / provider-neutral shipping (added via cutover migration)
+  shipping_provider?: string | null;
+  tracking_current_status?: string | null;
+  tracking_location?: string | null;
+  tracking_scans?: unknown;
+  last_tracking_sync_at?: string | null;
+  // Shiprocket shipping (legacy, read-only; optional so old rows still load)
+  shiprocket_order_id?: string | null;
+  awb_number?: string | null;
+  courier_name?: string | null;
+  label_url?: string | null;
+  shipped_at?: string | null;
+  shiprocket_current_status?: string | null;
+  shiprocket_location?: string | null;
+  shiprocket_scans?: unknown;
+  shiprocket_updated_at?: string | null;
   shipping_sms_sent_at?: string | null;
   sms_sent_at?: string | null;
+  // fastrr (Shiprocket Checkout) — added via migration; optional for old rows
+  fastrr_order_id?: string | null;
+  fastrr_payment_ref?: string | null;
+  fastrr_payment_status?: string | null;
+  ship_attempt_error?: string | null;
+  last_ship_attempt_at?: string | null;
+  ship_source?: 'fastrr' | 'cashfree' | 'admin' | 'auto' | 'webhook' | null;
+  auto_ship_at?: string | null;
   referral: string | null;
   created_at: string;
   updated_at?: string;
