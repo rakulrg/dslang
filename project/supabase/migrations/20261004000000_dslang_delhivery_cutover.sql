@@ -42,7 +42,7 @@ comment on column public.retail_orders.shipping_provider is
   '(the only value auto/production path can write) or NULL for legacy/manual '
   'orders that predate the field. Historical orders created via Shiprocket keep '
   'their shiprocket_* columns as a read-only fallback; the app reads neutral '
-  'columns (awb_number/tracking_id/tracking_url/courier_name/label_url/' +
+  'columns (awb_number/tracking_id/tracking_url/courier_name/label_url/'
   'shipped_at) and only falls back to shiprocket_* when shipping_provider is '
   'NULL or legacy. Never stores secrets.';
 
@@ -65,7 +65,7 @@ drop index if exists public.idx_retail_orders_fastrr_order_id;
 -- -----------------------------------------------------------------------------
 comment on column public.retail_orders.shiprocket_order_id is
   'LEGACY (read-only): Shiprocket order id for historical orders created before '
-  'the Delhivery cutover. NULL for everything going forward. See retail_orders.' +
+  'the Delhivery cutover. NULL for everything going forward. See retail_orders.'
   'shipping_provider / awb_number / tracking_* for the neutral fields the app '
   'now reads.';
 
