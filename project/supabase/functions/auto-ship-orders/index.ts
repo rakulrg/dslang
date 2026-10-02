@@ -1,4 +1,4 @@
-// auto-ship-orders — scheduled sweep that creates Shiprocket shipments after a
+// auto-ship-orders — scheduled sweep that creates Delhivery shipments after a
 // cancel-before-ship grace window.
 //
 // WHY (see 20261003000000_dslang_auto_ship_grace.sql): the cashfree-webhook no
@@ -132,6 +132,9 @@ Deno.serve(async (req) => {
       .eq('payment_status', 'success')
       .in('order_status', Array.from(SHIPPABLE_STATUSES))
       .is('shiprocket_order_id', null)
+      // Never auto-ship an order a human already shipped by hand. An admin-entered
+      // AWB is final: this sweep must not create a second, competing waybill.
+      .is('awb_number', null)
       .is('ship_attempt_error', null)
       .order('auto_ship_at', { ascending: true })
       .limit(limit);
@@ -160,7 +163,7 @@ Deno.serve(async (req) => {
           shiprocket_order_id: null,
           ship_attempt_error:
             'The previous shipment attempt was interrupted mid-creation (stale "creating" claim). ' +
-            'Check Shiprocket for a stray order before retrying — do not double-ship.',
+            'Check the Delhivery dashboard for a stray order before retrying — do not double-ship.',
         })
         .eq('id', stub.id)
         .eq('shiprocket_order_id', CREATING_SENTINEL);

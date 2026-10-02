@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { Minus, Plus, ShoppingBag, CheckCircle2, Zap, Share2, Check, Link as LinkIcon, X, ChevronDown } from 'lucide-react';
 import { ProductCard, PRODUCT_IMAGE_FALLBACK } from '@/components/ProductCard';
+import { Reveal } from '@/components/Reveal';
 import {
   fetchProducts,
   fetchProduct,
@@ -14,7 +15,7 @@ import {
 import { notFound } from '@/lib/notFound';
 import { useD2cCart } from '@/lib/d2cCart';
 import { useCartDrawer } from '@/lib/cartDrawer';
-import { linkHref, useRouter } from '@/lib/router';
+import { linkHref, useRouter, readHashQuery, replaceHashQuery, currentPath } from '@/lib/router';
 import { SkeletonProductPage } from '@/components/Skeletons';
 import { SwipeGallery, DesktopGallery, LightboxViewer } from '@/components/ProductGallery';
 
@@ -22,12 +23,24 @@ import { SwipeGallery, DesktopGallery, LightboxViewer } from '@/components/Produ
  * Retail (D2C) product page.
  * Stock is per color/size (product_sizes variant rows); quantity is capped at
  * the selected variant's stock.
+ *
+ * DEEP LINKS: the chosen colour + size live in the URL query
+ * (`/product/<slug>?color=<colour name>&size=<label>`) so a reload, a shared
+ * link and Back/Forward all restore the exact variant. Colours are addressed by
+ * their human-readable NAME, never by the internal product_colors.id, so the
+ * public URL leaks no database identifiers. An unknown colour or a size that
+ * does not exist for that colour falls back to the normal auto-selected
+ * default rather than rendering an empty or invalid selection.
  */
 
+/** URL query keys for the variant. */
+const COLOR_PARAM = 'color';
+const SIZE_PARAM = 'size';
+
 /** Pick the sensible default colour + size on page load: the first colour that
- * has at least one size in stock, and within it the first in-stock size. If
- * every variant is sold out, fall back to the first colour/size as before —
- * the CTAs already render OUT OF STOCK from the stock counts. */
+ *  has at least one size in stock, and within it the first in-stock size. If
+ *  every variant is sold out, fall back to the first colour/size as before —
+ *  the CTAs already render OUT OF STOCK from the stock counts. */
 function firstAvailableVariant(
   product: CatalogProduct
 ): { colorIdx: number; size: string } {
@@ -43,6 +56,57 @@ function firstAvailableVariant(
     if (sizes.length > 0) return { colorIdx: i, size: sizes[0].size_label };
   }
   return { colorIdx: 0, size: '' };
+}
+
+/** First in-stock size within a colour, else that colour's first listed size. */
+function defaultSizeForColor(product: CatalogProduct, colorId: string): string {
+  const sizes = getSizesForColor(product, colorId);
+  const inStock = sizes.find((s) => Number(s.stock ?? 0) >= 1) ?? sizes[0];
+  return inStock ? inStock.size_label : '';
+}
+
+/**
+ * Resolve the initial colour/size from the URL, falling back at each step:
+ *   colour  -> URL name (case/space-insensitive) or the auto default
+ *   size    -> URL label valid for that colour, else that colour's default
+ * Returns the resolved selection plus whether the URL had to be corrected, so
+ * the caller can normalize a partial/garbage link exactly once.
+ */
+function resolveVariantFromUrl(product: CatalogProduct): {
+  colorIdx: number;
+  size: string;
+  corrected: boolean;
+} {
+  const fallback = firstAvailableVariant(product);
+  const qs = readHashQuery();
+  const wantColor = (qs.get(COLOR_PARAM) ?? '').trim();
+  const wantSize = (qs.get(SIZE_PARAM) ?? '').trim();
+
+  if (!wantColor && !wantSize) return { ...fallback, corrected: false };
+
+  const colorIdx = wantColor
+    ? product.colors.findIndex((c) => c.name.trim().toLowerCase() === wantColor.toLowerCase())
+    : -1;
+  if (colorIdx === -1) {
+    // Unknown colour (or a size with no colour) — full fallback, and drop the
+    // bogus keys so the address bar stops advertising a dead variant.
+    return { ...fallback, corrected: true };
+  }
+
+  const sizes = getSizesForColor(product, product.colors[colorIdx].id);
+  const size = sizes.find((s) => s.size_label.trim().toLowerCase() === wantSize.toLowerCase());
+  if (size) {
+    return { colorIdx, size: size.size_label, corrected: false };
+  }
+  return { colorIdx, size: defaultSizeForColor(product, product.colors[colorIdx].id), corrected: true };
+}
+
+/** Mirror the current selection into the URL (no navigation, no re-render). */
+function syncVariantToUrl(colorName: string, sizeLabel: string): void {
+  replaceHashQuery({
+    [COLOR_PARAM]: colorName.trim() || null,
+    [SIZE_PARAM]: sizeLabel.trim() || null,
+  });
 }
 
 export function RetailProductPage({ slug }: { slug: string }) {
@@ -84,9 +148,15 @@ export function RetailProductPage({ slug }: { slug: string }) {
         if (cancelled) return;
         setProduct(p);
         if (p) {
-          const def = firstAvailableVariant(p);
-          setColorIdx(def.colorIdx);
-          setSize(def.size);
+          // Deep link wins when it resolves to a real variant; otherwise the
+          // normal auto-selected default. An unusable link is normalized once.
+          const resolved = resolveVariantFromUrl(p);
+          setColorIdx(resolved.colorIdx);
+          setSize(resolved.size);
+          const chosen = p.colors[resolved.colorIdx];
+          if (resolved.corrected || chosen) {
+            syncVariantToUrl(chosen?.name ?? '', resolved.size);
+          }
           setRelated(catalog.filter((x) => x.slug !== p.slug && isRetailVisible(x)).slice(0, 4));
         }
       } catch {
@@ -97,6 +167,30 @@ export function RetailProductPage({ slug }: { slug: string }) {
     };
     load();
     return () => { cancelled = true; };
+  }, [slug]);
+
+  // A hash edit that keeps the SAME product path (pasting a shared link into
+  // the address bar, or Back/Forward between two variants) does not remount this
+  // page, so the selection has to be re-resolved here. `replaceState` never
+  // fires `hashchange`, so our own URL writes cannot loop back through this.
+  const productRef = useRef<CatalogProduct | null | undefined>(undefined);
+  useEffect(() => { productRef.current = product; }, [product]);
+  useEffect(() => {
+    const onHashChange = () => {
+      const p = productRef.current;
+      if (!p) return;
+      // Navigated to a different page: this component is on its way out, and
+      // rewriting the query would corrupt the URL the visitor just requested.
+      if (currentPath() !== `/product/${slug}`) return;
+      const resolved = resolveVariantFromUrl(p);
+      setColorIdx(resolved.colorIdx);
+      setSize(resolved.size);
+      if (resolved.corrected) {
+        syncVariantToUrl(p.colors[resolved.colorIdx]?.name ?? '', resolved.size);
+      }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
   }, [slug]);
 
   const openImageViewer = useCallback(() => setIsImageViewerOpen(true), []);
@@ -140,7 +234,7 @@ export function RetailProductPage({ slug }: { slug: string }) {
   }
   if (product === undefined) {
     return (
-      <div className="mx-auto max-w-[1500px] px-6 md:px-12 lg:px-16 xl:px-20 pt-0 pb-5 md:pt-0 md:pb-16">
+      <div className="shell pt-0 pb-5 md:pt-0 md:pb-16">
         <SkeletonProductPage />
       </div>
     );
@@ -173,6 +267,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
   const selectSize = (label: string) => {
     setSize(label);
     setQty(1);
+    syncVariantToUrl(color.name, label);
   };
 
   const selectColor = (i: number) => {
@@ -180,8 +275,10 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
     setImgIdx(0);
     const sizes = getSizesForColor(product, product.colors[i].id);
     const first = sizes.find((s) => Number(s.stock ?? 0) >= 1) ?? sizes[0];
-    setSize(first ? first.size_label : '');
+    const nextSize = first ? first.size_label : '';
+    setSize(nextSize);
     setQty(1);
+    syncVariantToUrl(product.colors[i].name, nextSize);
   };
 
   const performAdd = (): boolean => {
@@ -215,8 +312,13 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
     if (performAdd()) navigate('/checkout');
   };
 
+  // The share link carries the CURRENT variant, so what a customer sends is
+  // exactly what they are looking at. Built from state (not from location.hash)
+  // so it is correct on the very first paint too. Colour is the display name,
+  // so no internal id is exposed.
+  const variantQuery = `?${COLOR_PARAM}=${encodeURIComponent(color.name)}&${SIZE_PARAM}=${encodeURIComponent(size)}`;
   const productShareUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}${linkHref(`/product/${product.slug}`)}`
+    ? `${window.location.origin}${linkHref(`/product/${product.slug}`)}${variantQuery}`
     : '';
 
   const openShare = () => {
@@ -240,7 +342,21 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
 
   return (
     <div className="animate-fade-in">
-      <div className="mx-auto max-w-[1500px] px-6 md:px-12 lg:px-16 xl:px-20 pt-0 pb-5 md:pt-0 md:pb-16">
+      {/* Bottom padding is the page's own, and is the SAME at every width.
+          There is no fixed purchase bar any more, so nothing needs to be
+          reserved for one — the old 96px mobile bump existed only to stop that
+          bar covering the last rows and the "You Might Also Like" grid, and
+          leaving it behind would have been a permanent empty strip under the
+          footer of every phone.
+
+          It is dropped when the "You Might Also Like" section renders. That
+          section carries its own py-12 md:py-16, so pb-16 here was padding the
+          same seam twice — measured, the accordion-to-heading gap was 113px on
+          a phone (64 + 48 + 1px rule) and 129px on desktop (64 + 64 + 1px).
+          With it removed the section follows the accordions directly and keeps
+          only its own 48px / 64px gap. With no Related section, pb-16 is still
+          this page's bottom padding before the footer. */}
+      <div className={related.length > 0 ? 'shell pt-0' : 'shell pt-0 pb-16 md:pt-0'}>
         <div className="grid grid-cols-1 lg:grid-cols-[1.65fr_1fr] gap-3 md:gap-8 lg:gap-10">
           {/* GALLERY — an image-less product still renders: the DSLANG fallback is
               shown in place of the swiper and the lightbox stays closed. */}
@@ -342,13 +458,13 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
                 };
 
                 return (
-                  <div className="mt-3 w-full border border-line bg-paper-3 p-3 sm:p-4 space-y-2">
+                  <div className="mt-3 w-full rounded-card border border-bone/20 bg-white p-3 sm:p-4 space-y-2">
                     <div className="flex items-center gap-2">
                       <input
                         readOnly
                         value={shareUrl}
                         onFocus={(e) => e.currentTarget.select()}
-                        className="flex-1 min-w-0 border border-line bg-white px-3 py-2 text-xs text-bone focus:border-bone focus:outline-none"
+                        className="flex-1 min-w-0 border border-line bg-white px-3 py-2 text-xs text-bone focus:border-bone focus:outline-none transition-colors"
                       />
                       <button
                         onClick={handleCopyLink}
@@ -412,7 +528,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
                 })}
               </div>
               {sizeOptions.length > 0 && !colorInStock && (
-                <p className="text-xs text-grey mt-2">All sizes in this colour are unavailable right now.</p>
+                <p className="text-xs text-bone-soft mt-2">All sizes in this colour are unavailable right now.</p>
               )}
               {sizeOptions.length === 0 && (
                 <p className="text-xs text-grey mt-2">Sizes for this colour are unavailable right now.</p>
@@ -479,7 +595,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
               <button
                 onClick={handleAddToCart}
                 aria-disabled={!stockAvailable}
-                className="w-full btn-dark text-xs lg:text-[11px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 active:scale-[0.98]"
+                className="btn-soft w-full border border-bone bg-white text-bone text-xs lg:text-[11px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 hover:bg-bone hover:text-paper"
               >
                 {stockAvailable && addedFeedback ? <CheckCircle2 size={15} strokeWidth={1.8} /> : <ShoppingBag size={15} strokeWidth={1.8} />}
                 {stockAvailable ? (addedFeedback ? 'Added to Bag' : 'Add to Bag') : 'OUT OF STOCK'}
@@ -554,6 +670,15 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
         />
       )}
 
+      {/* NO sticky/fixed purchase bar.
+          Removed deliberately: it duplicated the in-page Add to Bag (same
+          handleAddToCart) as a second, permanently-visible call to action, and
+          the reserved bottom strip it required read as dead space on the page.
+          The in-page button above is now the single add path on every width,
+          so there is no replacement bar here. Nothing about pricing, the
+          quantity cap, the stock guard, size/colour selection or cart behaviour
+          changed — only the duplicated surface and its reservation are gone. */}
+
       {/* Size Chart modal — centered, not a bottom sheet. Sits above the
           announcement bar (z-100) + navbar (z-50) so the heavy backdrop blur
           covers the whole page including those fixed elements. */}
@@ -609,10 +734,10 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
 
               {/* How To Measure — compact list: small icon + label + one-line instruction */}
               <div className="mt-4 pt-4 border-t border-line">
-                <p className="font-label text-[10px] uppercase tracking-ultra text-grey mb-3">How To Measure</p>
+                <p className="font-label text-[10px] uppercase tracking-ultra text-bone-dim mb-3">How To Measure</p>
                 <ul className="space-y-2.5">
                   <li className="flex items-center gap-3">
-                    <span className="w-10 h-10 shrink-0 flex items-center justify-center rounded border border-line bg-paper-3 p-1">
+                    <span className="w-10 h-10 shrink-0 flex items-center justify-center rounded-lg border border-bone/20 bg-white p-1">
                       <MeasurementFigure kind="chest" />
                     </span>
                     <p className="text-xs leading-snug text-bone-dim">
@@ -621,7 +746,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
                     </p>
                   </li>
                   <li className="flex items-center gap-3">
-                    <span className="w-10 h-10 shrink-0 flex items-center justify-center rounded border border-line bg-paper-3 p-1">
+                    <span className="w-10 h-10 shrink-0 flex items-center justify-center rounded-lg border border-bone/20 bg-white p-1">
                       <MeasurementFigure kind="length" />
                     </span>
                     <p className="text-xs leading-snug text-bone-dim">
@@ -630,7 +755,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
                     </p>
                   </li>
                   <li className="flex items-center gap-3">
-                    <span className="w-10 h-10 shrink-0 flex items-center justify-center rounded border border-line bg-paper-3 p-1">
+                    <span className="w-10 h-10 shrink-0 flex items-center justify-center rounded-lg border border-bone/20 bg-white p-1">
                       <MeasurementFigure kind="shoulder" />
                     </span>
                     <p className="text-xs leading-snug text-bone-dim">
@@ -649,10 +774,12 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
       {related.length > 0 && (
         <section className="border-t border-line py-12 md:py-16">
           <div className="mx-auto px-2 md:px-4 lg:px-6 xl:px-8">
-            <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone mb-4 md:mb-10">
+            <Reveal className="mb-4 md:mb-10">
+            <h2 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone">
               You Might Also Like
             </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-x-0.5 gap-y-6 md:gap-x-8 md:gap-y-10">
+          </Reveal>
+            <div className="grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-5 gap-x-0.5 gap-y-6 md:gap-x-8 md:gap-y-10">
               {related.map((p, i) => (
                 <ProductCard key={p.id} product={p} index={i} />
               ))}
@@ -664,7 +791,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
   );
 }
 
-/** Minimal flat-lay tee outline, with a crimson measurement line overlaid for
+/** Minimal flat-lay tee outline, with a neutral measurement line overlaid for
  * chest / length / shoulder so the illustrated dimension reads at a glance. */
 const TEE_OUTLINE =
   'M72 36 Q100 44 128 36 L152 40 Q164 46 158 62 L142 58 L142 178 Q142 190 130 190 L70 190 Q58 190 58 178 L58 58 L42 62 Q36 46 48 40 L72 36 Z';
@@ -679,7 +806,7 @@ function MeasurementFigure({ kind }: { kind: 'chest' | 'length' | 'shoulder' }) 
         strokeWidth="2"
         strokeLinejoin="round"
       />
-      <g stroke="#c1121f" strokeWidth="2.5" strokeLinecap="round">
+      <g stroke="#6e6e6e" strokeWidth="2.5" strokeLinecap="round">
         {kind === 'chest' && (
           <>
             <line x1="52" y1="100" x2="148" y2="100" />

@@ -38,8 +38,36 @@ export interface PaymentGatewayConfig {
 export interface PaymentSessionRequest {
   orderRef: string;
   orderId: string;
-  amount: number; // total amount in INR (decimal number, not paise)
+  amount: number; // display only — the server re-reads amount_paid_upfront from the DB
   customer: { name: string; phone: string; email?: string };
+}
+
+/**
+ * The signed-in shopper's Supabase access token, read straight from the session
+ * supabase-js already persisted. Returns null for guests and for an expired
+ * session — the server then falls back to its ref+phone possession gate, so a
+ * stale/absent token can never block a guest from paying.
+ *
+ * Reading localStorage directly (instead of importing supabase-js) keeps the
+ * ~200 kB auth client out of this module's import graph.
+ */
+function getAccessTokenIfAny(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (!key || !/^sb-[^-]+-auth-token$/.test(key)) continue;
+      const raw = window.localStorage.getItem(key);
+      if (!raw || raw === 'null') continue;
+      const parsed = JSON.parse(raw) as { access_token?: unknown };
+      if (typeof parsed?.access_token === 'string' && parsed.access_token.length > 0) {
+        return parsed.access_token;
+      }
+    }
+  } catch {
+    // storage unavailable / malformed session — treat as a guest
+  }
+  return null;
 }
 
 export interface PaymentSession {
@@ -117,12 +145,24 @@ export async function createPaymentSession(req: PaymentSessionRequest): Promise<
     };
   }
 
+  const accessToken = getAccessTokenIfAny();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
   const response = await fetchWithTimeout(
     apiUrl('/cashfree-order'),
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId: req.orderId, orderRef: req.orderRef }),
+      headers,
+      // `phone` is the guest possession factor (ref + 10-digit phone), the same
+      // gate cashfree-status and track_lookup_order enforce. `amount` is NOT
+      // sent: the server derives the charge from the order row, so the client
+      // has no way to influence what is billed.
+      body: JSON.stringify({
+        orderId: req.orderId,
+        orderRef: req.orderRef,
+        phone: String(req.customer.phone ?? '').replace(/\D/g, '').slice(-10),
+      }),
     },
     15000
   );
@@ -141,6 +181,18 @@ export async function createPaymentSession(req: PaymentSessionRequest): Promise<
     }
     if (data?.code === 'ORDER_NOT_FOUND') {
       throw new PaymentSessionError('This order is no longer available. Please place a new order.', 'ORDER_NOT_FOUND');
+    }
+    if (data?.code === 'PAYMENT_NOT_PERMITTED' || data?.code === 'ALREADY_PAID' || data?.code === 'ORDER_NOT_PAYABLE') {
+      throw new PaymentSessionError(
+        'This order cannot be paid from this session. Please contact us if you need help.',
+        data.code
+      );
+    }
+    if (data?.code === 'COD_NO_ONLINE_PAYMENT') {
+      throw new PaymentSessionError(
+        'This order is a cash-on-delivery order, so there is nothing to pay now. Please start a new order to pay online.',
+        data.code
+      );
     }
     throw new Error('The online payment could not be started. Your order has not been charged.');
   }

@@ -252,8 +252,10 @@ export function DesktopGallery({
               key={i}
               type="button"
               onClick={() => select(i)}
-              className={`w-[90px] h-[113px] shrink-0 overflow-hidden border bg-paper-3 transition-all duration-150 ${
-                i === activeIdx ? 'border-bone' : 'border-line opacity-60 hover:opacity-100'
+              className={`w-[90px] h-[113px] shrink-0 overflow-hidden rounded-lg border bg-paper-3 transition-all duration-150 shadow-[0_1px_3px_rgba(0,0,0,0.04)] ${
+                i === activeIdx
+                  ? 'border-bone ring-1 ring-bone/20'
+                  : 'border-line opacity-60 hover:opacity-100'
               }`}
             >
               <img src={img} alt="" loading="lazy" decoding="async" {...responsiveSrc(img, [120, 180, 240])} className="w-full h-full object-cover" draggable={false} />
@@ -265,7 +267,7 @@ export function DesktopGallery({
         <button
           type="button"
           onClick={onImageClick}
-          className="relative block w-full max-w-[650px] mx-auto cursor-zoom-in border border-line bg-paper-3 overflow-hidden"
+          className="relative block w-full max-w-[650px] mx-auto cursor-zoom-in border border-line/70 rounded-xl bg-paper-3 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.045)]"
           style={{ aspectRatio: '4 / 5' }}
         >
           <img

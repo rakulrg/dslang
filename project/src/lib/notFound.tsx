@@ -10,7 +10,7 @@ export function notFound(): import('react').ReactElement {
         This page sold out.
       </p>
       <a
-        href={linkHref('/collection')}
+        href={linkHref('/collections')}
         className="mt-8 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-4"
       >
         Shop The Collection

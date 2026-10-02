@@ -1,13 +1,13 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { MessageCircle, Mail, ChevronDown } from 'lucide-react';
 import { Instagram } from '@/components/icons/Instagram';
 import { linkHref } from '@/lib/router';
 import { INSTAGRAM_URL, EMAIL } from '@/lib/catalog';
 import { useSiteSettings } from '@/lib/settings';
 
+// One shop destination, matching the header: Collection is the whole catalogue.
 const SHOP_LINKS = [
-  { label: 'Collection', to: '/collection' },
-  { label: 'New Drops', to: '/new-drops' },
+  { label: 'Collection', to: '/collections' },
 ];
 
 const INFO_LINKS = [
@@ -51,9 +51,27 @@ export function Footer() {
 
   const toggle = (key: string) => setOpen((current) => (current === key ? null : key));
 
-  return (
-    <footer className="border-t border-line bg-ink text-white">
-      <div className="mx-auto px-6 md:px-12 lg:px-20 xl:px-28 py-10 md:py-14">
+return (
+    <>
+      {/* Decorative animated liquid seam, inline in normal flow directly above
+          the real footer - not fixed, not floating. wave1 fills down past the
+          strip's bottom edge and the footer is the same ink immediately below
+          it, so the two fuse and only the undulating top contour reads.
+          aria-hidden: no text, no roles, nothing for a screen reader. */}
+      <div className="goo-divider" aria-hidden="true">
+        <svg viewBox="0 0 480 112" preserveAspectRatio="none" focusable="false" shapeRendering="geometricPrecision">
+          <defs>
+            <path id="wave" d="M 0,40 C 120,40 120,60 240,60 360,60 360,40 480,40 600,40 600,60 720,60 840,60 840,40 960,40 v 112 h -960 z" shapeRendering="geometricPrecision" />
+          </defs>
+
+          <use id="wave3" className="wave" href="#wave" x="0" y="-8" shapeRendering="geometricPrecision"></use>
+          <use id="wave2" className="wave" href="#wave" x="0" y="0" shapeRendering="geometricPrecision"></use>
+          <use id="wave1" className="wave" href="#wave" x="0" y="4" shapeRendering="geometricPrecision" />
+        </svg>
+      </div>
+
+      <footer className="bg-ink text-white">
+      <div className="shell py-10 md:py-14">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr] gap-x-8 md:gap-x-10">
           <div className="pb-6 md:pb-0">
             <a href={linkHref('/')} className="font-brand text-3xl tracking-[0.03em] text-white leading-none">
@@ -110,5 +128,6 @@ export function Footer() {
         </div>
       </div>
     </footer>
+    </>
   );
 }

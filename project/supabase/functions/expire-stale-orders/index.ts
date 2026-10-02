@@ -21,10 +21,13 @@
 //     calls restock_retail_order_items — atomic, idempotent, race-safe.
 //
 // Security:
-//   * Authorization must be 'Bearer <service_role>' (Primary — the pg_cron job
-//     sends the SUPABASE_SERVICE_ROLE_KEY resolved from Vault). The token is
-//     normalized (optional 'Bearer ' prefix, trimmed) and compared against the
-//     function's own env secret with a constant-time digest comparison.
+//   * Authorization must be 'Bearer <service_role JWT>'. The gateway runs with
+//     verify_jwt=true and validates that token's signature, issuer, project and
+//     expiry before this code runs; the function then reads the `role` claim
+//     locally (see jwtRole) and requires it to be exactly 'service_role'. A
+//     signed-in shopper's JWT clears the gateway but fails that role check.
+//   * The decode is a claims read, NOT signature verification. It is sound only
+//     while verify_jwt=true. Never disable it without replacing this check.
 //   * A dedicated SWEEP_TRIGGER_TOKEN is also honored when configured. NOTE: a
 //     non-JWT bearer only reaches the function if it is deployed with
 //     verify_jwt = false (config.toml), otherwise the gateway rejects it before
@@ -63,6 +66,30 @@ function baseUrl(env: string): string {
     : 'https://sandbox.cashfree.com';
 }
 
+// Read the `role` claim out of a JWT payload, entirely locally.
+//
+// THIS IS NOT SIGNATURE VERIFICATION. It trusts the caller-supplied bytes. It
+// is only sound because this function is deployed with verify_jwt=true, so the
+// Supabase gateway has already validated the signature, issuer, project and
+// expiry before execution reaches here. If verify_jwt were ever disabled, this
+// function must NOT be trusted — an attacker could hand-craft a payload with
+// role: 'service_role' and it would be accepted.
+//
+// Returns '' for anything that is not a decodable three-part token with a
+// string `role`, which fails closed at the call site.
+function jwtRole(token: string): string {
+  const parts = token.split('.');
+  if (parts.length !== 3) return '';
+  try {
+    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4);
+    const claims = JSON.parse(atob(padded)) as { role?: unknown };
+    return typeof claims.role === 'string' ? claims.role : '';
+  } catch {
+    return '';
+  }
+}
+
 const TERMINAL_FAILED = new Set(['CANCELLED', 'USER_DROPPED', 'FAILED']);
 const NON_TERMINAL = new Set(['PROCESSING', 'ACTIVE', 'PENDING', 'AUTHORISING', 'VOID']);
 
@@ -72,6 +99,9 @@ interface OrderRow {
   customer: Record<string, unknown> | null;
   payment_id: string | null;
   total_amount: number;
+  is_cod: boolean;
+  amount_paid_upfront: number;
+  payment_status: string;
   created_at: string;
 }
 
@@ -96,17 +126,42 @@ Deno.serve(async (req) => {
     return json({ success: false, error: 'Sweep is not configured on the server.' }, 500);
   }
 
-  // Authorization — never run an OAuth-role/anonymous sweep. The pg_cron job
-  // sends 'Authorization: Bearer <SERVICE_ROLE_KEY>' (the value the function
-  // already reads from its own server-side env). We normalize the header
-  // (optional 'Bearer ' prefix / whitespace) and then require an exact,
-  // constant-time match against the expected credential.
+  // Authorization — the sweep is service-role only.
+  //
+  // verify_jwt=true is the security boundary: the gateway has already verified
+  // the bearer token's signature, issuer, project and expiry BEFORE this code
+  // runs, and rejects the request otherwise. The decode below is NOT signature
+  // verification and must not be treated as such — it only reads claims from a
+  // token the gateway already trusts, in order to enforce the role check that
+  // verify_jwt does not perform on its own.
+  //
+  // A valid signature is not sufficient authority: a signed-in shopper's JWT
+  // (role 'authenticated') clears the gateway too, so the role claim is
+  // asserted here and such a caller is rejected without reaching the sweep.
+  //
+  // The credential is deliberately NOT compared against our own
+  // SUPABASE_SERVICE_ROLE_KEY. That value is injected per-runtime, while the
+  // caller presents a separately issued service-role JWT: same project and
+  // role, different bytes, so an exact comparison rejects legitimate callers
+  // (and silently breaks on key rotation). Authority comes from the claim, not
+  // from byte equality. The key is still used below to build the Supabase
+  // client, which applies service-role privileges to the sweep's own writes.
   const auth = req.headers.get('authorization') || '';
   const presented = bearerToken(auth);
   let allowed = false;
+
   if (presented) {
-    if (serviceRole && (await constantTimeEqual(presented, serviceRole))) allowed = true;
-    else if (token && (await constantTimeEqual(presented, token))) allowed = true;
+    // base64url-decode the JWT payload and read the role claim. No network
+    // call and no user lookup: the service-role key carries no 'sub', so it is
+    // not a user JWT and cannot be resolved via auth.getUser().
+    if (jwtRole(presented) === 'service_role') allowed = true;
+
+    // A dedicated opaque secret for callers that cannot present a JWT. Only
+    // reachable when a JWT is actually presented, so this branch is inert
+    // while the gateway enforces verify_jwt=true.
+    if (!allowed && token && (await constantTimeEqual(presented, token))) {
+      allowed = true;
+    }
   }
   if (!allowed) {
     return json({ success: false, error: 'Unauthorized.' }, 401);
@@ -135,7 +190,7 @@ Deno.serve(async (req) => {
   if (body.ref) {
     const { data } = await supabase
       .from('retail_orders')
-      .select('id, ref, customer, payment_id, total_amount, created_at')
+      .select('id, ref, customer, payment_id, total_amount, is_cod, amount_paid_upfront, payment_status, created_at')
       .eq('ref', body.ref)
       .limit(1);
     orders = (data as OrderRow[] | null) ?? [];
@@ -143,7 +198,7 @@ Deno.serve(async (req) => {
     const cutoff = new Date(Date.now() - minutes * 60_000).toISOString();
     const { data, error } = await supabase
       .from('retail_orders')
-      .select('id, ref, customer, payment_id, total_amount, created_at')
+      .select('id, ref, customer, payment_id, total_amount, is_cod, amount_paid_upfront, payment_status, created_at')
       .in('payment_status', ['pending', 'failed'])
       .is('stock_restored_at', null)
       .lt('created_at', cutoff)
@@ -163,6 +218,16 @@ Deno.serve(async (req) => {
   };
 
   async function decide(order: OrderRow): Promise<Decision> {
+    // COD GUARD: a full-COD order is confirmed at creation and is waiting for
+    // the delivery agent to collect cash — there is no gateway order and no
+    // pending payment to expire. The bulk sweep already excludes it via
+    // payment_status, but the single-order `ref` path can be pointed at any
+    // ref, so it is re-checked here. Expiring it would cancel a live order and
+    // wrongly release its stock reservation.
+    if (order.is_cod && order.payment_status === 'cod_pending') {
+      return { action: 'skip', note: 'COD order awaiting collection on delivery' };
+    }
+
     // No Cashfree order was ever created -> cannot be paid.
     if (!order.payment_id) return { action: 'expire', note: 'no Cashfree order' };
 
@@ -192,7 +257,10 @@ Deno.serve(async (req) => {
         : api?.data && Array.isArray(api.data)
           ? api.data
           : [];
-      const expected = Number(order.total_amount);
+      // Authoritative expected charge = amount_paid_upfront — the single
+      // "payable now" figure (online = Sale Price minus the capped ₹50
+      // discount). Never a client-supplied amount.
+      const expected = Number(order.amount_paid_upfront ?? order.total_amount);
 
       if (payments.length === 0) {
         return { action: 'expire', note: 'no payment record after expiry window' };
@@ -209,6 +277,10 @@ Deno.serve(async (req) => {
       }
 
       if (TERMINAL_FAILED.has(paymentStatus)) {
+        // A refused or returned parcel is never settled here — an already-paid
+        // order keeps payment_status 'success' and an admin flips it to
+        // cancelled/returned. This branch only covers a gateway-side failure
+        // of an online payment.
         return { action: 'expire', note: `payment_status=${paymentStatus}` };
       }
 
@@ -238,6 +310,10 @@ Deno.serve(async (req) => {
           .from('retail_orders')
           .update({
             payment_status: 'success',
+            // Full-COD orders are skipped above, so this only ever marks a
+            // legacy COD order that really did pay an advance — for those
+            // Preserve stored historical money, but use the normal fulfilment
+            // state for every verified payment.
             order_status: 'processing',
             paid_at: new Date().toISOString(),
             txn_id:
@@ -245,7 +321,11 @@ Deno.serve(async (req) => {
               String(order.payment_id ?? ''),
             payment_provider: 'cashfree',
           })
-          .eq('id', order.id);
+          .eq('id', order.id)
+          // Hard guard, independent of the `decide` skip above: a new COD order
+          // must never be settled through the gateway, so the sweep updates
+          // zero rows for one even if it were reached with a stale event.
+          .neq('payment_status', 'cod_pending');
       }
     } else if (d.action === 'expire') {
       expired++;

@@ -18,6 +18,7 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@electric-sql/pglite@~0.5.8",
         "npm:@supabase/supabase-js@^2.111.0",
         "npm:@tailwindcss/vite@^4.3.3",
         "npm:@types/node@^22.20.1",
@@ -25,6 +26,7 @@
         "npm:@types/react@~19.2.18",
         "npm:@vitejs/plugin-react@^6.0.5",
         "npm:lucide-react@^1.28.0",
+        "npm:playwright-core@^1.63.0",
         "npm:react-dom@^19.2.8",
         "npm:react@^19.2.8",
         "npm:tailwindcss@^4.3.3",

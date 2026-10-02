@@ -124,7 +124,7 @@ export function CartDrawer() {
 
   const goToCollection = () => {
     closeCart();
-    navigate('/collection');
+    navigate('/collections');
   };
 
   const handleApplyPromo = async () => {
@@ -346,7 +346,7 @@ export function CartDrawer() {
                         {applying ? <Loader2 size={13} strokeWidth={2} className="animate-spin" /> : 'Apply'}
                       </button>
                     </div>
-                    {promoError && <p className="mt-1.5 text-xs text-crimson">{promoError}</p>}
+                    {promoError && <p className="mt-1.5 text-xs text-bone-dim">{promoError}</p>}
                   </>
                 )}
               </div>
@@ -355,7 +355,7 @@ export function CartDrawer() {
               <div className="px-5 pt-4 pb-3 space-y-2">
                 <button
                   onClick={goToCheckout}
-                  className="w-full btn-dark text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 active:scale-[0.98]"
+                  className="w-full btn-primary text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5"
                 >
                   Checkout <ArrowRight size={15} strokeWidth={2} />
                 </button>

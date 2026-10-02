@@ -1,24 +1,32 @@
-// Cashfree PG — create a payment order (Web Checkout / Standard Checkout).
+// ============================================================================
+// DECOMMISSIONED — do not use. This function is intentionally inert.
 //
-// Security model:
-//   * Credentials (CASHFREE_APP_ID / CASHFREE_SECRET_KEY) exist ONLY here on the
-//     server (Supabase Edge Function secrets). They are NEVER returned to the
-//     browser.
-//   * The requested amount is NEVER trusted from the client. The order totals
-//     are re-read from retail_orders (written authoritatively by
-//     create_retail_order which re-prices every line, recomputes promo/shipping
-//     and applies the >=999 free-shipping rule). Only the final stored
-//     total_amount is charged.
-//   * A retry with an already-charged order is rejected. Reusing an existing
-//     Cashfree order id makes create-order idempotent so a double-click /
-//     retry never spins up a second Cashfree session for the same DSLANG order.
+// WHY IT EXISTS AS A FILE: it used to be a SECOND, full copy of the Cashfree
+// "create payment order" logic. The storefront never called it (src/lib/payment.ts
+// only ever calls the Vercel route `/api/cashfree-order`, optionally rebased onto
+// VITE_API_BASE_URL), so it was a dormant second copy of the money path that
+// could silently drift from the live one — it still defaulted CASHFREE_ENV to
+// TEST, hardcoded a production APP_ORIGIN fallback, performed NO caller
+// authorization, and overwrote payment_id unconditionally.
 //
-// Env (Supabase Edge Function secrets):
-//   CASHFREE_APP_ID, CASHFREE_SECRET_KEY, CASHFREE_ENV (TEST|PRODUCTION),
-//   CASHFREE_WEBHOOK_URL (optional override), APP_ORIGIN,
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-
-import { createClient } from 'npm:@supabase/supabase-js@2';
+// IT NOW ANSWERS 410 GONE so a stale client or a mistaken direct call fails
+// loudly instead of quietly creating payment sessions through an unauthorized
+// path. The live payment-start implementation is:
+//
+//     api/cashfree-order.ts          (Vercel serverless function — authoritative)
+//
+// NOT AFFECTED by this decommission (all still live and required):
+//     supabase/functions/cashfree-status     — authoritative payment verification
+//     supabase/functions/cashfree-webhook    — Cashfree payment callbacks
+//     supabase/functions/expire-stale-orders — abandoned-order sweep
+//     supabase/functions/auto-ship-orders    — post-grace shipment sweep
+//
+// TO FULLY REMOVE: after confirming no client hits this endpoint, delete the
+// `supabase/functions/cashfree-order` directory and run
+//     supabase functions delete cashfree-order
+// This is intentionally NOT done here: deleting a deployed function is an
+// irreversible, remote change.
+// ============================================================================
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -26,182 +34,14 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
 };
 
-function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', ...extra },
-  });
-}
-
-function baseUrl(env: string): string {
-  return env.toUpperCase() === 'PRODUCTION'
-    ? 'https://api.cashfree.com'
-    : 'https://sandbox.cashfree.com';
-}
-
-function shortish(s: string, n: number): string {
-  return s.replace(/[^0-9a-zA-Z]/g, '').toUpperCase().slice(0, n);
-}
-
-// A deterministic, unique, alphanumeric Cashfree order id mapped 1:1 to the
-// DSLANG order. re-using it (via payment_id) makes a retry idempotent: Cashfree
-// returns the existing order for the same order_id instead of creating a new
-// charge session.
-function cashfreeOrderId(ref: string, orderId: string, fallback: string | null, attemptSuffix: string | null = null): string {
-  if (fallback) return fallback;
-  const base = `DSL${shortish(ref, 10)}${shortish(orderId, 8)}`;
-  return attemptSuffix ? `${base}${attemptSuffix}` : base;
-}
-
-function retryAttemptSuffix(): string {
-  // A fresh, unique suffix (timestamp + random) so a failed order's retry gets
-  // a brand-new Cashfree order id instead of reusing the terminal-stated one.
-  return `R${Date.now().toString(36).toUpperCase().slice(-4)}${Math.random().toString(36).toUpperCase().slice(2, 6)}`;
-}
-
-Deno.serve(async (req) => {
+Deno.serve((req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
-  if (req.method !== 'POST') return json({ success: false, error: 'Method not allowed.' }, 405);
-
-  const appId = Deno.env.get('CASHFREE_APP_ID');
-  const secretKey = Deno.env.get('CASHFREE_SECRET_KEY');
-  const env = Deno.env.get('CASHFREE_ENV') || 'TEST';
-  const origin = (Deno.env.get('APP_ORIGIN') || 'https://dslang.in').replace(/\/$/, '');
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const serviceRole = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!appId || !secretKey || !supabaseUrl || !serviceRole) {
-    return json({ success: false, error: 'Payment gateway is not configured on the server.' }, 500);
-  }
-
-  let body: { orderId?: string; orderRef?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return json({ success: false, error: 'Invalid request.' }, 400);
-  }
-  if (!body.orderId || !body.orderRef) {
-    return json({ success: false, error: 'Missing order reference.' }, 400);
-  }
-
-  const supabase = createClient(supabaseUrl, serviceRole);
-
-  const { data: order, error } = await supabase
-    .from('retail_orders')
-    .select('id, ref, customer, total_amount, payment_status, payment_id, payment_provider, stock_restored_at')
-    .eq('id', body.orderId)
-    .eq('ref', body.orderRef)
-    .maybeSingle();
-  if (error || !order) return json({ success: false, code: 'ORDER_NOT_FOUND', error: 'Order not found.' }, 404);
-  if (order.payment_status === 'success') {
-    return json({ success: false, error: 'This order is already paid.' }, 409);
-  }
-  if (order.stock_restored_at) {
-    // The reservation is gone — the sweep (or an admin) already restocked this
-    // order's inventory. Retrying it could sell a unit that is back on the
-    // shelf, so refuse the session and make the frontend direct the shopper to
-    // start a new checkout.
-    return json(
-      {
-        success: false,
-        code: 'ORDER_EXPIRED',
-        error: 'This order has expired and its items were returned to stock. Please place a new order.',
-      },
-      409
-    );
-  }
-
-  const amount = Number(order.total_amount);
-  if (!(amount > 0)) {
-    return json({ success: false, error: 'Nothing to charge for this order.' }, 400);
-  }
-
-  // Authoritative amount, 2-decimal INR string. Never taken from the client.
-  const orderAmount = amount.toFixed(2);
-  // Reuse the previous Cashfree order_id on the FIRST attempt (a double-click
-  // of "Pay Now" is idempotent: Cashfree returns the existing order/session).
-  // But a retry after a FAILED payment MUST get a fresh order id — Cashfree
-  // keeps the old order in a terminal state and rejects a new session for it,
-  // which surfaced as an opaque 502 "Payment could not be initialized" on
-  // Try Again. Mint a new unique id so a brand-new payment session can start.
-  const retry = order.payment_status === 'failed';
-  const orderId = cashfreeOrderId(order.ref, order.id, retry ? null : (order.payment_id ?? null), retry ? retryAttemptSuffix() : null);
-
-  const customer = (order.customer as Record<string, unknown>) || {};
-  const customerId = `dsl-${shortish(order.ref, 12)}`;
-  const phone = String(customer.phone ?? '').replace(/\D/g, '');
-  const webhookUrl =
-    Deno.env.get('CASHFREE_WEBHOOK_URL') ||
-    `${supabaseUrl.replace(/\/$/, '')}/functions/v1/cashfree-webhook`;
-
-  const payload = {
-    order_amount: Number(orderAmount),
-    order_currency: 'INR',
-    order_id: orderId,
-    order_note: `DSLANG order ${order.ref}`,
-    customer_details: {
-      customer_id: customerId,
-      customer_name: String(customer.name ?? 'Customer') || undefined,
-      customer_email: String(customer.email ?? '') || undefined,
-      customer_phone: phone || undefined,
-    },
-    order_meta: {
-      // Same fix as api/cashfree-order.ts: land the shopper on the dedicated
-      // result page with the DSLANG ref, never the checkout form.
-      return_url: `${origin}/#/order-status?ref=${order.ref}`,
-      notify_url: webhookUrl,
-    },
-  };
-  // Drop empty customer fields (Cashfree rejects blank optional fields).
-  const cd = payload.customer_details as Record<string, unknown>;
-  for (const k of Object.keys(cd) as (keyof typeof cd & string)[]) {
-    if (cd[k] === undefined) delete cd[k];
-  }
-
-  const base = baseUrl(env);
-  let res: Response;
-  try {
-    res = await fetch(`${base}/pg/orders`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'x-api-version': '2025-01-01',
-        'X-Client-Id': appId,
-        'X-Client-Secret': secretKey,
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch {
-    return json({ success: false, error: 'Payment could not be initialized. Please try again.' }, 502);
-  }
-
-  let api: any;
-  try {
-    api = await res.json();
-  } catch {
-    api = {};
-  }
-
-  if (!res.ok || !api || !api.payment_session_id) {
-    return json({ success: false, error: 'Payment could not be initialized. Please try again.' }, 502);
-  }
-
-  // Persist the Cashfree order id (in payment_id) so status-verification and
-  // webhooks can find this order, and retries reuse the same Cashfree order.
-  const { error: updateError } = await supabase
-    .from('retail_orders')
-    .update({ payment_provider: 'cashfree', payment_id: orderId })
-    .eq('id', order.id);
-  if (updateError) {
-    return json({ success: false, error: 'Payment could not be initialized. Please try again.' }, 500);
-  }
-
-  return json({
-    success: true,
-    orderRef: order.ref,
-    orderId,
-    paymentSessionId: api.payment_session_id,
-    environment: env.toUpperCase() === 'PRODUCTION' ? 'PROD' : 'TEST',
-    returnUrl: `${origin}/#/order-status?ref=${order.ref}`,
-  });
+  return new Response(
+    JSON.stringify({
+      success: false,
+      code: 'PAYMENT_START_MOVED',
+      error: 'This payment endpoint has been decommissioned.',
+    }),
+    { status: 410, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+  );
 });

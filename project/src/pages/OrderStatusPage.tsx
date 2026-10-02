@@ -6,6 +6,9 @@ import { formatPrice } from '@/lib/catalog';
 import { createPaymentSession, verifyPayment, PaymentSessionError, ORDER_EXPIRED_MESSAGE } from '@/lib/payment';
 import { openCashfreeCheckout, preloadCashfreeSdk } from '@/lib/cashfreeSdk';
 import { rpc } from '@/lib/rest';
+import { useOrderImages, imageForItem } from '@/lib/orderImages';
+import { addCheckoutHistory } from '@/lib/trackHistory';
+import { SaveDetailsPrompt } from '@/components/SaveDetailsPrompt';
 
 const PENDING_PAYMENT_KEY = 'dslang_pending_order_v1';
 const LIVE_ORDER_KEY = 'dslang_live_order_v1';
@@ -28,6 +31,8 @@ interface LiveOrder {
   order_id: string;
   amount: number;
   itemsKey: string;
+  /** A COD order is never payable online — this must survive rehydration. */
+  is_cod?: boolean;
 }
 
 interface ResultLine {
@@ -48,7 +53,13 @@ interface OrderSnapshot {
   shipping: number;
   total_amount: number;
   payment_status: string;
+  order_status?: string;
+  is_cod?: boolean;
+  payment_discount?: number;
+  amount_paid_upfront?: number;
+  amount_due_on_delivery?: number;
   items: ResultLine[];
+  customer?: { name: string; phone: string; email?: string; address: string; city: string; state: string; pincode: string };
 }
 
 function readHashRef(): string {
@@ -87,7 +98,9 @@ function readLive(): LiveOrder | null {
     if (!raw) return null;
     const v = JSON.parse(raw) as LiveOrder;
     if (typeof v?.ref !== 'string' || typeof v?.order_id !== 'string' || typeof v?.amount !== 'number') return null;
-    return { ref: v.ref, order_id: v.order_id, amount: v.amount, itemsKey: typeof v.itemsKey === 'string' ? v.itemsKey : '' };
+    // `is_cod` must survive rehydration: it is what stops this page from
+    // offering (and attempting) an online payment for a COD order.
+    return { ref: v.ref, order_id: v.order_id, amount: v.amount, itemsKey: typeof v.itemsKey === 'string' ? v.itemsKey : '', is_cod: v.is_cod === true };
   } catch {
     return null;
   }
@@ -134,6 +147,32 @@ function readFormEmail(): string {
     return typeof v?.email === 'string' ? v.email : '';
   } catch {
     return '';
+  }
+}
+
+// The checkout form's address for THIS order (still in session storage) is what
+// the optional save-details prompt offers — the privacy-safe lookup RPC never
+// returns customer data, and the key is cleared on settle.
+function readFormCustomer(): { name: string; phone: string; email?: string; address: string; city: string; state: string; pincode: string } | null {
+  try {
+    const raw = window.sessionStorage.getItem(CHECKOUT_FORM_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    if (typeof v !== 'object' || !v) return null;
+    const name = [String(v.firstName ?? ''), String(v.lastName ?? '')].filter(Boolean).join(' ').trim() || (typeof v.name === 'string' ? v.name.trim() : '');
+    const phone = typeof v.phone === 'string' ? v.phone : '';
+    if (!name || !phone) return null;
+    return {
+      name,
+      phone,
+      email: typeof v.email === 'string' && v.email ? v.email : undefined,
+      address: typeof v.address === 'string' ? v.address : '',
+      city: typeof v.city === 'string' ? v.city : '',
+      state: typeof v.state === 'string' ? v.state : '',
+      pincode: typeof v.pincode === 'string' ? v.pincode : '',
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -193,7 +232,13 @@ function normalizeSnapshot(order: Record<string, unknown>, orderId: string): Ord
     shipping: Number(order.shipping ?? 0),
     total_amount: Number(order.total_amount ?? 0),
     payment_status: String(order.payment_status ?? ''),
+    order_status: String(order.order_status ?? 'pending'),
+    is_cod: Boolean(order.is_cod),
+    payment_discount: Number(order.payment_discount ?? 0),
+    amount_paid_upfront: Number(order.amount_paid_upfront ?? 0),
+    amount_due_on_delivery: Number(order.amount_due_on_delivery ?? 0),
     items,
+    customer: (order.customer as OrderSnapshot['customer']) ?? undefined,
   };
 }
 
@@ -216,12 +261,17 @@ function waitForHandoff(timeoutMs: number): Promise<'unloaded' | 'stalled'> {
 interface TrackedLookupOrder {
   ref: string;
   payment_status: string;
+  order_status?: string;
   stock_restored_at?: string | null;
   total_qty: number;
   subtotal: number;
   discount: number;
   shipping: number;
   total_amount: number;
+  is_cod?: boolean;
+  payment_discount?: number;
+  amount_paid_upfront?: number;
+  amount_due_on_delivery?: number;
   items: ResultLine[];
 }
 
@@ -234,6 +284,10 @@ interface TrackedLookup {
 export function OrderStatusPage() {
   const { items, clear, removeAppliedPromo } = useD2cCart();
   const { navigate } = useRouter();
+  // Order lines carry no image URL; this resolves each one from the public
+  // catalogue by product id + colour (lib/orderImages.ts), the same source the
+  // Product Details page renders from.
+  const imageIndex = useOrderImages();
 
   const pendingRef = useRef<PendingPayload | null>(null);
   if (pendingRef.current === null) pendingRef.current = readPending();
@@ -256,6 +310,7 @@ export function OrderStatusPage() {
     return typeof p === 'string' ? p.replace(/\D/g, '').slice(0, 10) : '';
   })();
 
+  const [formCustomer] = useState<OrderSnapshot['customer'] | null>(readFormCustomer);
   const [ref] = useState(initialRef);
   const [phone, setPhone] = useState(initialPhone);
   const [draftPhone, setDraftPhone] = useState(initialPhone);
@@ -282,6 +337,7 @@ export function OrderStatusPage() {
       // ignore
     }
     persistResult(snapshot, phone);
+    addCheckoutHistory(snapshot.ref, phone);
     const pendingKey = pendingRef.current?.itemsKey ?? '';
     const full = fullItemsKey(items);
     const orderKey = orderLinesKey(snapshot.items);
@@ -351,7 +407,12 @@ export function OrderStatusPage() {
         if (cancelled) return 'idle';
         if (data?.ok && data.order) {
           const o = data.order;
-          if (o.payment_status === 'success') {
+          // A full-COD order is CONFIRMED the moment it is created: it carries
+          // payment_status 'cod_pending' and collects the amount on delivery.
+          // It therefore has no payment to confirm — treating it as "still
+          // confirming" would tell a COD shopper that a payment is in flight
+          // (and offer to pay again for an order that must not be paid online).
+          if (o.payment_status === 'success' || (o.is_cod && o.payment_status === 'cod_pending')) {
             settlePaid({
               ref: o.ref,
               id: '',
@@ -361,6 +422,11 @@ export function OrderStatusPage() {
               shipping: o.shipping ?? 0,
               total_amount: o.total_amount,
               payment_status: o.payment_status,
+              order_status: o.order_status,
+              is_cod: o.is_cod,
+              payment_discount: o.payment_discount,
+              amount_paid_upfront: o.amount_paid_upfront,
+              amount_due_on_delivery: o.amount_due_on_delivery,
               items: o.items,
             });
             return 'idle';
@@ -423,7 +489,7 @@ export function OrderStatusPage() {
       return { ref: p.ref, order_id: p.order_id, amount: p.amount, itemsKey: p.itemsKey };
     }
     if (snap && snap.ref === ref && snap.order_id && snap.total_amount) {
-      return { ref: snap.ref, order_id: snap.order_id, amount: snap.total_amount, itemsKey: '' };
+      return { ref: snap.ref, order_id: snap.order_id, amount: snap.total_amount, itemsKey: '', is_cod: snap.is_cod === true };
     }
     return null;
   };
@@ -434,6 +500,13 @@ export function OrderStatusPage() {
     if (!handle) {
       setVerdict('unknown');
       setNote("We couldn't find the payment session for this order. Please place the order again.");
+      return;
+    }
+    // A COD order is never payable online — it is collected in full on
+    // delivery. Never open a gateway session for one, whatever storage says.
+    if (handle.is_cod || snap?.is_cod) {
+      setVerdict('paid');
+      setNote('');
       return;
     }
     if (!phone) {
@@ -496,11 +569,13 @@ export function OrderStatusPage() {
   };
 
   if (verdict === 'paid' && snap) {
+    /* Cash on Delivery is one amount, collected on arrival. Read from the row. */
+    const codDue = snap.amount_due_on_delivery ?? snap.total_amount;
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
         <div className="relative flex h-14 w-14 items-center justify-center rounded-full bg-blush">
-          <CheckCircle2 size={36} strokeWidth={1.5} className="text-crimson animate-scale-in" />
-          <span className="absolute inset-0 rounded-full border border-crimson/25 animate-fade-in" aria-hidden />
+          <CheckCircle2 size={36} strokeWidth={1.5} className="text-bone animate-scale-in" />
+          <span className="absolute inset-0 rounded-full border border-bone/25 animate-fade-in" aria-hidden />
         </div>
         <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">Order Confirmed</p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
@@ -513,7 +588,7 @@ export function OrderStatusPage() {
 
         <div className="mt-8 w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-5 lg:gap-6 text-left">
           <div className="space-y-5">
-            <div className="w-full border border-line bg-paper-3 p-5">
+            <div className="panel p-5">
               <div className="flex justify-between border-b border-line pb-2 text-sm">
                 <span className="text-grey">Order</span>
                 <span className="font-semibold text-bone">{snap.ref}</span>
@@ -524,48 +599,82 @@ export function OrderStatusPage() {
               </div>
               <div className="flex justify-between border-b border-line py-2 text-sm">
                 <span className="text-grey">Payment</span>
-                <span className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-bone">PAID</span>
+                <span className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-bone">
+                  {snap.is_cod ? 'CASH ON DELIVERY' : 'PAID'}
+                </span>
               </div>
+              {snap.is_cod ? (
+                /* One amount only. COD never involves a payment before delivery. */
+                <div className="flex justify-between border-b border-line py-2 text-sm">
+                  <span className="text-grey">Amount due on delivery</span>
+                  <span className="font-semibold text-bone">{formatPrice(codDue)}</span>
+                </div>
+              ) : (
+                <div className="flex justify-between border-b border-line py-2 text-sm">
+                  <span className="text-grey">Paid</span>
+                  <span className="font-semibold text-green-700">{formatPrice(snap.amount_paid_upfront ?? snap.total_amount)}</span>
+                </div>
+              )}
               {snap.discount > 0 && (
                 <div className="flex justify-between border-b border-line py-2 text-sm">
                   <span className="text-grey">Discount</span>
                   <span className="font-semibold text-green-700">−{formatPrice(snap.discount)}</span>
                 </div>
               )}
+              {!snap.is_cod && (snap.payment_discount ?? 0) > 0 && (
+                <div className="flex justify-between border-b border-line py-2 text-sm">
+                  <span className="text-grey">Online Payment Discount</span>
+                  <span className="font-semibold text-green-700">−{formatPrice(snap.payment_discount ?? 0)}</span>
+                </div>
+              )}
               <div className="flex justify-between pt-2 text-sm">
-                <span className="text-grey">Total</span>
+                <span className="text-grey">
+                  {snap.is_cod
+                    ? 'Total (Cash on Delivery)'
+                    : (snap.payment_discount ?? 0) > 0
+                      ? 'Online Payment Total'
+                      : 'Total'}
+                </span>
                 <span className="font-price text-lg font-bold text-bone tabular-nums">
-                  {formatPrice(snap.total_amount)}
+                  {formatPrice(
+                    snap.is_cod ? codDue : (snap.amount_paid_upfront ?? snap.total_amount)
+                  )}
                 </span>
               </div>
             </div>
 
             {snap.items.length > 0 && (
-              <div className="w-full border border-line bg-paper-3 p-5">
+              <div className="panel p-5">
                 <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-2">
                   Your Products
                 </p>
-                <div className="divide-y divide-line">
-                  {snap.items.map((it, idx) => (
-                    <div key={idx} className="flex items-center justify-between gap-3 py-2 text-sm">
-                      <div className="min-w-0">
-                        <p className="text-bone">{it.name}</p>
-                        <p className="text-[11px] text-grey">
-                          {it.color} · {it.size_label} × {it.quantity}
-                        </p>
-                      </div>
-                      <span className="text-bone font-medium whitespace-nowrap tabular-nums">
-                        {formatPrice(it.line_total)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                <ul className="divide-y divide-line">
+                  {snap.items.map((it, idx) => {
+                    const img = imageForItem(imageIndex, it);
+                    return (
+                      <li key={idx} className="flex items-center gap-3 py-2.5 text-sm">
+                        <span className="h-14 w-11 shrink-0 overflow-hidden rounded border border-line bg-paper-3">
+                          {img && <img src={img} alt={it.name} className="h-full w-full object-cover" loading="lazy" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-bone">{it.name}</span>
+                          <span className="block text-[11px] text-bone-dim">
+                            {it.color} · {it.size_label} × {it.quantity}
+                          </span>
+                        </span>
+                        <span className="text-bone font-medium whitespace-nowrap tabular-nums">
+                          {formatPrice(it.line_total)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
           </div>
 
           <div className="space-y-5">
-            <div className="w-full border border-line bg-paper-3 p-5">
+            <div className="panel p-5">
               <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-3">
                 What Happens Next
               </p>
@@ -580,30 +689,43 @@ export function OrderStatusPage() {
                 <li className="flex gap-3 text-sm">
                   <span className="font-label text-bone font-semibold shrink-0">2</span>
                   <span className="text-grey leading-relaxed">
-                    Your order is dispatched from Tiruppur within 24-48 hours, with stock confirmed before it ships.
+                    Your order will be dispatched within 24–48 hours, with stock confirmed before it
+                    ships.
                   </span>
                 </li>
                 <li className="flex gap-3 text-sm">
                   <span className="font-label text-bone font-semibold shrink-0">3</span>
                   <span className="text-grey leading-relaxed">
                     Track your order anytime with <span className="text-bone font-medium">{snap.ref}</span> on the
-                    Track Order page — we will also keep you updated on WhatsApp.
+                    Track Order page — we will also email you at every step.
                   </span>
                 </li>
+                {snap.is_cod && (
+                  <li className="flex gap-3 text-sm">
+                    <span className="font-label text-bone font-semibold shrink-0">4</span>
+                    <span className="text-grey leading-relaxed">
+                      Pay <span className="text-bone font-medium">{formatPrice(codDue)}</span>{' '}
+                      in cash or digitally to your delivery partner when the parcel arrives.
+                    </span>
+                  </li>
+                )}
               </ol>
             </div>
 
             <div className="w-full border border-lime-300 bg-lime-50 px-4 py-3 text-xs text-green-800 leading-relaxed">
-              Your payment has been verified and received. We are preparing your order for dispatch.
+              {snap.is_cod
+                ? `Order ${snap.ref} is confirmed. Pay ${formatPrice(codDue)} to the delivery agent on arrival.`
+                : 'Your payment has been verified and received. We are preparing your order for dispatch.'}
             </div>
 
-            <div className="w-full border border-line bg-paper-3 p-5">
+            <div className="panel p-5">
               <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-2 flex items-center gap-1.5">
                 <ShieldCheck size={13} strokeWidth={1.8} /> Secure Payment
               </p>
               <p className="text-xs text-grey leading-relaxed">
-                Payment was processed securely and verified server-side against the order total before this confirmation.
-                You will not be charged twice.
+                {snap.is_cod
+                  ? 'This is a Cash on Delivery order. Nothing was charged online — the full amount is collected by the delivery agent on arrival.'
+                  : 'Payment was processed securely and verified server-side against the order total before this confirmation. You will not be charged twice.'}
               </p>
             </div>
           </div>
@@ -612,18 +734,20 @@ export function OrderStatusPage() {
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <button
             onClick={() => navigate(`/track-order/${encodeURIComponent(snap.ref)}`)}
-            className="btn-soft btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+            className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
           >
             <Truck size={15} strokeWidth={2} />
             Track Order
           </button>
           <button
-            onClick={() => navigate('/collection')}
+            onClick={() => navigate('/collections')}
             className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Continue Shopping
           </button>
         </div>
+
+        <SaveDetailsPrompt customer={snap.customer ?? formCustomer} />
       </div>
     );
   }
@@ -638,9 +762,9 @@ export function OrderStatusPage() {
           aria-live={!isFailed ? 'polite' : undefined}
         >
           {isFailed ? (
-            <XCircle size={32} strokeWidth={1.4} className="text-crimson" />
+            <XCircle size={32} strokeWidth={1.4} className="text-bone" />
           ) : (
-            <Clock size={30} strokeWidth={1.4} className="text-crimson" />
+            <Clock size={30} strokeWidth={1.4} className="text-bone" />
           )}
         </div>
 
@@ -686,7 +810,7 @@ export function OrderStatusPage() {
               }
             }}
             disabled={busy}
-            className="btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+            className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
           >
             {busy ? (
               <>
@@ -704,7 +828,7 @@ export function OrderStatusPage() {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/collection')}
+            onClick={() => navigate('/collections')}
             className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Continue Shopping
@@ -719,7 +843,7 @@ export function OrderStatusPage() {
                 clearLive();
                 navigate('/checkout');
               }}
-              className="btn-soft border border-crimson/60 text-crimson text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-crimson hover:text-paper transition-colors"
+              className="btn-soft border border-bone text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
             >
               Start New Order
             </button>
@@ -745,7 +869,7 @@ export function OrderStatusPage() {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blush" role="status" aria-live="polite">
-          <Loader2 size={32} strokeWidth={1.5} className="animate-spin text-crimson" />
+          <Loader2 size={32} strokeWidth={1.5} className="animate-spin text-bone" />
         </div>
         <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">Payment</p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
@@ -763,7 +887,7 @@ export function OrderStatusPage() {
 
   return (
     <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
-      <Clock size={32} strokeWidth={1.4} className="text-crimson" />
+      <Clock size={32} strokeWidth={1.4} className="text-bone" />
       <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">Order Status</p>
       <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
         {ref ? 'Confirm Your Order' : "We Couldn't Find Your Order"}
@@ -792,14 +916,14 @@ export function OrderStatusPage() {
           />
           <button
             type="submit"
-            className="mt-3 w-full btn-dark text-[11px] uppercase tracking-wide-2 font-semibold py-3.5"
+            className="mt-3 w-full btn-primary text-[11px] uppercase tracking-wide-2 font-semibold py-3.5"
           >
             Confirm Payment Status
           </button>
         </form>
       )}
 
-      {note && <p className="mt-4 text-sm text-crimson max-w-md leading-relaxed">{note}</p>}
+      {note && <p className="mt-4 text-sm text-bone-dim max-w-md leading-relaxed">{note}</p>}
 
       <div className="mt-8 flex flex-wrap justify-center gap-3">
         <button
@@ -811,7 +935,7 @@ export function OrderStatusPage() {
         </button>
         <button
           type="button"
-          onClick={() => navigate('/collection')}
+          onClick={() => navigate('/collections')}
           className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
         >
           Continue Shopping

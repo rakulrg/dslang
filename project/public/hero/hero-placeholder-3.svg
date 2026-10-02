@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice">
+  <rect width="1200" height="800" fill="#0f0f0e"/>
+  <g stroke="#1f1f1c" stroke-width="3">
+    <path d="M0 0 L560 0 M560 0 L740 0 M770 10 L840 40 M920 110 L900 150 M890 170 L920 210 M900 220 L930 260"/>
+    <path d="M0 40 L540 40 M580 40 L760 40 M790 50 L860 80 M940 150 L920 190 M910 210 L940 250 M920 260 L950 300"/>
+    <path d="M0 80 L520 80 M600 80 L780 80 M810 90 L880 120 M960 190 L940 230 M930 250 L960 290 M940 300 L970 340"/>
+  </g>
+  <g stroke="#333330" stroke-width="3">
+    <path d="M1200 0 L700 0 M640 0 L460 0 M430 10 L360 40 M280 110 L300 150 M310 170 L280 210 M300 220 L270 260"/>
+    <path d="M1200 40 L700 40 M620 40 L440 40 M410 50 L340 80 M260 150 L280 190 M290 210 L260 250 M280 260 L250 300"/>
+    <path d="M1200 80 L740 80 M600 80 L420 80 M390 90 L320 120 M240 190 L260 230 M270 250 L240 290 M260 300 L230 340"/>
+  </g>
+  <g stroke="#EDE8DB" stroke-width="1.5" opacity="0.9">
+    <path d="M240 500 H960 M240 500 V470"/>
+    <path d="M330 500 H870 M330 500 V470"/>
+    <path d="M130 420 L130 620 H300"/>
+    <path d="M1070 420 L1070 620 H900"/>
+  </g>
+  <text x="240" y="356" font-family="Arial, Helvetica, sans-serif" font-size="18" letter-spacing="6" fill="#EDE8DB">PRINT MACRO</text>
+  <text x="240" y="392" font-family="Arial, Helvetica, sans-serif" font-size="13" letter-spacing="4" fill="#8a8a85">FABRIC + STITCH DETAIL — 240 GSM COTTON</text>
+  <text x="600" y="690" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="19" letter-spacing="3" font-weight="700" fill="#5b5b56">PLACEHOLDER — REPLACE WITH FINAL PHOTOGRAPHY</text>
+</svg>

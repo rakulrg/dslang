@@ -60,16 +60,49 @@ export async function applyDelhiveryTracking(
   orderId: string,
   normalized: { status: string; location: string | null; scans: unknown[] }
 ): Promise<{ ok: boolean; error: string | null }> {
+  const base: Record<string, unknown> = {
+    tracking_current_status: normalized.status,
+    tracking_location: normalized.location,
+    tracking_scans: normalized.scans,
+    last_tracking_sync_at: new Date().toISOString(),
+  };
+  // A courier scan is real evidence, so the two terminal outcomes are projected
+  // onto the same shipping lifecycle the admin UI writes by hand:
+  //   delivered -> shipping_status 'delivered' + delivered_at + order_status
+  //   returned  -> shipping_status 'rto'
+  // Everything else stays put. `tracking_current_status` keeps the RAW courier
+  // wording for admins; we never rewrite a scan we did not observe.
+  const patch: Record<string, unknown> = { ...base };
+  if (normalized.status === 'delivered') {
+    patch.shipping_status = 'delivered';
+    patch.order_status = 'delivered';
+    patch.delivered_at = new Date().toISOString();
+  } else if (normalized.status === 'returned') {
+    patch.shipping_status = 'rto';
+    patch.order_status = 'rto';
+  }
+
   const { error } = await supabase
     .from('retail_orders')
-    .update({
-      tracking_current_status: normalized.status,
-      tracking_location: normalized.location,
-      tracking_scans: normalized.scans,
-      last_tracking_sync_at: new Date().toISOString(),
-    })
+    .update(patch)
     .eq('id', orderId);
-  if (error) return { ok: false, error: error.message };
+  if (!error) return { ok: true, error: null };
+
+  // The shipping columns arrive with their migration. If this function is
+  // deployed before that migration exists, PostgREST rejects the whole write.
+  // Retry with the pre-existing columns only: a courier scan must still be
+  // recorded, and the manual lifecycle is an enrichment, not a prerequisite.
+  const missingColumn =
+    error.code === 'PGRST204' ||
+    error.code === '42703' ||
+    /column .* does not exist|schema cache/i.test(String(error.message ?? ''));
+  if (!missingColumn) return { ok: false, error: error.message };
+
+  const fallback = await supabase
+    .from('retail_orders')
+    .update(base)
+    .eq('id', orderId);
+  if (fallback.error) return { ok: false, error: fallback.error.message };
   return { ok: true, error: null };
 }
 

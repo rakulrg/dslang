@@ -12,13 +12,19 @@
   --color-bone-dim: #4a4a4a;
   --color-bone-soft: #6e6e6e;
   --color-grey: #9a9a9a;
-  --color-crimson: #c1121f;
-  --color-crimson-dark: #8c0d16;
-  --color-wine: #4a1620;
+  --color-crimson: #d20a2e;
   --color-olive: #3b3b2e;
   --color-cream: #faf8f4;
   --color-sand: #e8e2d6;
   --color-blush: #f5ede8;
+
+  /* NOTE: the "premium dark card" role is played by the existing `bone`
+     (#1a1a1a), not by a new token. The two warm neutrals that were tried as a
+     palette experiment and reverted are on the blocklist in
+     scripts/palette.test.mjs ("None of these may come back"). Reintroducing
+     one means lifting that policy deliberately, not adding a token here.
+     On bone: white 17.4:1, grey #9a9a9a 6.19:1 (small labels OK),
+     bone-soft only 3.41:1 (never on the dark card), green-300 12.4:1. */
 
   --font-display: 'Anton', 'Bebas Neue', sans-serif;
   --font-condensed: 'Bebas Neue', 'Anton', sans-serif;
@@ -27,11 +33,11 @@
   --font-body: 'Open Sans', 'Helvetica Neue', system-ui, sans-serif;
   --font-brand: 'GC Epic Pro', 'Anton', sans-serif;
 
-  --radius-soft: 0.625rem;
+  --radius-soft: 0.5rem;
   --radius-card: 0.75rem;
 
-  /* Product card visual scale — bump to make cards bigger, lower to shrink.
-     1.10 ≈ 10 % larger (width + height). Applied on md (tablet) screens and
+  /* Product card visual scale â€” bump to make cards bigger, lower to shrink.
+     1.10 â‰ˆ 10 % larger (width + height). Applied on md (tablet) screens and
      up; on phones the cards are unscaled so the two mobile columns sit flush
      in a clean 2 px gutter with perfect edge alignment (they stay equal-width
      because the CSS grid is untouched). */
@@ -42,9 +48,9 @@
    grid item itself. A scaled grid item bleeds 5 % of its height/width into the
    neighbouring rows/columns where it collides with the next card's info or
    image. The frame absorbs that exact bleed with percentage padding (the card
-   image is 4:5, so vertical bleed ≈ 6.25 % of the column width + ~4 px of text
+   image is 4:5, so vertical bleed â‰ˆ 6.25 % of the column width + ~4 px of text
    stack; horizontal bleed is exactly 5 % of the column width), which makes the
-   spacing hold at every desktop/tablet width — no fixed heights, no clipping,
+   spacing hold at every desktop/tablet width â€” no fixed heights, no clipping,
    no ratio change. Mobile keeps 0 padding and no scale. */
 @media (min-width: 768px) {
   .product-card-scale {
@@ -79,15 +85,21 @@
   html {
     scroll-behavior: smooth;
   }
-  /* Kill any page-level horizontal scroll/overscroll. The hero carousel is the
-     ONLY horizontally moving surface, and it stays contained in its own
-     overflow-hidden section (touch-pan-y keeps normal vertical page scroll). */
+  /* Horizontal page overflow is FIXED AT THE SOURCE, not suppressed here.
+     A blanket `overflow-x: hidden` / `clip` on html+body only hides the
+     offending element behind a missing scrollbar: the content is still
+     unreachable on mobile and the real bug stays invisible. Every
+     intentionally-scrolling surface in the app now owns its own clipping:
+       - the announcement marquee  -> overflow-hidden (App.tsx)
+       - the hero carousel         -> its own overflow-hidden section
+       - product / filter rails    -> overflow-x-auto (+ no-scrollbar)
+       - the search dialog panel   -> overflow-hidden
+       - the cart drawer / nav menus-> overflow-x-hidden on the scroll body
+       - admin tables              -> overflow-x-auto wrappers
+     `max-width: 100%` stays so no single element can ever widen the page. */
   html,
   body {
     max-width: 100%;
-    overflow-x: hidden;
-    overflow-x: clip;
-    overscroll-behavior-x: none;
   }
   body {
     background-color: var(--color-paper);
@@ -111,8 +123,44 @@
 }
 
 @layer components {
+  /* ---- Storefront shells ---------------------------------------------------
+     ONE container system for the header, the footer and every page, so content
+     lines up across routes instead of each page inventing its own width.
+
+     Two variables do the work:
+       --shell-max      how wide the content may grow before it is capped
+       --shell-gutter   the horizontal breathing room at this breakpoint
+
+     The caps exist so a wide desktop viewport is used rather than left blank,
+     while long measures and oversized product cards stay bounded â€” content
+     never touches the viewport edge. Gutters live here (not as per-page px-*)
+     so every section shares the exact same horizontal rhythm. */
+  .shell {
+    --shell-max: 1600px;
+    --shell-gutter: 1.25rem;
+    margin-inline: auto;
+    width: 100%;
+    max-width: var(--shell-max);
+    padding-inline: var(--shell-gutter);
+  }
+
+  /* A checkout / order form wants room for two real columns. */
+  .shell--form { --shell-max: 1440px; }
+  /* Prose + a single column of content. */
+  .shell--content { --shell-max: 1280px; }
+  /* Reading pages: long-form copy, order lookup, account. */
+  .shell--reading { --shell-max: 1080px; }
+
+  @media (min-width: 768px) {
+    .shell { --shell-gutter: 2rem; }
+  }
+  @media (min-width: 1280px) {
+    .shell { --shell-gutter: 3rem; }
+  }
+
   .btn-dark,
-  .btn-soft {
+  .btn-soft,
+  .btn-primary {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -122,17 +170,44 @@
     will-change: transform;
   }
 
+  .btn-primary {
+    background-color: var(--color-bone);
+    color: #fff;
+    border: none;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color 200ms ease-out;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: #000;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  }
+  .btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  }
+  .btn-primary:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.18);
+  }
+  .btn-primary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
   .btn-dark {
     background-color: var(--color-bone);
     color: #fff;
-    transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1),
-      box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
-      background-color 150ms ease-out;
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color 200ms ease-out;
   }
   .btn-dark:hover:not(:disabled) {
     background-color: #000;
-    transform: scale(1.02);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
   }
   .btn-dark:focus-visible {
     outline: none;
@@ -144,13 +219,13 @@
   }
 
   .btn-soft {
-    transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1),
-      background-color 150ms ease-out,
-      color 150ms ease-out,
-      border-color 150ms ease-out;
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color 200ms ease-out,
+      color 200ms ease-out,
+      border-color 200ms ease-out;
   }
   .btn-soft:hover:not(:disabled) {
-    transform: scale(1.02);
+    transform: translateY(-1px);
   }
   .btn-soft:disabled {
     opacity: 0.45;
@@ -170,7 +245,7 @@
     background: currentColor;
     transform: scaleX(0);
     transform-origin: left center;
-    transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
   }
   .nav-underline:hover::after,
   .nav-underline[aria-current='page']::after {
@@ -179,9 +254,9 @@
 
   .reveal {
     opacity: 0;
-    transform: translateY(20px);
-    transition: opacity 400ms cubic-bezier(0.4, 0, 0.2, 1),
-      transform 400ms cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateY(16px);
+    transition: opacity 320ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
   }
   .reveal.is-visible {
     opacity: 1;
@@ -195,11 +270,14 @@
       transition: none;
     }
     .btn-dark,
-    .btn-soft {
+    .btn-soft,
+    .btn-primary {
       transition: none;
     }
     .btn-dark:hover:not(:disabled),
-    .btn-soft:hover:not(:disabled) {
+    .btn-soft:hover:not(:disabled),
+    .btn-primary:hover:not(:disabled),
+    .btn-primary:active:not(:disabled) {
       transform: none;
     }
   }
@@ -220,7 +298,7 @@
     writing-mode: vertical-rl;
   }
 
-  /* Subtle film grain for the hero — decorative SVG fractal noise, low
+  /* Subtle film grain for the hero â€” decorative SVG fractal noise, low
      opacity, never blocks content. */
   .hero-grain {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
@@ -229,13 +307,188 @@
     opacity: 0.35;
   }
 
-  .text-shadow-dark {
-    text-shadow: 0 2px 30px rgba(0,0,0,0.5);
-  }
-
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   .overflow-wrap-anywhere { overflow-wrap: anywhere; }
+
+  /* Soft elevated surface for summary/status/settings cards. */
+  .panel {
+    background-color: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: var(--radius-card);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03),
+      0 8px 28px rgba(0, 0, 0, 0.05);
+  }
+
+  /* Restrained hero text entrance (used by micro-labels + hero CTA). */
+  .animate-rise {
+    animation: rise 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  /* Subtle settling zoom for hero slides once mounted. The duration is fed
+     from JS (--hero-reveal-ms = the crossfade duration) so the zoom always
+     finishes at the exact moment the layer is promoted. A longer zoom would
+     leave the layer mid-scale and snap when it changes role â€” a visible
+     "flicker" on every carousel step. */
+  .hero-zoom {
+    animation: heroZoom var(--hero-reveal-ms, 1400ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* ---- Hero loading state (see src/pages/HomePage.tsx) ----
+     THE BLACK LOADING STATE
+     The hero's loading state is the dark DSLANG treatment itself â€” a black
+     surface with a faint light bloom at the top, the same tone the hero
+     already used â€” and nothing else. There is no blurred preview, no LQIP, no
+     skeleton and no spinner: the hero simply holds its own dark visual until
+     the photograph has decoded.
+
+     `.hero-shell` is that dark treatment, painted on the box itself so the very
+     first frame is already the loading state (before React has booted and
+     before a single hero byte has been requested) and so nothing can flash
+     before it. It is deliberately close to flat, because it is a backdrop for
+     white text: the faint top bloom only reads as depth, not as a pattern. */
+  .hero-shell {
+    background-color: var(--color-ink);
+    background-image: radial-gradient(
+      125% 85% at 50% 16%,
+      rgba(255, 255, 255, 0.07) 0%,
+      rgba(255, 255, 255, 0.025) 36%,
+      rgba(10, 10, 10, 0) 66%
+    );
+  }
+
+  /* `.hero-curtain` is the black loading state as a real overlay ABOVE the
+     photographs rather than as a background behind them. That distinction is
+     the whole effect: because the dark surface is a sibling painted on top, it
+     can genuinely FADE OUT while the photograph fades in underneath it, so the
+     two are seen dissolving into one another. A dark background sitting behind
+     an opaque <img> could only ever be *covered* the instant the image arrives,
+     which reads as a cut, not as a fade.
+
+     It paints the SAME dark treatment as `.hero-shell` â€” a flat #0a0a0a slab
+     would be a dead black rectangle rather than the hero's own look, and would
+     hide the faint top bloom the finished hero has. Identical treatment on both
+     means the handover is invisible: only the photograph arriving changes what
+     is on screen.
+
+     It is a fixed `opacity` transition, and the element is left in the DOM at
+     opacity 0 once a photo has settled, so `pointer-events: none` keeps it from
+     ever intercepting a swipe, a tap or the CTA underneath. */
+  .hero-curtain {
+    background-color: var(--color-ink);
+    background-image: radial-gradient(
+      125% 85% at 50% 16%,
+      rgba(255, 255, 255, 0.07) 0%,
+      rgba(255, 255, 255, 0.025) 36%,
+      rgba(10, 10, 10, 0) 66%
+    );
+    transition: opacity var(--hero-reveal-ms, 450ms) cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hero-curtain[data-lifted='false'] {
+    will-change: opacity;
+  }
+
+  /* Per-slide layer. Painted with nothing of its own â€” no background colour and
+     no background image â€” so a layer that mounts while a photo is already
+     painted underneath it can never flash a dark rectangle over that photo.
+     The hero <img> does the painting; this is only a positioning context. */
+  .hero-layer {
+    background-color: transparent;
+    background-image: none;
+  }
+
+  /* Kept as an explicit modifier: an incoming layer must be guaranteed fully
+     transparent over a painted photo, including no background-color, which is
+     the near-black --color-ink and would itself cover the photo. */
+  .hero-layer-clear {
+    background-color: transparent;
+    background-image: none;
+  }
+
+  /* The full-resolution hero image. Held at opacity 0 until it has decoded,
+     then faded over its own preview. `will-change` only while it is actually
+     animating, so settled layers cost nothing on a mobile GPU. */
+  .hero-image {
+    transition: opacity var(--hero-reveal-ms, 450ms) cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hero-image[data-revealing='true'] {
+    will-change: opacity;
+  }
+
+  /* Shared input focus state: clean 2px black border, no ring/glow. */
+  .field-focus {
+    transition: border-color 200ms ease-out, box-shadow 200ms ease-out,
+      background-color 200ms ease-out;
+  }
+  .field-focus:focus-within {
+    border-color: #080808;
+    box-shadow: none;
+  }
+  /* Invalid field keeps its red border even while focused (no glow, no red
+     box-shadow). */
+  .field-focus.is-invalid:focus-within {
+    border-color: var(--color-crimson);
+    box-shadow: none;
+  }
+
+  /* Persistent floating labels for checkout fields: the label sits centred as
+     a placeholder and floats to a small label in the top edge once the field
+     is focused or filled. A reserved top strip keeps the label from ever
+     overlapping the entered value; every single-line field shares one height. */
+  .float-box:not(.is-invalid):not(:focus-within) {
+    border-color: rgba(0, 0, 0, 0.12);
+  }
+  .float-input,
+  .float-select {
+    padding-top: 22px;
+    padding-bottom: 10px;
+    color: #080808;
+  }
+  .float-input::placeholder {
+    color: transparent;
+  }
+  .float-label {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 5;
+    max-width: calc(100% - 36px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 15px;
+    line-height: 1.3;
+    color: #666666;
+    pointer-events: none;
+    transition: color 160ms ease-out, font-size 160ms ease-out,
+      top 160ms ease-out, transform 160ms ease-out, letter-spacing 160ms ease-out;
+  }
+  .float-input:focus ~ .float-label,
+  .float-input:not(:placeholder-shown) ~ .float-label,
+  .float-select:focus ~ .float-label,
+  .float-select:valid ~ .float-label {
+    top: 6px;
+    transform: translateY(0);
+    font-size: 10px;
+    line-height: 1.2;
+    letter-spacing: 0.04em;
+  }
+  .float-input:focus ~ .float-label,
+  .float-select:focus ~ .float-label {
+    color: #080808;
+  }
+  .float-input:not(:placeholder-shown):not(:focus) ~ .float-label,
+  .float-select:valid:not(:focus) ~ .float-label {
+    color: #666666;
+  }
+  /* The select's own placeholder option text is hidden (transparent) â€” the
+     floating label is the placeholder â€” and the chosen value shows in black. */
+  .float-select {
+    color: transparent;
+  }
+  .float-select:valid {
+    color: #080808;
+  }
 
   .animate-marquee {
     animation: marquee 25s linear infinite;
@@ -243,6 +496,9 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .animate-marquee { animation: none; }
+    .animate-rise,
+    .hero-zoom { animation: none; }
+    .hero-image { transition-duration: 1ms; }
   }
   .animate-fade-up {
     animation: fadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -278,6 +534,14 @@
   from { opacity: 0; transform: translateY(-12px); }
   to { opacity: 1; transform: translateY(0); }
 }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes heroZoom {
+  from { transform: scale(1.06); }
+  to { transform: scale(1); }
+}
 
 /* ---- DSLANG loading dots ---- */
 
@@ -297,5 +561,430 @@
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Admin panel scrollbars                                              */
+/* ------------------------------------------------------------------ */
+/* Thin, quiet thumb. No visible track and no arrow buttons on
+   Chrome/Edge; inherited (scrollbar-width/color cascade) for Firefox.
+   Scope: the whole admin shell, including every nested scroll area. */
 
+.admin-shell {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(26, 26, 26, 0.3) transparent;
+}
 
+.admin-shell ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.admin-shell ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.admin-shell ::-webkit-scrollbar-thumb {
+  background: rgba(26, 26, 26, 0.3);
+  border-radius: 3px;
+}
+
+.admin-shell ::-webkit-scrollbar-thumb:hover {
+  background: rgba(26, 26, 26, 0.5);
+}
+
+.admin-shell ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.admin-shell ::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* The sidebar keeps its own inner scroll (wheel/touch) but shows no
+   scrollbar â€” the visible scrollbar belongs to the main content only. */
+.admin-shell .admin-sidebar-nav {
+  scrollbar-width: none;
+}
+.admin-shell .admin-sidebar-nav::-webkit-scrollbar {
+  display: none;
+}
+
+/* ============================================================
+   Order Confirmed â€” tasteful entrance animations (Part 1)
+   Fast (<1.5s total), on-brand (black / white / crimson), no sound.
+   ============================================================ */
+@keyframes check-pop {
+  0%   { transform: scale(0.5); opacity: 0; }
+  60%  { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.checkmark {
+  animation: check-pop 500ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* Crimson glow ring expanding once from behind the checkmark */
+@keyframes pulse-ring {
+  0%   { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+.ring {
+  border: 2px solid var(--color-crimson);
+}
+.pulse-ring {
+  animation: pulse-ring 700ms ease-out 1 both;
+}
+
+/* One-time sheen across the Online Payment "SAVE" pill.
+   `1` iteration + `both` fill: it plays once when the checkout mounts and then
+   stops dead. It is deliberately NOT infinite, and it is not re-triggered by
+   re-renders or by switching payment method â€” this is an honest "look here
+   once" cue, not a looping urgency animation. The travelling highlight is a
+   separate absolutely-positioned child (.save-badge-sheen) inside the pill's
+   own overflow-hidden box, so the pill's background and text never move. */
+@keyframes save-badge-sheen {
+  0% {
+    transform: translateX(-130%) skewX(-18deg);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateX(130%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+.save-badge-sheen {
+  animation: save-badge-sheen 1150ms cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .save-badge-sheen {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+}
+
+/* Periodic "knife shine" across the Online Payment and COD badges.
+   Same diagonal language as the one-time SAVE pill sheen above — skewX(-18deg)
+   travelling gradient band — but on a loop with a long idle tail. The band
+   crosses the card in roughly the first third of the cycle (~2.4s of a 7s loop)
+   and then sits off-canvas for the remaining ~4.6s. That tail is the whole
+   point: it is what makes the effect read as a periodic sweep instead of a
+   continuously flashing surface, and it keeps the travel slow enough to follow
+   with the eye rather than strobe past.
+
+   THE GRADIENT IS MOSTLY WHITE ON PURPOSE. These cards are `bg-white`, so a
+   white band on its own would be completely invisible. The band therefore
+   carries a faint ink edge (the site's `rgba(26,26,26,...)`) just behind a hot
+   white core: on the unselected white card the ink edge is what you actually
+   see as the sweep, and on the selected `#fff4f6` card the white core lights up
+   against the tint. One band, legible in both states, no per-state CSS.
+
+   The band is an `::after` pseudo-element rather than a new child span, so the
+   card gains the effect with no markup change at all. The class itself only
+   adds `position: relative` and `overflow: hidden` on top of the classes the
+   card already carried — the clipping is what keeps the band inside the rounded
+   corner, and it costs no layout. `pointer-events: none` matters here: the whole
+   card is the radio's hit target and must stay that way. */
+@keyframes payment-card-shine-sweep {
+  0% {
+    transform: translateX(-140%) skewX(-18deg);
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  34% {
+    transform: translateX(340%) skewX(-18deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(340%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+.payment-card-shine {
+  position: relative;
+  overflow: hidden;
+}
+.payment-card-shine::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 42%;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.92) 44%,
+    rgba(26, 26, 26, 0.055) 56%,
+    transparent 100%
+  );
+  transform: translateX(-140%) skewX(-18deg);
+  animation: payment-card-shine-sweep 7s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+/* Phase-offset the second badge so the two do not flash as one wide sheet.
+   Same duration and easing as the first — only the start point moves, by a
+   third of the cycle, which is roughly the length of the travel itself. */
+.payment-card-shine:nth-child(2)::after {
+  animation-delay: 2.4s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .payment-card-shine::after {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+}
+
+/* Staggered fade-up for order details (ref, price, buttons) */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 500ms ease-out both; }
+.fade-up-1 { animation-delay: 80ms; }
+.fade-up-2 { animation-delay: 160ms; }
+.fade-up-3 { animation-delay: 240ms; }
+.fade-up-4 { animation-delay: 320ms; }
+
+/* ---- Order-placed celebration: full-page paper burst ----
+   The wrap is a viewport-fixed, clipped layer rather than a box around the check
+   mark. That is what lets a piece travel most of the viewport without widening
+   the document: `position: fixed` boxes do not contribute to scrollable
+   overflow, and `overflow: hidden` trims each piece at the viewport edge
+   instead. Absolutely positioning them inside the 56px mark — as the previous
+   version did — and translating them 80vw would have overflowed the page and
+   put a sideways scrollbar on mobile, which the html/body overflow policy
+   above explicitly forbids suppressing. `z-index: 50` keeps the burst above
+   the page but below the drawer (60), dialogs (80) and top bar (100), so it can
+   never sit over something the shopper is meant to interact with. */
+.confetti-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  overflow: hidden;
+}
+/* Size, shape and colour are all per-piece custom properties, so this stays a
+   single rule and the burst is tuned entirely from the table in
+   ConfettiBurst.tsx. `opacity: 0` is the base state: a piece is invisible until
+   its keyframes bring it in, so nothing flashes on first paint. */
+.confetti {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--w);
+  height: var(--h);
+  border-radius: var(--radius);
+  background: var(--fill);
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: confetti-win var(--dur) linear both;
+  animation-delay: var(--delay);
+}
+/* Four phases, and the per-keyframe timing functions are the whole trick:
+   `linear` on the animation is only the default that the stops override.
+     0% -> 6%     the POP. Snappy out-curve so the burst leaves the mark hard
+                  instead of easing out of it. Starts at scale 0.15 so pieces
+                  appear to be fired rather than inflated.
+     6% -> 34%    the BURST. Eases out as pieces reach their apex - the
+                  upward-launched ones peak here, the rest are still driving out.
+     34% -> 100%  the FALL. An accelerating in-curve reads as gravity. Every
+                  piece ends BELOW the origin (--y1 is positive for all of them),
+                  which is what turns an explosion into falling paper.
+   No `infinite`: `both` parks each piece on the 100% frame, whose opacity is 0,
+   so the burst plays once and the layer is inert afterwards. */
+@keyframes confetti-win {
+  0% {
+    transform: translate(-50%, -50%) translate(0, 0) rotate(0deg) scale(0.15);
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.12, 0.9, 0.24, 1);
+  }
+  6% {
+    transform: translate(-50%, -50%) translate(calc(var(--x) * 0.05), calc(var(--y0) * 0.06)) rotate(calc(var(--r) * 0.06)) scale(1);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.2, 0.75, 0.35, 1);
+  }
+  34% {
+    transform: translate(-50%, -50%) translate(calc(var(--x) * 0.62), var(--y0)) rotate(calc(var(--r) * 0.62)) scale(0.92);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.5, 0, 0.75, 0.4);
+  }
+  100% {
+    transform: translate(-50%, -50%) translate(var(--x), var(--y1)) rotate(var(--r)) scale(0.72);
+    opacity: 0;
+  }
+}
+/* The burst is pure decoration, so a reader who asks for reduced motion gets
+   none of it - not a frozen mid-air frame. `opacity: 0` is the .confetti base
+   state, so suppressing the animation is enough, but it is stated explicitly
+   so a later edit to the base rule cannot silently re-enable the movement. The
+   wrapper is clipped and pointer-events-none either way, so removing the
+   movement leaves no trace and no interaction. */
+@media (prefers-reduced-motion: reduce) {
+  .confetti { animation: none !important; opacity: 0 !important; }
+}
+
+/* ============================================================
+   Track Order â€” point-to-point progress tracker (Part 2/3)
+   ============================================================ */
+.track-line {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--color-line-2);
+  transform: translateY(-50%);
+}
+.track-line-fill {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: var(--color-crimson);
+  /* Scaled, not resized. `width` is a layout property, so a 700ms width
+     transition relaid out the timeline on every frame; scaleX is a compositor
+     transform and costs nothing. Origin is the left edge, so it fills from the
+     start exactly as the old width did. */
+  transform: translateY(-50%) scaleX(var(--fill, 0));
+  transform-origin: left center;
+  transition: transform 700ms cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+}
+.track-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 1;
+}
+.track-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--color-paper);
+  border: 2px solid var(--color-line-2);
+  color: var(--color-grey);
+  transition: all 300ms ease;
+}
+.track-dot.done {
+  background: var(--color-bone);
+  border-color: var(--color-bone);
+  color: #fff;
+}
+.track-dot.current {
+  background: var(--color-crimson);
+  border-color: var(--color-crimson);
+  color: #fff;
+  animation: stage-pulse 1.6s ease-in-out infinite;
+}
+@keyframes stage-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(210, 10, 46, 0.5); }
+  50%      { box-shadow: 0 0 0 8px rgba(210, 10, 46, 0); }
+}
+.track-label {
+  font-size: 9px;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-align: center;
+  max-width: 64px;
+}
+
+/* The timeline is a progress indicator, not decoration: a reader who asks for
+   reduced motion gets the position and the fill, with none of the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .track-line-fill,
+  .track-dot {
+    transition: none !important;
+  }
+  .track-dot.current {
+    animation: none !important;
+  }
+}
+
+/* ---- Footer goo divider ---------------------------------------------------
+   A decorative animated liquid seam sitting in normal flow directly above the
+   footer. It is not fixed and does not float over the page.
+
+The wave path runs from y=40 down with `v 112`, reaching y=152 - forty units
+   below the 112-unit viewBox - so the fill never stops inside the strip. It
+   overflows the bottom and meets the footer's own `--color-ink` immediately
+   below it, so the two read as one continuous mass and the seam between them
+   cannot show. Only the undulating top contour reads.
+
+   The viewBox is 480x112 rather than the original 120x28: the artwork was drawn
+   at a resolution far coarser than it ever gets rasterised at, so on a phone
+   the crest contour was sampled at roughly one unit per device pixel and came
+   out visibly stepped. Every coordinate, the wave offsets and `stdDeviation`
+   are scaled 4x together, which leaves the rendered result geometrically
+   identical and only changes how finely it is sampled. `shape-rendering:
+   geometricPrecision` is set on the svg, the path and every circle.
+
+   wave1 is `--color-ink` rather than a second near-black so the wave and the
+   footer resolve to the exact same computed colour; using #1a1a1a here would
+   leave a 16/255 step against the #0a0a0a footer, which is right at the edge
+   of visibility on a good display and would show as a hairline. wave2 and
+   wave3 keep the supplied greys, offset upward so they read as thin bands
+   riding above wave1.
+
+`preserveAspectRatio="none"` stretches the artwork to the viewport width
+   without taking its height with it, and the explicit height is what bounds
+   the strip - left to its intrinsic 480x112 ratio the wave would be ~280px
+   tall on a desktop viewport. The cost is anisotropic scaling, which is why
+   the drops carry `vector-effect: non-scaling-stroke`: without it the 0.5
+   stroke smears to several px wide on a desktop viewport. The same scaling
+   also means one wavelength spans the whole viewport at every width, so the
+   wave reads wider and flatter on large screens than on a phone.
+
+   The drop offsets are in user units and were scaled with the viewBox - 25px
+   became 100px, for both the resting `transform` and the `goo-drop` keyframes.
+   Leaving them at 25px would drop the resting circles a quarter of the way
+   back up the wave, where they would sit in the white band instead of inside
+   the mass. */
+.goo-divider {
+  width: 100%;
+  overflow: hidden;
+  line-height: 0;
+}
+.goo-divider svg {
+  width: 100%;
+  height: clamp(38px, 6vw, 76px);
+  display: block;
+  overflow: visible;
+}
+.wave {
+  animation: goo-wave 3s linear infinite;
+  fill: var(--color-ink);
+}
+#wave2 {
+  animation-duration: 5s;
+  animation-direction: reverse;
+  fill: #6b6b6b;
+  opacity: 0.6;
+}
+#wave3 {
+  animation-duration: 7s;
+  fill: #9a9a9a;
+  opacity: 0.3;
+}
+/* One slide per cycle. 100% is a full svg width, which is exactly two periods
+   of the path, so the loop is seamless. */
+@keyframes goo-wave {
+  to { transform: translateX(-100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wave {
+    animation: none !important;
+  }
+}

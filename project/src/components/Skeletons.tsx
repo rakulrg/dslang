@@ -24,10 +24,13 @@ export function ProductCardSkeleton() {
   );
 }
 
-/** Responsive product grid of skeletons, matching the shop grids (2-up mobile, 4-up desktop). */
+/** Responsive product grid of skeletons, matching the shop grids (2-up mobile, 4-up desktop).
+ *  The row gap MUST equal the real grids' (gap-y-5 / md:gap-y-8): this is the
+ *  loading state for those grids, so a different gap would shift every row by
+ *  4px on mobile / 8px on desktop the moment the real cards fade in. */
 export function ProductGridSkeleton({ count = 8 }: { count?: number }) {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-0.5 gap-y-6 md:gap-x-8 md:gap-y-10" aria-hidden="true">
+    <div className="grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-5 gap-x-0.5 gap-y-5 md:gap-x-8 md:gap-y-8" aria-hidden="true">
       {Array.from({ length: count }).map((_, i) => (
         <ProductCardSkeleton key={i} />
       ))}

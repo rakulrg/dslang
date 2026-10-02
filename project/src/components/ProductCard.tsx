@@ -126,7 +126,7 @@ export function ProductCard({
           className={`group block reveal flex flex-col ${visible ? 'is-visible' : ''}`}
           style={{ transitionDelay: `${index * 80}ms` }}
         >
-          <div className="relative aspect-[4/5] overflow-hidden bg-paper-3 border border-line">
+          <div className="relative aspect-[4/5] overflow-hidden bg-paper-3 shadow-[0_2px_10px_rgba(0,0,0,0.04)] transition-shadow duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:shadow-[0_10px_32px_rgba(0,0,0,0.09)]">
             <img
               src={imageSrc}
               alt={`${product.name} — ${primary?.name ?? ''}`}
@@ -135,7 +135,7 @@ export function ProductCard({
               decoding="async"
               onError={() => setImgFailed(true)}
               {...responsiveSrc(imageSrc)}
-              className="absolute inset-0 w-full h-full object-cover transition-all duration-300 group-hover:scale-105 group-hover:opacity-0"
+              className="absolute inset-0 w-full h-full object-cover transition-all duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03] group-hover:opacity-0"
             />
             {hoverSrc && <img
               src={hoverSrc}
@@ -144,10 +144,10 @@ export function ProductCard({
               decoding="async"
               onError={() => setImgFailed(true)}
               {...responsiveSrc(hoverSrc)}
-              className="absolute inset-0 w-full h-full object-cover opacity-0 transition-all duration-300 group-hover:scale-105 group-hover:opacity-100"
+              className="absolute inset-0 w-full h-full object-cover opacity-0 transition-all duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03] group-hover:opacity-100"
             />}
             {showMrp && discountPct > 0 && (
-              <span className="absolute top-1.5 left-1.5 z-10 bg-red-600 text-white text-[9px] leading-none uppercase font-bold px-1.5 py-1">
+              <span className="absolute top-2 left-2 z-10 bg-crimson text-white text-[9px] leading-none uppercase font-bold px-1.5 py-1 rounded-sm">
                 Save {discountPct}%
               </span>
             )}

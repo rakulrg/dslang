@@ -59,7 +59,7 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
         role="dialog"
         aria-modal="true"
         aria-label="Search products"
-        className="absolute left-1/2 top-[92px] md:top-[104px] w-[calc(100vw-2rem)] max-w-2xl max-h-[75dvh] flex flex-col overflow-hidden bg-white border border-line shadow-[0_20px_60px_rgba(0,0,0,0.18)] will-change-transform"
+        className="absolute left-1/2 top-[92px] md:top-[104px] w-[calc(100%_-_2rem)] max-w-2xl max-h-[75dvh] flex flex-col overflow-hidden bg-white border border-line/70 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.18)] will-change-transform"
         style={{
           transform: open ? 'translateX(-50%) translateY(0)' : 'translateX(-50%) translateY(-12px)',
           opacity: open ? 1 : 0,
@@ -137,7 +137,7 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
             {results.length} {results.length === 1 ? 'design' : 'designs'}
           </span>
           <button
-            onClick={() => { onClose(); window.location.hash = '#/collection'; }}
+            onClick={() => { onClose(); window.location.hash = '#/collections'; }}
             className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-bone hover:text-bone-dim transition-colors"
           >
             View Collection →

@@ -1,33 +1,43 @@
 import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
-import { useRouter } from '@/lib/router';
+import { useRouter, replaceRoute } from '@/lib/router';
 import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/CartDrawer';
 import { LoginModal } from '@/components/LoginModal';
 import { HomePage } from '@/pages/HomePage';
 import { CollectionPage } from '@/pages/CollectionPage';
-import { NewDropsPage } from '@/pages/NewDropsPage';
 import { RetailProductPage } from '@/pages/RetailProductPage';
-import { useAuth } from '@/lib/auth';
+import { useAuth, takeAuthReturnDestination } from '@/lib/auth';
 import { useSiteSettings } from '@/lib/settings';
 import { useCartDrawer } from '@/lib/cartDrawer';
 import { notFound } from '@/lib/notFound';
 import { LoadingDots } from '@/components/LoadingDots';
+import { FullscreenLoader } from '@/components/FullscreenLoader';
+import { AdminLayout } from '@/layouts/AdminLayout';
 import { getPaymentConfig } from '@/lib/payment';
 import { preloadCashfreeSdk } from '@/lib/cashfreeSdk';
 
 // Lazy-load every non-core page so the initial bundle only ships the shop
-// skeleton (home, collection, new drops, product + admin entry). Each
+// skeleton (home, collection, product + admin entry). Each
 // secondary route downloads only the chunk it needs on first visit, and the
 // shop path never loads checkout/account/admin code.
 const AdminDashboard = lazy(() =>
   import('@/pages/admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
 );
+const PrintDeliveryPage = lazy(() =>
+  import('@/pages/admin/PrintDeliveryPage').then((m) => ({ default: m.PrintDeliveryPage }))
+);
 const CheckoutPage = lazy(() =>
   import('@/pages/CheckoutPage').then((m) => ({ default: m.CheckoutPage }))
 );
+const PaymentReturnPage = lazy(() =>
+  import('@/pages/PaymentReturnPage').then((m) => ({ default: m.PaymentReturnPage }))
+);
 const TrackOrderPage = lazy(() =>
   import('@/pages/TrackOrderPage').then((m) => ({ default: m.TrackOrderPage }))
+);
+const MyOrdersPage = lazy(() =>
+  import('@/pages/MyOrdersPage').then((m) => ({ default: m.MyOrdersPage }))
 );
 const OrderStatusPage = lazy(() =>
   import('@/pages/OrderStatusPage').then((m) => ({ default: m.OrderStatusPage }))
@@ -64,11 +74,13 @@ const DEFAULT_TITLE = 'DSLANG — Premium Streetwear | Slang of Design';
 
 function getPageTitle(path: string): string {
   if (path === '/' || path === '') return DEFAULT_TITLE;
-  if (path.startsWith('/collection') || path.startsWith('/shop')) return 'Shop The Collection — DSLANG';
-  if (path.startsWith('/new-drops')) return 'New Drops — DSLANG';
+  // '/collection' is a prefix of '/collections', so the legacy URLs keep the
+  // correct title on their single render before the redirect rewrites them.
+  if (path.startsWith('/collections') || path.startsWith('/collection') || path.startsWith('/shop') || path.startsWith('/new-drops')) return 'Shop The Collection — DSLANG';
   if (path.startsWith('/product') || path.startsWith('/products') || path.startsWith('/p/')) return 'Product — DSLANG';
   if (path.startsWith('/cart')) return 'Your Bag — DSLANG';
   if (path.startsWith('/checkout')) return 'Checkout — DSLANG';
+  if (path.startsWith('/payment/return')) return 'Payment — DSLANG';
   if (path.startsWith('/order-status')) return 'Order Status — DSLANG';
   if (path.startsWith('/stock-dslang') || path.startsWith('/about')) return 'About DSLANG — DSLANG';
   if (path.startsWith('/contact')) return 'Contact — DSLANG';
@@ -79,43 +91,16 @@ function getPageTitle(path: string): string {
   if (path.startsWith('/return-policy')) return 'Return Policy — DSLANG';
   if (path.startsWith('/shipping-policy')) return 'Shipping Policy — DSLANG';
   if (path.startsWith('/track-order')) return 'Track Order — DSLANG';
+  if (path.startsWith('/my-orders')) return 'My Orders — DSLANG';
   if (path.startsWith('/account')) return 'Account — DSLANG';
   if (path.startsWith('/admin')) return 'Admin — DSLANG';
   return DEFAULT_TITLE;
 }
 
-/** Full-screen overlay for the initial boot loading state. Fades out on resolve. */
-function FullscreenLoader({ visible }: { visible: boolean }) {
-  const [gone, setGone] = useState(false);
-
-  useEffect(() => {
-    if (visible) {
-      setGone(false);
-      return;
-    }
-    if (!gone) {
-      const t = window.setTimeout(() => setGone(true), 300);
-      return () => window.clearTimeout(t);
-    }
-  }, [visible, gone]);
-
-  if (gone) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-[200] flex items-center justify-center overflow-hidden bg-paper transition-opacity duration-300 ease-out"
-      style={visible ? { opacity: 1 } : { opacity: 0 }}
-      aria-hidden="true"
-    >
-      <LoadingDots />
-    </div>
-  );
-}
-
 function App() {
   const { route, navigate } = useRouter();
   const { path, segments } = route;
-  const { user, loading, isAdmin } = useAuth();
+  const { user, loading, isAdmin, isAdminLoading } = useAuth();
   const { openCart } = useCartDrawer();
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginMode, setLoginMode] = useState<'signin' | 'signup'>('signin');
@@ -141,6 +126,20 @@ function App() {
     }
   }, [segments, openCart, navigate]);
 
+  // Canonicalize the legacy shop URLs onto /collections. The replacement is
+  // done with `replaceRoute`, so an old bookmark / shared link / indexed URL
+  // lands on the one canonical page without leaving a Back entry that would
+  // bounce straight back into this redirect.
+  //
+  // `/new-drops` is in this list because "New Drops" was a filtered copy of the
+  // same catalogue: a second name for one set of clothes. Its page is gone, and
+  // every old link to it now lands on Collection instead of a 404.
+  useEffect(() => {
+    if (segments[0] === 'collection' || segments[0] === 'shop' || segments[0] === 'new-drops') {
+      replaceRoute('/collections');
+    }
+  }, [segments]);
+
   // Handle redirects for protected routes - MUST BE IN useEffect, NOT in renderPage
   useEffect(() => {
     if (loading) return; // Wait for auth state to load
@@ -154,6 +153,10 @@ function App() {
         navigate('/admin');
       }
     } else if (segments[0] === 'admin') {
+      // Wait for the admin_users check to settle before deciding. Judging on a
+      // stale/unknown isAdmin would either bounce a real admin to /account, or
+      // (on sign-out) leave the admin route reachable for a frame.
+      if (isAdminLoading) return;
       if (!user) {
         setLoginOpen(true);
         navigate('/');
@@ -162,7 +165,16 @@ function App() {
         navigate('/account');
       }
     }
-  }, [segments, user, loading, isAdmin, navigate]);
+  }, [segments, user, loading, isAdmin, isAdminLoading, navigate]);
+
+  // Restore the route a shopper started a Google login from. `redirectTo`
+  // normally carries the hash back, so this only fires when the OAuth return
+  // lost it. Strictly one-shot, and admins are never moved off /admin.
+  useEffect(() => {
+    if (loading || !user) return;
+    const destination = takeAuthReturnDestination();
+    if (destination && !isAdmin) navigate(destination);
+  }, [loading, user, isAdmin, navigate]);
 
   const handleLoginClose = useCallback(() => {
     setLoginOpen(false);
@@ -171,13 +183,18 @@ function App() {
 
   const renderPage = () => {
     if (segments.length === 0) return <HomePage />;
-    if (segments[0] === 'collection' || segments[0] === 'shop') return <CollectionPage />;
-    if (segments[0] === 'new-drops') return <NewDropsPage />;
+    // `/collections` is the ONE canonical shop URL. `/collection`, `/shop` and
+    // `/new-drops` render the same page for the single frame before the redirect
+    // effect above rewrites them in place — without that, a visitor arriving on a
+    // legacy URL would see a one-frame 404 flash. So the three URLs never compete
+    // as separate destinations in analytics / search / link shares.
+    if (segments[0] === 'collections' || segments[0] === 'collection' || segments[0] === 'shop' || segments[0] === 'new-drops') return <CollectionPage />;
     if (segments[0] === 'product' && segments[1]) return <RetailProductPage slug={segments[1]} />;
     if (segments[0] === 'products' && segments[1]) return <RetailProductPage slug={segments[1]} />;
     if (segments[0] === 'p' && segments[1]) return <RetailProductPage slug={segments[1]} />;
     if (segments[0] === 'cart') return <HomePage />;
     if (segments[0] === 'checkout') return <CheckoutPage />;
+    if (segments[0] === 'payment' && segments[1] === 'return') return <PaymentReturnPage />;
     if (segments[0] === 'order-status') return <OrderStatusPage />;
     if (segments[0] === 'stock-dslang' || segments[0] === 'about') return <AboutPage />;
     if (segments[0] === 'contact') return <ContactPage />;
@@ -188,18 +205,27 @@ function App() {
     if (segments[0] === 'return-policy') return <ReturnPolicyPage />;
     if (segments[0] === 'shipping-policy') return <ShippingPolicyPage />;
     if (segments[0] === 'track-order') return <TrackOrderPage refFromRoute={segments[1] ?? ''} />;
+    if (segments[0] === 'my-orders') return <MyOrdersPage />;
     if (segments[0] === 'account') {
       if (loading) return null;
       if (!user) return null; // Redirect handled by useEffect above
       if (isAdmin) return null; // Redirect to /admin handled by useEffect
+      if (segments[1] === 'orders') return <MyOrdersPage />;
       return <SubscriberDashboard />;
     }
     if (segments[0] === 'admin') {
-      if (loading) return null;
+      if (loading || isAdminLoading) return null;
       if (!user) return null; // Redirect handled by useEffect above
       if (!isAdmin) return null; // Redirect to /account handled by useEffect
+      if (segments[1] === 'print-delivery' && segments[2]) {
+        return (
+          <Suspense fallback={<div className="min-h-dvh w-full flex items-center justify-center"><LoadingDots /></div>}>
+            <PrintDeliveryPage orderId={decodeURIComponent(segments[2])} />
+          </Suspense>
+        );
+      }
       return (
-          <Suspense fallback={<div className="min-h-screen w-full flex items-center justify-center"><LoadingDots /></div>}>
+          <Suspense fallback={<div className="min-h-dvh w-full flex items-center justify-center"><LoadingDots /></div>}>
           <AdminDashboard />
         </Suspense>
       );
@@ -208,6 +234,18 @@ function App() {
   };
 
   const isAdminPath = segments[0] === 'admin';
+
+  // Payment return (landing back from the Cashfree gateway): the window shows
+  // ONLY the brand header + verification screen — no nav, and the cart drawer
+  // is not even mounted so it can never be opened mid-verification.
+  const isPaymentReturn = segments[0] === 'payment' && segments[1] === 'return';
+
+  // The checkout ends on its own CTA and fine print. The site-wide brand footer
+  // is a tall near-black block (see components/Footer.tsx) that would sit below
+  // the fold as the last thing on the page and pull attention away from the
+  // payment step, so it is not mounted here. Scoped to this one route — every
+  // other page keeps the footer, and nothing is replaced in its place.
+  const isCheckout = segments[0] === 'checkout';
 
   // The announcement bar renders ONLY the admin-set text from Settings. The
   // value is hydrated synchronously from the local settings cache (see
@@ -229,8 +267,16 @@ function App() {
     return () => window.clearTimeout(id);
   }, []);
 
+  // Admin routes render through their OWN shell (AdminLayout + the admin
+  // sidebar/header provided by AdminDashboard) — completely outside the
+  // customer StorefrontLayout. No announcement bar, customer Navbar, customer
+  // Footer, or cart drawer is ever mounted for /admin*.
+  if (isAdminPath) {
+    return <AdminLayout bootLoading={loading && protectingRoute}>{renderPage()}</AdminLayout>;
+  }
+
   return (
-    <div className="min-h-screen flex flex-col bg-paper">
+    <div className="min-h-dvh flex flex-col bg-paper">
       {announcement.announcement_active && announcement.announcement_text.trim() && (
         <div className="fixed inset-x-0 top-0 z-[100] border-b border-white/10 bg-[#111111] overflow-hidden">
           <div className="h-8 flex items-center whitespace-nowrap">
@@ -247,19 +293,18 @@ function App() {
       )}
       <Navbar
         currentPath={path}
+        minimal={isPaymentReturn}
         onOpenLogin={(mode) => { setLoginMode(mode); setLoginOpen(true); }}
       />
-      <main className="flex-1 pt-[80px] md:pt-[88px] overflow-x-hidden">
+      <main className="flex-1 pt-[80px] md:pt-[88px]">
         <div key={path} className={`${firstPaint ? '' : 'animate-fade-in'} min-h-full`}>
-          {isAdminPath ? <div className="min-h-screen bg-paper">{renderPage()}</div> : (
-            <Suspense fallback={<div className="min-h-screen w-full flex items-center justify-center"><LoadingDots /></div>}>
-              {renderPage()}
-            </Suspense>
-          )}
+          <Suspense fallback={<div className="min-h-dvh w-full flex items-center justify-center"><LoadingDots /></div>}>
+            {renderPage()}
+          </Suspense>
         </div>
       </main>
-      <Footer />
-      <CartDrawer />
+      {!isCheckout && <Footer />}
+      {!isPaymentReturn && <CartDrawer />}
       <LoginModal isOpen={loginOpen} onClose={handleLoginClose} initialMode={loginMode} />
       <FullscreenLoader visible={loading && protectingRoute} />
     </div>

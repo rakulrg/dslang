@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   LayoutGrid,
   Image as ImageIcon,
@@ -24,12 +24,27 @@ import {
   Loader2,
   Truck,
   Printer,
+  LayoutDashboard,
+  Boxes,
+  ClipboardList,
+  Users,
+  BarChart3,
+  Activity as ActivityIcon,
+  FolderOpen,
+  Menu,
+  PanelLeft,
+  Search as SearchIcon,
+Bell,
+Calendar,
+Mail,
+Info,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { useSiteSettings, type SiteSettings } from '@/lib/settings';
 import { linkHref } from '@/lib/router';
 import { formatPrice, getMrp, getRetailPrice, getSizesForColor } from '@/lib/catalog';
+import { useOrderImages, imageForItem } from '@/lib/orderImages';
 import { preloadImage } from '@/lib/image';
 import { LoadingDots } from '@/components/LoadingDots';
 import { useConfirm } from '@/components/ConfirmDialog';
@@ -47,6 +62,7 @@ import {
   adminRemoveProductSize,
   adminSetSizeOrder,
   adminFetchRetailOrders,
+  adminCountRetailOrders,
   adminDeleteRetailOrder,
   adminCreateHero,
   adminUpdateHero,
@@ -56,12 +72,94 @@ import {
   latestImageCleanupWarning,
   describeSupabaseError,
   type ProductInput,
+  type RetailOrderQuery,
+  adminSetOrderShipping,
 } from '@/lib/admin';
 import { hasPublishColumns, isRetailVisible } from '@/lib/catalog';
 import type { CatalogProduct, HeroSlideRow, ProductColorRow, RetailOrder } from '@/lib/types';
+import {
+  COURIER_OPTIONS,
+  SHIPPING_STATUS_FLOW,
+  SHIPPING_STATUS_LABEL,
+  awbOf,
+  delhiveryTrackingUrl,
+  hasAwb,
+  isPostHandoff,
+  shippingStatusLabel,
+  shippingStatusOf,
+} from '@/lib/shipping';
 import { sortSizeLabels, sizeLabelsForRows } from '@/lib/sizes';
+import {
+  ORDER_STATUS_LABEL,
+  PAYMENT_STATUS_LABEL,
+  SHIPPABLE_ORDER_STATUSES,
+  orderStatusOptions,
+} from '@/pages/admin/orderLabels';
+import { OverviewSection } from '@/pages/admin/OverviewSection';
+import { DASH_RANGES, rangeLabel, type DashRange } from '@/pages/admin/dashboardData';
+import { InventorySection } from '@/pages/admin/InventorySection';
+import { PurchasingSection } from '@/pages/admin/PurchasingSection';
+import { CustomersSection } from '@/pages/admin/CustomersSection';
+import { ShippingSection } from '@/pages/admin/ShippingSection';
+import { AnalyticsSection } from '@/pages/admin/AnalyticsSection';
+import { ActivitySection } from '@/pages/admin/ActivitySection';
+import { CollectionsSection } from '@/pages/admin/CollectionsSection';
 
-type Tab = 'products' | 'hero' | 'settings' | 'orders' | 'promos';
+type Tab =
+  | 'overview'
+  | 'orders'
+  | 'shipping'
+  | 'products'
+  | 'collections'
+  | 'hero'
+  | 'promos'
+  | 'inventory'
+  | 'purchasing'
+  | 'customers'
+  | 'analytics'
+  | 'activity'
+  | 'settings';
+
+import type { LucideIcon } from 'lucide-react';
+
+const NAV_GROUPS: Array<{ label: string | null; items: Array<{ tab: Tab; label: string; icon: LucideIcon }> }> = [
+  {
+    label: null,
+    items: [
+      { tab: 'overview', label: 'Dashboard', icon: LayoutDashboard },
+      { tab: 'orders', label: 'Orders', icon: ShoppingBag },
+      { tab: 'products', label: 'Products', icon: LayoutGrid },
+      { tab: 'collections', label: 'Collections', icon: FolderOpen },
+    ],
+  },
+  {
+    label: 'Operations',
+    items: [
+      { tab: 'inventory', label: 'Inventory', icon: Boxes },
+      { tab: 'purchasing', label: 'Purchasing', icon: ClipboardList },
+      { tab: 'customers', label: 'Customers', icon: Users },
+      { tab: 'shipping', label: 'Shipments', icon: Truck },
+    ],
+  },
+  {
+    label: 'Marketing',
+    items: [
+      { tab: 'promos', label: 'Promo Codes', icon: Ticket },
+      { tab: 'hero', label: 'Homepage', icon: ImageIcon },
+    ],
+  },
+  {
+    label: 'Insights',
+    items: [
+      { tab: 'analytics', label: 'Analytics', icon: BarChart3 },
+      { tab: 'activity', label: 'Activity', icon: ActivityIcon },
+    ],
+  },
+  {
+    label: 'System',
+    items: [{ tab: 'settings', label: 'Settings', icon: SettingsIcon }],
+  },
+];
 
 const EXPECTED_RATIO = 4 / 5;
 const RATIO_TOLERANCE = 0.03;
@@ -92,9 +190,112 @@ function checkImageAspectRatios(files: File[]): Promise<string[]> {
   ).then((results) => results.filter(Boolean) as string[]);
 }
 
+function adminIdentity(user: { email?: string | null }): { name: string; initial: string } {
+  const local = ((user?.email ?? '').split('@')[0] || 'Admin').replace(/[^a-zA-Z]+/g, ' ');
+  const words = local.split(' ').filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  const name = words.length > 0 ? words.join(' ') : 'Admin';
+  return { name, initial: name.charAt(0).toUpperCase() || 'A' };
+}
+
+function inrOrderTotal(n: number): string {
+  return `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
+}
+
+function SidebarNav({
+  collapsed,
+  user,
+  tab,
+  onNavigate,
+  onLogout,
+}: {
+  collapsed: boolean;
+  user: { email?: string | null };
+  tab: Tab;
+  onNavigate: (t: Tab) => void;
+  onLogout: () => void;
+}) {
+  const { name, initial } = adminIdentity(user);
+  const itemCls = (active: boolean) =>
+    collapsed
+      ? `w-full flex items-center justify-center rounded-md px-0 py-2 transition-colors ${active ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`
+      : `w-full flex items-center gap-3 rounded-md px-2.5 py-2 transition-colors ${active ? 'bg-white/10 text-white font-semibold' : 'text-slate-400 hover:text-white hover:bg-white/5'}`;
+  return (
+    <div className="flex flex-col h-full bg-[#0f172a]">
+      <div className={`px-4 pt-5 pb-4 border-b border-white/10 ${collapsed ? 'px-0 text-center' : ''}`}>
+        {collapsed ? (
+          <a href={linkHref('/')} className="font-brand text-lg tracking-[0.03em] text-white" title="DSLANG">
+            D
+          </a>
+        ) : (
+          <>
+            <a href={linkHref('/')} className="font-brand text-xl tracking-[0.03em] text-white leading-none inline-block">
+              DSLANG
+            </a>
+            <p className="mt-1 font-label text-[9px] uppercase tracking-wide-2 text-slate-500">Slang of Design</p>
+          </>
+        )}
+      </div>
+
+      <div className={`px-3 py-3 border-b border-white/10 flex items-center ${collapsed ? 'px-0 justify-center' : 'gap-2.5'}`}>
+        <div className="w-8 h-8 rounded-full bg-white/10 text-white grid place-items-center text-[11px] font-semibold uppercase shrink-0 ring-1 ring-white/15">
+          {initial}
+        </div>
+        {!collapsed && (
+          <>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12px] font-semibold text-white leading-tight">{name}</p>
+              <p className="mt-0.5 text-[9px] uppercase tracking-wide-2 text-slate-500">Admin</p>
+            </div>
+            <ChevronDown size={14} className="shrink-0 text-slate-500" />
+          </>
+        )}
+      </div>
+
+      <nav className="admin-sidebar-nav flex-1 overflow-y-auto px-2 py-3 space-y-4">
+        {NAV_GROUPS.map((group) => (
+          <div key={group.label ?? 'primary'}>
+            {!collapsed && group.label && (
+              <p className="px-2 pb-1 text-[9px] font-semibold uppercase tracking-wide-2 text-slate-500">{group.label}</p>
+            )}
+            <div className="space-y-0.5">
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                const active = tab === item.tab;
+                return (
+                  <button
+                    key={item.tab}
+                    onClick={() => onNavigate(item.tab)}
+                    title={collapsed ? item.label : undefined}
+                    aria-label={collapsed ? item.label : undefined}
+                    className={itemCls(active)}
+                  >
+                    <Icon size={16} strokeWidth={1.8} className="shrink-0" />
+                    {!collapsed && <span className="text-[13px] whitespace-nowrap">{item.label}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </nav>
+
+      <div className="p-2 border-t border-white/10 space-y-0.5">
+        <a href={linkHref('/')} title="View site" className={itemCls(false)}>
+          <ExternalLink size={16} strokeWidth={1.8} className="shrink-0" />
+          {!collapsed && <span className="text-[13px]">View site</span>}
+        </a>
+        <button onClick={onLogout} title="Sign out" className={itemCls(false)}>
+          <LogOut size={16} strokeWidth={1.8} className="shrink-0" />
+          {!collapsed && <span className="text-[13px]">Sign out</span>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function AdminDashboard() {
-  const { user, isAdmin } = useAuth();
-  const [tab, setTab] = useState<Tab>('products');
+  const { user, isAdmin, signOut } = useAuth();
+  const [tab, setTab] = useState<Tab>('overview');
   const [products, setProducts] = useState<CatalogProduct[] | null>(null);
   const [heroSlides, setHeroSlides] = useState<HeroSlideRow[] | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -102,6 +303,13 @@ export function AdminDashboard() {
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
   const [publishReady, setPublishReady] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [dashRange, setDashRange] = useState<DashRange>('30D');
+  const [orderMatches, setOrderMatches] = useState<RetailOrder[]>([]);
+  const [openMenu, setOpenMenu] = useState<'range' | 'bell' | 'user' | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const loadProducts = useCallback(async () => {
     try {
@@ -134,8 +342,46 @@ export function AdminDashboard() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) {
+      setOrderMatches([]);
+      return;
+    }
+    let cancelled = false;
+    const t = window.setTimeout(async () => {
+      const esc = q.replace(/[%_\\]/g, '');
+      const { data } = await supabase
+        .from('retail_orders')
+        .select('id, ref, customer, items, total_qty, total_amount, payment_status, order_status, is_cod, created_at')
+        .or(`ref.ilike.%${esc}%,customer->>name.ilike.%${esc}%,customer->>phone.ilike.%${esc}%`)
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (!cancelled) setOrderMatches((data as RetailOrder[]) ?? []);
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [search]);
+
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    // Through the auth context, not supabase.auth.signOut() directly. Signing
+    // out on the client alone left the context's user/isAdmin frozen at the
+    // signed-in values, so the navigation drawer went on offering ADMIN PANEL
+    // to a visitor who was already signed out, until a hard refresh.
+    await signOut();
     window.location.hash = '#/';
   };
 
@@ -150,11 +396,50 @@ export function AdminDashboard() {
 
   const editingProduct = products?.find((p) => p.id === editingId) ?? null;
 
+  const searchResults = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query || !products) return [];
+    return products
+      .filter((p) => p.name.toLowerCase().includes(query) || (p.code ?? '').toLowerCase().includes(query))
+      .slice(0, 7);
+  }, [products, search]);
+
+  const customerMatches = useMemo(() => {
+    const seen = new Set<string>();
+    const arr: Array<{ name: string; phone: string; city: string }> = [];
+    for (const o of orderMatches) {
+      const phone = o.customer?.phone;
+      if (phone && !seen.has(phone)) {
+        seen.add(phone);
+        arr.push({ name: o.customer.name, phone, city: o.customer.city });
+      }
+    }
+    return arr;
+  }, [orderMatches]);
+
+  const { name: adminName } = adminIdentity(user ?? {});
+  const adminInitial = adminIdentity(user ?? {}).initial;
+
+  const goto = (t: Tab) => {
+    setTab(t);
+    setEditingId(null);
+    setCreating(false);
+    setNavOpen(false);
+    setSearch('');
+  };
+
+  const openProductFromSearch = (id: string) => {
+    setSearch('');
+    setCreating(false);
+    setTab('products');
+    setEditingId(id);
+  };
+
   // Defense-in-depth: App.tsx already redirects non-admins away from /admin,
   // but never render admin controls if this session is not an admin.
   if (!user || isAdmin !== true) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-paper px-4">
+      <div className="min-h-dvh flex items-center justify-center bg-paper px-4">
         <div className="text-center w-full max-w-md">
           <p className="font-label text-2xl uppercase tracking-wide-2 text-bone">Access restricted</p>
           <p className="mt-2 text-sm text-grey">You need an administrator account to open the dashboard.</p>
@@ -167,170 +452,228 @@ export function AdminDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-paper-2 flex flex-col lg:flex-row">
-      {/* Mobile header */}
-      <div className="lg:hidden w-full shrink-0 bg-white border-b border-line">
-        <div className="flex items-center justify-between px-4 py-3">
-          <a href={linkHref('/')} className="font-brand text-xl tracking-[0.03em] text-bone leading-none">
-            DSLANG
-          </a>
-          <div className="flex items-center gap-1">
-            <span className="text-[10px] uppercase tracking-wide-2 text-grey px-2 hidden sm:inline">{user?.email}</span>
-            <a
-              href={linkHref('/')}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wide-2 font-medium text-bone-dim hover:text-bone rounded transition-colors"
-            >
-              <ExternalLink size={12} /> Site
-            </a>
+    <div className="h-dvh overflow-hidden bg-paper-2 flex flex-col lg:flex-row admin-shell">
+      {/* Mobile drawer */}
+      {navOpen && (
+        <div className="fixed inset-0 z-40 lg:hidden">
+          <div className="absolute inset-0 bg-bone/40" onClick={() => setNavOpen(false)} />
+          <div className="absolute inset-y-0 left-0 w-64 bg-[#0f172a] border-r border-white/10 shadow-xl overflow-hidden">
             <button
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wide-2 font-medium text-bone-dim hover:text-bone rounded transition-colors"
+              onClick={() => setNavOpen(false)}
+              aria-label="Close menu"
+              className="absolute right-2 top-2 z-10 grid w-8 h-8 place-items-center text-slate-400 hover:text-white rounded"
             >
-              <LogOut size={12} /> Out
+              <X size={17} />
             </button>
+            <SidebarNav collapsed={false} user={user ?? {}} tab={tab} onNavigate={goto} onLogout={handleLogout} />
           </div>
         </div>
-        <div className="flex gap-1 px-3 pb-2 overflow-x-auto no-scrollbar items-stretch">
-          <button
-            onClick={() => { setTab('products'); setEditingId(null); setCreating(false); }}
-            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'products' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <LayoutGrid size={13} strokeWidth={1.8} /> Products
-          </button>
-          <button
-            onClick={() => { setTab('hero'); setEditingId(null); setCreating(false); }}
-            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'hero' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <ImageIcon size={13} strokeWidth={1.8} /> Homepage
-          </button>
-          <button
-            onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); }}
-            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'settings' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <SettingsIcon size={13} strokeWidth={1.8} /> Settings
-          </button>
-          <button
-            onClick={() => { setTab('orders'); setEditingId(null); setCreating(false); }}
-            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'orders' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <ShoppingBag size={13} strokeWidth={1.8} /> Orders
-          </button>
-          <button
-            onClick={() => { setTab('promos'); setEditingId(null); setCreating(false); }}
-            className={`shrink-0 flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide-2 font-semibold rounded transition-colors ${
-              tab === 'promos' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <Ticket size={13} strokeWidth={1.8} /> Promo Codes
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-60 shrink-0 border-r border-line bg-white flex-col sticky top-0 h-screen">
-        <div className="px-5 py-6 border-b border-line">
-          <a href={linkHref('/')} className="font-brand text-2xl tracking-[0.03em] text-bone leading-none">
-            DSLANG
-          </a>
-          <p className="mt-1 font-label text-[10px] uppercase tracking-wide-2 text-grey">Admin Panel</p>
-        </div>
-
-        <nav className="flex-1 p-3 space-y-1">
-          <button
-            onClick={() => { setTab('products'); setEditingId(null); setCreating(false); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'products' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <LayoutGrid size={16} strokeWidth={1.8} /> Products
-          </button>
-          <button
-            onClick={() => { setTab('hero'); setEditingId(null); setCreating(false); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'hero' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <ImageIcon size={16} strokeWidth={1.8} /> Homepage
-          </button>
-          <button
-            onClick={() => { setTab('settings'); setEditingId(null); setCreating(false); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'settings' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <SettingsIcon size={16} strokeWidth={1.8} /> Settings
-          </button>
-          <button
-            onClick={() => { setTab('orders'); setEditingId(null); setCreating(false); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'orders' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <ShoppingBag size={16} strokeWidth={1.8} /> Orders
-          </button>
-          <button
-            onClick={() => { setTab('promos'); setEditingId(null); setCreating(false); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded transition-colors ${
-              tab === 'promos' ? 'bg-bone text-white' : 'text-bone-dim hover:bg-paper-2'
-            }`}
-          >
-            <Ticket size={16} strokeWidth={1.8} /> Promo Codes
-          </button>
-        </nav>
-
-        <div className="p-3 border-t border-line">
-          <div className="px-3 py-2 text-xs text-grey truncate">
-            {user?.email ?? 'admin'}
-          </div>
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-bone-dim hover:text-bone rounded transition-colors hover:bg-paper-2"
-          >
-            <LogOut size={16} strokeWidth={1.8} /> Sign out
-          </button>
-          <a
-            href={linkHref('/')}
-            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-bone-dim hover:text-bone rounded transition-colors hover:bg-paper-2"
-          >
-            <ExternalLink size={16} strokeWidth={1.8} /> View site
-          </a>
-        </div>
+      <aside
+        className={`hidden lg:flex shrink-0 border-r border-white/10 bg-[#0f172a] flex-col h-dvh overflow-hidden transition-[width] duration-200 ${
+          sidebarCollapsed ? 'w-16' : 'w-52'
+        }`}
+      >
+        <SidebarNav collapsed={sidebarCollapsed} user={user ?? {}} tab={tab} onNavigate={goto} onLogout={handleLogout} />
       </aside>
 
       {/* Main */}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Top bar */}
-        <header className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-line px-4 sm:px-6 h-12 sm:h-14 flex items-center justify-between gap-3">
-          <h1 className="font-display text-lg sm:text-2xl tracking-wide-2 text-bone uppercase">
-            {tab === 'products' ? 'Products' : tab === 'hero' ? 'Homepage' : tab === 'settings' ? 'Settings' : tab === 'orders' ? 'Orders' : 'Promo Codes'}
-          </h1>
-          {tab === 'products' && !creating && !editingProduct && (
+        <header className="shrink-0 sticky top-0 z-20 bg-white/95 backdrop-blur-md border-b border-line h-14 flex items-center gap-2 sm:gap-3 px-3 sm:px-5">
+          <button
+            onClick={() => setSidebarCollapsed((c) => !c)}
+            title="Toggle sidebar"
+            aria-label="Toggle sidebar"
+            className="hidden lg:grid w-8 h-8 place-items-center rounded text-grey hover:text-bone hover:bg-paper-2"
+          >
+            <PanelLeft size={17} strokeWidth={1.8} />
+          </button>
+          <button
+            onClick={() => setNavOpen(true)}
+            title="Open menu"
+            aria-label="Open menu"
+            className="lg:hidden grid w-8 h-8 place-items-center rounded text-grey hover:text-bone hover:bg-paper-2"
+          >
+            <Menu size={18} strokeWidth={1.8} />
+          </button>
+
+          {/* Search */}
+          <div className="relative flex-1 max-w-md ml-1 md:ml-4 block">
+            <SearchIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-grey" strokeWidth={1.8} />
+            <input
+              ref={searchRef}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onFocus={() => setOpenMenu(null)}
+              placeholder="Search orders, products, customers…"
+              className="w-full h-9 pl-9 pr-14 bg-paper-2 border border-line rounded-md text-[13px] text-bone placeholder:text-grey focus:outline-none focus:border-line-2 focus:bg-white"
+            />
+            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex items-center rounded border border-line bg-paper-3 px-1.5 py-0.5 text-[9px] font-medium text-grey">
+              Ctrl K
+            </span>
+            {search.trim().length > 0 && (
+              <div className="absolute inset-x-0 top-full mt-1.5 z-30 bg-white border border-line rounded-lg shadow-xl overflow-hidden">
+                {searchResults.length === 0 && orderMatches.length === 0 && customerMatches.length === 0 ? (
+                  <p className="px-3 py-3 text-xs text-grey">Nothing matches “{search.trim()}”.</p>
+                ) : (
+                  <div className="max-h-[420px] overflow-y-auto">
+                    {orderMatches.length > 0 && (
+                      <div>
+                        <p className="px-3 pt-2.5 pb-1 text-[9px] font-semibold uppercase tracking-wide-2 text-grey">Orders</p>
+                        {orderMatches.map((o) => (
+                          <button
+                            key={o.id}
+                            onClick={() => goto('orders')}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-paper-2"
+                          >
+                            <span className="min-w-0 flex-1 truncate text-[13px] text-bone">{o.ref}</span>
+                            <span className="shrink-0 truncate max-w-[160px] text-[11px] text-grey">{o.customer?.name}</span>
+                            <span className="shrink-0 text-[10px] uppercase tracking-wide-2 text-grey tabular-nums">{inrOrderTotal(Number(o.total_amount) || 0)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {customerMatches.length > 0 && (
+                      <div>
+                        <p className="px-3 pt-2.5 pb-1 text-[9px] font-semibold uppercase tracking-wide-2 text-grey">Customers</p>
+                        {customerMatches.map((c) => (
+                          <button
+                            key={c.phone}
+                            onClick={() => goto('customers')}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-paper-2"
+                          >
+                            <span className="min-w-0 flex-1 truncate text-[13px] text-bone">{c.name}</span>
+                            <span className="shrink-0 text-[11px] text-grey">{c.phone}</span>
+                            {c.city && <span className="shrink-0 text-[11px] text-grey">{c.city}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {searchResults.length > 0 && (
+                      <div>
+                        <p className="px-3 pt-2.5 pb-1 text-[9px] font-semibold uppercase tracking-wide-2 text-grey">Products</p>
+                        {searchResults.map((p) => (
+                          <button
+                            key={p.id}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              openProductFromSearch(p.id);
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-paper-2"
+                          >
+                            <div className="w-6 h-7 shrink-0 overflow-hidden bg-paper-3 border border-line rounded">
+                              {p.colors[0]?.images[0] && <img src={p.colors[0].images[0]} alt="" className="h-full w-full object-cover" />}
+                            </div>
+                            <span className="min-w-0 flex-1 truncate text-[13px] text-bone">{p.name}</span>
+                            <span className="shrink-0 text-[10px] uppercase tracking-wide-2 text-grey">{p.code}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {openMenu && <div className="fixed inset-0 z-10" onClick={() => setOpenMenu(null)} />}
+            {/* Date range */}
+            <div className="relative hidden sm:block">
+              <button
+                onClick={() => setOpenMenu((m) => (m === 'range' ? null : 'range'))}
+                title="Date range"
+                className="inline-flex items-center gap-1.5 h-9 rounded-lg border border-line px-2.5 text-[11px] font-medium text-bone-dim hover:text-bone hover:border-line-2 transition-colors"
+              >
+                <Calendar size={14} strokeWidth={1.8} />
+                <span className="hidden md:inline">{rangeLabel(dashRange)}</span>
+                <ChevronDown size={12} strokeWidth={2} />
+              </button>
+              {openMenu === 'range' && (
+                <div className="absolute right-0 top-full mt-1.5 z-30 bg-white border border-line rounded-lg shadow-xl overflow-hidden w-44 animate-slide-down">
+                  {DASH_RANGES.map((r) => (
+                    <button
+                      key={r.key}
+                      onClick={() => {
+                        setDashRange(r.key);
+                        setOpenMenu(null);
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-[12px] ${dashRange === r.key ? 'bg-paper-2 font-semibold text-bone' : 'text-bone-dim hover:bg-paper-2'}`}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Notifications */}
+            <div className="relative">
+              <button
+                onClick={() => setOpenMenu((m) => (m === 'bell' ? null : 'bell'))}
+                title="Notifications"
+                aria-label="Notifications"
+                className="relative grid w-8 h-8 place-items-center rounded-lg text-grey hover:text-bone hover:bg-paper-2 transition-colors"
+              >
+                <Bell size={16} strokeWidth={1.8} />
+              </button>
+              {openMenu === 'bell' && (
+                <div className="absolute right-0 top-full mt-1.5 z-30 bg-white border border-line rounded-lg shadow-xl overflow-hidden w-64 animate-slide-down">
+                  <p className="px-4 pt-3 text-[11px] font-semibold uppercase tracking-wide-2 text-bone-dim">Notifications</p>
+                  <div className="p-4">
+                    <p className="text-xs text-bone">No notifications yet.</p>
+                    <p className="mt-1.5 text-[11px] text-grey leading-relaxed">Low-stock and shipment alerts aren't configured yet — this bell stays empty until they are.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Homepage (gallery) */}
             <button
-              onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 sm:gap-2 bg-bone text-white text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-ink transition-colors rounded"
+              onClick={() => goto('hero')}
+              title="Homepage"
+              aria-label="Homepage"
+              className="hidden sm:grid w-8 h-8 place-items-center rounded-lg text-grey hover:text-bone hover:bg-paper-2 transition-colors"
             >
-              <Plus size={14} strokeWidth={2} /> New Product
+              <ImageIcon size={16} strokeWidth={1.8} />
             </button>
-          )}
-          {tab === 'hero' && !creating && (
-            <button
-              onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 sm:gap-2 bg-bone text-white text-[10px] sm:text-[11px] uppercase tracking-wide-2 font-semibold px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-ink transition-colors rounded"
-            >
-              <Plus size={14} strokeWidth={2} /> New Slide
-            </button>
-          )}
+
+            {/* User */}
+            <div className="relative">
+              <button
+                onClick={() => setOpenMenu((m) => (m === 'user' ? null : 'user'))}
+                title="Account"
+                aria-label="Account"
+                className="grid w-8 h-8 place-items-center rounded-full bg-bone text-white text-[11px] font-semibold uppercase hover:bg-ink transition-colors"
+              >
+                {adminInitial}
+              </button>
+              {openMenu === 'user' && (
+                <div className="absolute right-0 top-full mt-1.5 z-30 bg-white border border-line rounded-lg shadow-xl overflow-hidden w-60 animate-slide-down">
+                  <div className="px-4 py-3 border-b border-line">
+                    <p className="text-[13px] font-semibold text-bone">{adminName}</p>
+                    <p className="mt-0.5 text-[10px] uppercase tracking-wide-2 text-grey">Admin</p>
+                    <p className="mt-1.5 truncate text-[11px] text-grey">{user?.email ?? ''}</p>
+                  </div>
+                  <a href={linkHref('/')} className="flex items-center gap-2.5 px-4 py-2.5 text-[13px] text-bone-dim hover:text-bone hover:bg-paper-2 transition-colors">
+                    <ExternalLink size={15} strokeWidth={1.8} /> View site
+                  </a>
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[13px] text-bone-dim hover:text-bone hover:bg-paper-2 transition-colors"
+                  >
+                    <LogOut size={15} strokeWidth={1.8} /> Sign out
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </header>
 
-        <div className="p-3 sm:p-5 md:p-6 lg:p-8 w-full max-w-5xl mx-auto">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-5 lg:p-6 w-full max-w-[1440px] mx-auto admin-scroll">
           {loadError && (
             <div className="mb-6 bg-crimson/5 border border-crimson/20 text-crimson text-sm px-4 py-3 rounded">
               {loadError}
@@ -357,12 +700,26 @@ export function AdminDashboard() {
                 onChanged={loadProducts}
               />
             ) : (
-              <ProductList
-                products={products}
-                onEdit={(id) => setEditingId(id)}
-                onCreate={() => setCreating(true)}
-                onDelete={(id) => runAction(async () => { await adminDeleteProduct(id); await loadProducts(); const warning = latestImageCleanupWarning(); if (warning) throw new Error(warning); }, 'Could not delete this product.')}
-              />
+              <>
+                <div className="flex flex-wrap items-center gap-3 mb-6">
+                  <div className="min-w-0">
+                    <h1 className="text-xl font-semibold text-bone">Products</h1>
+                    <p className="mt-0.5 text-[12px] text-grey">Catalog, colours, sizes and per-colour stock.</p>
+                  </div>
+                  <button
+                    onClick={() => setCreating(true)}
+                    className="inline-flex items-center gap-1.5 bg-bone text-white text-[10px] uppercase tracking-wide-2 font-semibold px-3 py-2 hover:bg-ink transition-colors rounded ml-auto"
+                  >
+                    <Plus size={14} strokeWidth={2} /> New Product
+                  </button>
+                </div>
+                <ProductList
+                  products={products}
+                  onEdit={(id) => setEditingId(id)}
+                  onCreate={() => setCreating(true)}
+                  onDelete={(id) => runAction(async () => { await adminDeleteProduct(id); await loadProducts(); const warning = latestImageCleanupWarning(); if (warning) throw new Error(warning); }, 'Could not delete this product.')}
+                />
+              </>
             )
           )}
 
@@ -373,11 +730,25 @@ export function AdminDashboard() {
                 onCancel={() => setCreating(false)}
               />
             ) : (
-              <HeroList
-                slides={heroSlides}
-                onUpdate={(id, patch) => runAction(async () => { await adminUpdateHero(id, patch); await loadHero(); const warning = latestImageCleanupWarning(); if (warning) throw new Error(warning); }, 'Could not save this slide.')}
-                onDelete={(id) => runAction(async () => { await adminDeleteHero(id); await loadHero(); const warning = latestImageCleanupWarning(); if (warning) throw new Error(warning); }, 'Could not delete this slide.')}
-              />
+              <>
+                <div className="flex flex-wrap items-center gap-3 mb-6">
+                  <div className="min-w-0">
+                    <h1 className="text-xl font-semibold text-bone">Homepage</h1>
+                    <p className="mt-0.5 text-[12px] text-grey">Hero slides shown on the storefront.</p>
+                  </div>
+                  <button
+                    onClick={() => setCreating(true)}
+                    className="inline-flex items-center gap-1.5 bg-bone text-white text-[10px] uppercase tracking-wide-2 font-semibold px-3 py-2 hover:bg-ink transition-colors rounded ml-auto"
+                  >
+                    <Plus size={14} strokeWidth={2} /> New Slide
+                  </button>
+                </div>
+                <HeroList
+                  slides={heroSlides}
+                  onUpdate={(id, patch) => runAction(async () => { await adminUpdateHero(id, patch); await loadHero(); const warning = latestImageCleanupWarning(); if (warning) throw new Error(warning); }, 'Could not save this slide.')}
+                  onDelete={(id) => runAction(async () => { await adminDeleteHero(id); await loadHero(); const warning = latestImageCleanupWarning(); if (warning) throw new Error(warning); }, 'Could not delete this slide.')}
+                />
+              </>
             )
           )}
 
@@ -386,6 +757,31 @@ export function AdminDashboard() {
           {tab === 'orders' && <RetailOrdersPanel />}
 
           {tab === 'promos' && <PromoPanel />}
+
+          {tab === 'overview' && (
+            <OverviewSection
+              range={dashRange}
+              onRange={setDashRange}
+              onOpenOrders={() => setTab('orders')}
+              onOpenInventory={() => setTab('inventory')}
+              onOpenAnalytics={() => setTab('analytics')}
+              onOpenActivity={() => setTab('activity')}
+            />
+          )}
+
+          {tab === 'inventory' && <InventorySection />}
+
+          {tab === 'purchasing' && <PurchasingSection />}
+
+          {tab === 'customers' && <CustomersSection />}
+
+          {tab === 'shipping' && <ShippingSection onOpenOrders={() => setTab('orders')} />}
+
+          {tab === 'analytics' && <AnalyticsSection />}
+
+          {tab === 'activity' && <ActivitySection />}
+
+          {tab === 'collections' && <CollectionsSection onOpenProducts={() => setTab('products')} />}
         </div>
       </div>
     </div>
@@ -2027,31 +2423,6 @@ function SettingsPanel() {
 
 /* ---- Retail Orders ---- */
 
-const PAYMENT_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
-  success: { label: 'Success', cls: 'bg-green-600/10 text-green-700' },
-  paid: { label: 'Paid', cls: 'bg-green-600/10 text-green-700' },
-  failed: { label: 'Failed', cls: 'bg-crimson/10 text-crimson' },
-  cancelled: { label: 'Cancelled', cls: 'bg-grey/15 text-grey' },
-  refunded: { label: 'Refunded', cls: 'bg-grey/15 text-grey' },
-};
-
-const ORDER_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' },
-  cod_partial_paid: { label: 'COD — Advance Paid', cls: 'bg-sky-100 text-sky-700' },
-  processing: { label: 'Processing', cls: 'bg-sky-100 text-sky-700' },
-  shipped: { label: 'Shipped', cls: 'bg-indigo-100 text-indigo-700' },
-  delivered: { label: 'Delivered', cls: 'bg-green-600/10 text-green-700' },
-  rto: { label: 'Returned to Origin (RTO)', cls: 'bg-amber-100 text-amber-700' },
-  cancelled: { label: 'Cancelled', cls: 'bg-crimson/10 text-crimson' },
-  refunded: { label: 'Refunded', cls: 'bg-grey/15 text-grey' },
-};
-
-const ORDER_STATUS_FLOW = ['pending', 'cod_partial_paid', 'processing', 'shipped', 'delivered', 'rto', 'cancelled', 'refunded'] as const;
-
-/** Which orders qualify for the "Ship Order" (Delhivery) action. */
-const SHIPPABLE_ORDER_STATUSES = new Set(['pending', 'cod_partial_paid', 'processing']);
-
 function formatOrderDate(iso: string): string {
   try {
     return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -2060,29 +2431,198 @@ function formatOrderDate(iso: string): string {
   }
 }
 
+/** Partially mask an address for the "Email sent to …" confirmation banner.
+ *  The send-order-mail endpoint intentionally no longer echoes the address
+ *  back, so the UI confirms the row it already has — masked, because the action
+ *  message is echoed in a shared screen and a toast should not print a full
+ *  customer address. Support can still open the order for the real value. */
+function maskEmail(email: string): string {
+  const [name, domain] = email.split('@');
+  if (!domain) return 'the customer';
+  const head = name.slice(0, 2);
+  return `${head}${'•'.repeat(Math.max(1, name.length - 2))}@${domain}`;
+}
+
+type OrderTabKey = 'new' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded';
+
+/** The manual courier + AWB form for one order. */
+interface ShipForm {
+  courier: string;
+  /** The real courier name typed when `courier` is "Other" — we must never
+   *  store the literal word "Other" as the courier. */
+  courier_other: string;
+  awb: string;
+  tracking_url: string;
+  shipping_status: string;
+}
+
+interface OrderTabDef {
+  key: OrderTabKey;
+  label: string;
+  statuses: readonly string[];
+  payments?: readonly string[];
+}
+
+/**
+ * Payment states that mean "this order is confirmed and can be fulfilled".
+ *
+ * A NEW COD order is confirmed the moment it is placed: payment_status =
+ * 'cod_pending' means nothing is owed to us online and the full amount is due
+ * at the door. It is NOT an unpaid order and must never be treated as one,
+ * otherwise COD orders can never be packed, shipped or delivered.
+ */
+const VERIFIED_PAYMENTS = ['success', 'paid', 'cod', 'cod_pending'] as const;
+
+/**
+ * A new COD order is created at 'pending' and follows the ordinary fulfillment
+ * path from there. Historical money is retained in its ledger fields and does
+ * not create a separate fulfilment state.
+ */
+const NEW_ORDER_STATUSES = ['pending'] as const;
+
+/**
+ * The COD "Collection status" shown in Admin — a FACT, not a live value.
+ *
+ * Delhivery does not report per-order COD collection. Both surfaces this app
+ * consumes carry only the shipment lifecycle:
+ *   * pull  — GET {track-server}/api/v1/packages/json/?waybill=AWB
+ *             -> { ShipmentData: [ { AWB, Status: { StatusType }, Scans } ] }
+ *   * push  — the Shipment webhook body, same fields
+ * StatusType is the delivery outcome (DL / UD / RT / IT / NDR) and Scans carry
+ * Location + timestamps. Neither has a collected / pending / failed cash flag.
+ * Delhivery's COD remittance is an account-level settlement, reconciled from
+ * the merchant's remittance report — not addressable per waybill.
+ *
+ * So until that report is the system of record, this stays a static note. It is
+ * deliberately worded as a pointer to the remittance report so an operator never
+ * reads "Delivered" as "the cash is in hand".
+ *
+ * Single source of truth: if Delhivery ever exposes a per-order collection
+ * field, change THIS function (and the copy above) rather than the call site.
+ */
+function codCollectionNote(_o: RetailOrder): string {
+  return 'Reconciled via Delhivery';
+}
+
+/** One authoritative workflow mapping — every order lands in exactly one tab. */
+const ORDER_TABS: OrderTabDef[] = [
+  { key: 'new', label: 'New Orders', statuses: NEW_ORDER_STATUSES, payments: VERIFIED_PAYMENTS },
+  { key: 'processing', label: 'Processing', statuses: ['processing'] },
+  { key: 'shipped', label: 'Shipped', statuses: ['shipped'] },
+  { key: 'delivered', label: 'Delivered', statuses: ['delivered'] },
+  { key: 'cancelled', label: 'Cancelled', statuses: ['cancelled', 'rto'] },
+  { key: 'refunded', label: 'Refunded', statuses: ['refunded'] },
+];
+
+const UNPAID_PENDING_STATUSES = NEW_ORDER_STATUSES;
+
+const TAB_EMPTY_TITLE: Record<OrderTabKey, string> = {
+  new: 'No new orders',
+  processing: 'Nothing processing',
+  shipped: 'Nothing in transit',
+  delivered: 'No delivered orders yet',
+  cancelled: 'No cancelled orders',
+  refunded: 'No refunds yet',
+};
+
 function RetailOrdersPanel() {
   const [orders, setOrders] = useState<RetailOrder[] | null>(null);
+  // Order lines store no image URL; resolved from the public catalogue, the same
+  // source the storefront uses, so an operator sees the same picture a customer does.
+  const imageIndex = useOrderImages();
   const [loadError, setLoadError] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [ordersComplete, setOrdersComplete] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  // --- Workflow tabs + live per-tab counts (server-computed) ---
+  const [tab, setTab] = useState<OrderTabKey>('new');
+  const [counts, setCounts] = useState<Record<OrderTabKey, number>>({
+    new: 0,
+    processing: 0,
+    shipped: 0,
+    delivered: 0,
+    cancelled: 0,
+    refunded: 0,
+  });
+  const [unpaidCount, setUnpaidCount] = useState(0);
+  const [unpaidView, setUnpaidView] = useState(false);
+
+  // --- Search + date range (server-side, scoped to the active view) ---
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearch(searchInput.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  const selectTab = (next: OrderTabKey) => {
+    setTab(next);
+    setUnpaidView(false);
+    setExpanded(null);
+  };
+
+  /** PostgREST filter for the active view (tab + unpaid toggle + filters). */
+  const activeFilter = useMemo<RetailOrderQuery>(() => {
+    const def = ORDER_TABS.find((d) => d.key === tab) ?? ORDER_TABS[0];
+    const filter: RetailOrderQuery = { statuses: [...def.statuses] };
+    if (unpaidView) {
+      filter.payments = [...VERIFIED_PAYMENTS];
+      filter.excludePayments = true;
+    } else if (tab === 'new') {
+      // New Orders = a confirmed order still awaiting processing. Unpaid online
+      // orders are surfaced separately via the "awaiting payment" view.
+      //
+      // 'cod_pending' is a CONFIRMED state, not an unpaid one: a COD order owes
+      // its money to the delivery agent, not to us, so it belongs in New Orders
+      // and must never appear in the "awaiting payment" banner.
+      filter.payments = [...VERIFIED_PAYMENTS];
+    }
+    if (search) filter.search = search;
+    // The picked dates are local calendar days; convert them to absolute
+    // instants so the timestamptz comparison lines up with what the admin sees.
+    if (fromDate) filter.from = new Date(`${fromDate}T00:00:00`).toISOString();
+    if (toDate) filter.to = new Date(`${toDate}T23:59:59.999`).toISOString();
+    return filter;
+  }, [tab, unpaidView, search, fromDate, toDate]);
+
+  const refreshCounts = useCallback(async () => {
+    const [newCount, unpaid, processing, shipped, delivered, cancelled, refunded] = await Promise.all([
+      adminCountRetailOrders({ statuses: [...NEW_ORDER_STATUSES], payments: [...VERIFIED_PAYMENTS] }),
+      adminCountRetailOrders({ statuses: UNPAID_PENDING_STATUSES, payments: [...VERIFIED_PAYMENTS], excludePayments: true }),
+      adminCountRetailOrders({ statuses: ['processing'] }),
+      adminCountRetailOrders({ statuses: ['shipped'] }),
+      adminCountRetailOrders({ statuses: ['delivered'] }),
+      adminCountRetailOrders({ statuses: ['cancelled', 'rto'] }),
+      adminCountRetailOrders({ statuses: ['refunded'] }),
+    ]);
+    setCounts({ new: newCount, processing, shipped, delivered, cancelled, refunded });
+    setUnpaidCount(unpaid);
+  }, []);
+
   const load = useCallback(async () => {
     setLoadError('');
     setOrdersComplete(false);
+    const filter = activeFilter;
     try {
-      setOrders(await adminFetchRetailOrders());
+      const rows = await adminFetchRetailOrders(filter);
+      setOrders(rows);
+      // Counts refresh in parallel so badges stay live without blocking the list.
+      void refreshCounts();
     } catch (err) {
       setOrders([]);
       setLoadError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not load retail orders.'));
     }
-  }, []);
+  }, [activeFilter, refreshCounts]);
 
   const loadMore = useCallback(async () => {
     setLoadingMore(true);
     setLoadError('');
     try {
-      const extra = await adminFetchRetailOrders({ offset: orders?.length ?? 0 });
+      const extra = await adminFetchRetailOrders({ ...activeFilter, offset: orders?.length ?? 0 });
       setOrders((prev) => [...(prev ?? []), ...extra]);
       if (extra.length < 100) setOrdersComplete(true);
     } catch (err) {
@@ -2090,10 +2630,15 @@ function RetailOrdersPanel() {
     } finally {
       setLoadingMore(false);
     }
-  }, [orders]);
+  }, [activeFilter, orders]);
+
+  // Show the loading state whenever the active view changes; then load it.
+  useEffect(() => {
+    setOrders(null);
+  }, [tab, search, fromDate, toDate, unpaidView]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   const copyRef = async (ref: string) => {
@@ -2119,6 +2664,7 @@ function RetailOrdersPanel() {
       setExpanded((cur) => (cur === confirmDelete.id ? null : cur));
       setConfirmDelete(null);
       setActionMessage('Order deleted.');
+      void refreshCounts();
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Could not delete the order.');
     } finally {
@@ -2133,47 +2679,79 @@ function RetailOrdersPanel() {
     return () => window.clearTimeout(t);
   }, [actionMessage]);
 
-  // --- Shipment tracking (manual save; automated notifications are OUT of
-  // scope — the admin updates the customer directly on WhatsApp) ---
-  const [shipDrafts, setShipDrafts] = useState<Record<string, { tracking_id: string; tracking_url: string }>>({});
+  // --- Manual courier + AWB shipping (admin-entered, no courier API needed) ---
+  // One form per order. Seeded from the stored row so it shows the truth until
+  // the admin edits it; a courier or AWB typed in another tab is picked up by
+  // `load()` and re-seeds the form.
+  const [shipForms, setShipForms] = useState<Record<string, ShipForm>>({});
+  const [savingShipId, setSavingShipId] = useState<string | null>(null);
+  const [shipMsgs, setShipMsgs] = useState<Record<string, string>>({});
 
-  const draftFor = (o: RetailOrder) =>
-    shipDrafts[o.id] ?? { tracking_id: o.tracking_id ?? '', tracking_url: o.tracking_url ?? '' };
+  const shipFormFor = (o: RetailOrder): ShipForm =>
+    shipForms[o.id] ?? {
+      courier: o.courier_name ?? '',
+      // A stored courier that is not one of our options IS the typed name, so
+      // an "Other" shipment reopens showing what it actually says.
+      courier_other: COURIER_OPTIONS.includes(o.courier_name as (typeof COURIER_OPTIONS)[number]) ? '' : o.courier_name ?? '',
+      awb: awbOf(o),
+      tracking_url: o.tracking_url ?? '',
+      shipping_status: shippingStatusOf(o),
+    };
 
-  const setDraft = (id: string, patch: Partial<{ tracking_id: string; tracking_url: string }>) => {
-    setShipDrafts((prev) => ({
-      ...prev,
-      [id]: { ...(prev[id] ?? { tracking_id: '', tracking_url: '' }), ...patch },
-    }));
+  const setShipForm = (id: string, current: ShipForm, patch: Partial<ShipForm>) => {
+    setShipForms((prev) => ({ ...prev, [id]: { ...current, ...patch } }));
   };
 
-  const saveTracking = useCallback(async (o: RetailOrder): Promise<boolean> => {
-    const draft = draftFor(o);
-    // Always write both fields (trimmed or null) so the admin can clear a
-    // previously saved tracking id/link.
-    const patch: Record<string, unknown> = {
-      tracking_id: draft.tracking_id.trim() || null,
-      tracking_url: draft.tracking_url.trim() || null,
-    };
-    const { error } = await supabase.from('retail_orders').update(patch).eq('id', o.id);
-    if (error) {
-      setLoadError(describeSupabaseError(error, 'Could not save tracking information.'));
-      return false;
-    }
-    load();
-    setShipDrafts((prev) => {
-      const next = { ...prev };
-      delete next[o.id];
-      return next;
-    });
-    return true;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shipDrafts]);
+  /** What actually gets stored: the option, or the name typed behind "Other". */
+  const courierToSave = (form: ShipForm): string =>
+    (form.courier === 'Other' ? form.courier_other : form.courier).trim();
+
+  const saveShipping = useCallback(
+    async (o: RetailOrder) => {
+      const form = shipFormFor(o);
+      setSavingShipId(o.id);
+      setShipMsgs((prev) => ({ ...prev, [o.id]: '' }));
+      try {
+        const courier = courierToSave(form);
+        const res = await adminSetOrderShipping({
+          orderId: o.id,
+          courier,
+          awb: form.awb.trim(),
+          trackingUrl: form.tracking_url.trim(),
+          shippingStatus: form.shipping_status,
+        });
+        setShipForms((prev) => {
+          const next = { ...prev };
+          delete next[o.id];
+          return next;
+        });
+        setActionMessage(
+          res.status_clamped
+            ? `Shipping saved for ${o.ref} — ${res.note ?? 'the status was held at Packed until an AWB is entered.'}`
+            : `Shipping saved for ${o.ref} — ${shippingStatusLabel(res.shipping_status)}.`,
+        );
+        load();
+      } catch (err) {
+        setShipMsgs((prev) => ({
+          ...prev,
+          [o.id]: err instanceof Error ? err.message : 'Could not save shipping details.',
+        }));
+      } finally {
+        setSavingShipId(null);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [shipForms],
+  );
 
   // --- Ship via Delhivery (real shipment locked to production; fail-closed) ---
   const [confirmShipId, setConfirmShipId] = useState<string | null>(null);
   const [shippingOrderId, setShippingOrderId] = useState<string | null>(null);
   const [shipErrors, setShipErrors] = useState<Record<string, string>>({});
+  // Email notification state (replaces the old 'Send Order Update via WhatsApp').
+  const [emailingOrderId, setEmailingOrderId] = useState<string | null>(null);
+  const [emailMsgs, setEmailMsgs] = useState<Record<string, string>>({});
+  const EMAIL_KIND_LABEL: Record<string, string> = { confirmed: 'Order Confirmed', shipped: 'Shipped' };
 
   const hasLiveShipment = (o: RetailOrder): boolean =>
     Boolean(
@@ -2182,8 +2760,12 @@ function RetailOrdersPanel() {
         (o.shiprocket_order_id && o.shiprocket_order_id !== 'creating')
     );
 
+  // A CONFIRMED order may be handed to the courier. That set includes COD: a
+  // full-COD order is committed at creation and simply collects the amount on
+  // delivery, so gating this on payment_status === 'success' alone would leave
+  // every COD order permanently unshippable.
   const canShip = (o: RetailOrder): boolean =>
-    o.payment_status === 'success' &&
+    (VERIFIED_PAYMENTS as readonly string[]).includes(o.payment_status) &&
     SHIPPABLE_ORDER_STATUSES.has(o.order_status) &&
     !hasLiveShipment(o);
 
@@ -2212,32 +2794,32 @@ function RetailOrdersPanel() {
     setConfirmShipId(null);
     setShipErrors((prev) => ({ ...prev, [o.id]: '' }));
     try {
-      const res = await supabase.functions.invoke<{ ok: boolean; error?: string; awbNumber?: string }>(
-        'delhivery-order',
-        { body: { orderId: o.id } }
-      );
-      if (res.error) {
-        let msg = 'Creating the shipment failed.';
-        const ctx = (res.error as { context?: Response }).context;
-        if (ctx) {
-          try {
-            const j = (await ctx.json()) as { error?: string };
-            if (j?.error) msg = j.error;
-          } catch {
-            /* keep the default message */
-          }
-        }
-        setShipErrors((prev) => ({ ...prev, [o.id]: msg }));
+      // Route through VITE_FUNCTIONS_BASE_URL (localhost/staging serve) when set,
+      // otherwise the hosted project URL — same endpoint either way, so the
+      // manual "Ship Order" action can be tested against locally-served functions.
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess.session?.access_token ?? '';
+      const base = String(import.meta.env.VITE_FUNCTIONS_BASE_URL || import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
+      const res = await fetch(`${base}/functions/v1/delhivery-order`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ orderId: o.id }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; awbNumber?: string };
+      if (!res.ok) setShipErrors((prev) => ({ ...prev, [o.id]: body?.error || `Shipment creation failed (HTTP ${res.status}).` }));
+      if (!res.ok) return;
+      if (!body?.ok) {
+        setShipErrors((prev) => ({ ...prev, [o.id]: body?.error || 'Shipment creation failed.' }));
         return;
       }
-      if (!res.data?.ok) {
-        setShipErrors((prev) => ({ ...prev, [o.id]: res.data?.error ?? 'Creating the shipment failed.' }));
-        return;
-      }
-      setActionMessage(`Shipped — AWB ${res.data.awbNumber ?? ''}`.trim());
+      setActionMessage(`Shipped — AWB ${body.awbNumber ?? ''}`.trim());
       load();
     } catch (err) {
-      setShipErrors((prev) => ({ ...prev, [o.id]: err instanceof Error ? err.message : 'Creating the shipment failed.' }));
+      setShipErrors((prev) => ({ ...prev, [o.id]: err instanceof Error ? err.message : 'Shipment creation failed.' }));
     } finally {
       setShippingOrderId(null);
     }
@@ -2322,41 +2904,46 @@ function RetailOrdersPanel() {
     }
   };
 
-  const updateWhatsAppLink = (o: RetailOrder): string => {
-    const draft = draftFor(o);
-    const phone = (o.customer?.phone ?? '').replace(/\D/g, '').slice(-10);
-    const trackUrl = `${window.location.origin}/#/track-order/${o.ref}`;
-    const shipped = o.order_status === 'shipped' || o.order_status === 'delivered';
-    const trackingId = draft.tracking_id.trim() || o.awb_number || '';
-    const trackingUrl = draft.tracking_url.trim() || o.label_url || '';
-    const items = o.items
-      .map((it) => `${it.quantity}× ${it.name} (${it.color} · ${it.size_label}) — ${formatPrice(it.line_total)}`)
-      .join('\n');
-    const lines = shipped
-      ? [
-          `Hi ${o.customer.name},`,
-          `Your DSLANG order ${o.ref} has been shipped.`,
-          '',
-          trackingId ? `Tracking ID: ${trackingId}` : null,
-          trackingUrl ? `Track shipment: ${trackingUrl}` : null,
-          `You can also track your order here: ${trackUrl}`,
-        ]
-      : [
-          `Hi ${o.customer.name},`,
-          `Thank you for your DSLANG order ${o.ref}!`,
-          '',
-          items,
-          '',
-          `Order total: ${formatPrice(o.total_amount)}`,
-          o.is_cod
-            ? `COD — ${formatPrice(o.amount_paid_upfront ?? 0)} paid up front, ${formatPrice(o.amount_due_on_delivery ?? 0)} due on delivery.`
-            : (o.payment_discount ?? 0) > 0
-              ? `Online payment discount ${formatPrice(o.payment_discount ?? 0)} applied — paid ${formatPrice((o.total_amount ?? 0) - (o.payment_discount ?? 0))} online.`
-              : null,
-          `Track your order here: ${trackUrl}`,
-        ];
-    return `https://wa.me/91${phone}?text=${encodeURIComponent(lines.filter(Boolean).join('\n'))}`;
+  // --- Email the customer (Order Confirmed or Shipped, chosen by order state
+  // server-side in send-order-mail). Replaces the old WhatsApp order-update
+  // link — same trigger point, but an actual transactional email (Resend). ---
+  const emailCustomer = async (o: RetailOrder) => {
+    setEmailingOrderId(o.id);
+    setEmailMsgs((prev) => ({ ...prev, [o.id]: '' }));
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess.session?.access_token ?? '';
+      const base = String(import.meta.env.VITE_FUNCTIONS_BASE_URL || import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
+      const res = await fetch(`${base}/functions/v1/send-order-mail`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ orderId: o.id }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; hasEmail?: boolean; kind?: string };
+      if (!body?.ok) {
+        setEmailMsgs((prev) => ({ ...prev, [o.id]: body?.error || 'Could not send the email.' }));
+        return;
+      }
+      // The endpoint deliberately does not return the address (it would be a PII
+      // oracle), so confirm from the order we already hold in the UI.
+      const masked = o.customer?.email
+        ? maskEmail(o.customer.email)
+        : 'the customer on file';
+      setActionMessage(`Email sent to ${masked} — ${body.kind === 'shipped' ? 'Shipped' : 'Order Confirmed'}.`);
+      load();
+    } catch (err) {
+      setEmailMsgs((prev) => ({ ...prev, [o.id]: err instanceof Error ? err.message : 'Could not send the email.' }));
+    } finally {
+      setEmailingOrderId(null);
+    }
   };
+
+  const emailStatusLabel = (o: RetailOrder): string =>
+    o.last_email_kind ? (EMAIL_KIND_LABEL[o.last_email_kind] ?? o.last_email_kind) : '';
 
   if (orders === null) {
     return <div className="min-h-[40vh] flex items-center justify-center"><LoadingDots /></div>;
@@ -2364,9 +2951,103 @@ function RetailOrdersPanel() {
 
   return (
     <div className="space-y-3">
+      {/* Workflow tabs with live per-tab counts */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+        {ORDER_TABS.map((def) => {
+          const active = tab === def.key;
+          const count = counts[def.key];
+          return (
+            <button
+              key={def.key}
+              type="button"
+              onClick={() => selectTab(def.key)}
+              aria-pressed={active}
+              className={`shrink-0 inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold px-3.5 py-2 rounded border transition-colors ${
+                active
+                  ? 'bg-teal-700 text-white border-teal-700'
+                  : 'bg-white text-bone-dim border-line hover:border-bone hover:text-bone'
+              }`}
+            >
+              {def.label}
+              {count > 0 && (
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded ${active ? 'bg-white/20 text-white' : 'bg-grey/15 text-grey'}`}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Unpaid pending orders stay visible — never silently mixed into New Orders */}
+      {tab === 'new' && unpaidCount > 0 && (
+        <div
+          className={`flex items-center justify-between gap-3 border rounded px-3.5 py-2.5 ${
+            unpaidView ? 'bg-teal-50 border-teal-200' : 'bg-amber-50 border-amber-200'
+          }`}
+        >
+          <p className="text-xs text-bone-dim">
+            {unpaidView
+              ? `${unpaidCount} order${unpaidCount === 1 ? '' : 's'} awaiting payment — shown here for action, not counted as New Orders.`
+              : `${unpaidCount} order${unpaidCount === 1 ? '' : 's'} awaiting payment are not counted as New Orders.`}
+          </p>
+          <button
+            type="button"
+            onClick={() => setUnpaidView((v) => !v)}
+            className={`shrink-0 text-[11px] uppercase tracking-wide-2 font-semibold transition-colors ${
+              unpaidView ? 'text-teal-700 hover:text-teal-900' : 'text-bone-dim hover:text-bone'
+            }`}
+          >
+            {unpaidView ? 'Back to New Orders' : 'View awaiting payment'}
+          </button>
+        </div>
+      )}
+
+      {/* Search + date range (server-side, scoped to the active view) */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <label className="relative flex-1 min-w-[200px]">
+          <SearchIcon
+            size={14}
+            strokeWidth={2}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-grey pointer-events-none"
+          />
+          <input
+            type="search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search by order ref, name, or phone…"
+            className="w-full border border-line bg-white pl-8 pr-3 py-2 text-sm text-bone rounded focus:border-bone focus:outline-none"
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide-2 font-semibold text-grey">
+          <Calendar size={14} strokeWidth={2} />
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            aria-label="From date"
+            className="border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
+          />
+        </label>
+        <span className="text-[11px] uppercase tracking-wide-2 font-semibold text-grey">to</span>
+        <label className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide-2 font-semibold text-grey">
+          <input
+            type="date"
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
+            aria-label="To date"
+            className="border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
+          />
+        </label>
+      </div>
+
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-grey">
-          {orders.length === 0 ? 'No retail orders yet.' : `${orders.length} retail order${orders.length === 1 ? '' : 's'} — newest first.`}
+          {orders.length === 0
+            ? 'No retail orders yet.'
+            : `${orders.length} retail order${orders.length === 1 ? '' : 's'} — newest first.`}
         </p>
         <button
           onClick={load}
@@ -2386,8 +3067,16 @@ function RetailOrdersPanel() {
 
       {orders.length === 0 && !loadError && (
         <div className="text-center py-24 border border-line rounded bg-white">
-          <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">No retail orders</p>
-          <p className="mt-3 text-sm text-grey">Orders placed on the retail storefront will appear here.</p>
+          <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">
+            {search ? 'No matching orders' : TAB_EMPTY_TITLE[tab]}
+          </p>
+          <p className="mt-3 text-sm text-grey">
+            {search
+              ? 'No orders match your search in this view.'
+              : unpaidView
+                ? 'No orders awaiting payment right now.'
+                : 'Orders placed on the retail storefront will appear here when they reach this stage.'}
+          </p>
         </div>
       )}
 
@@ -2419,6 +3108,17 @@ function RetailOrdersPanel() {
                 </div>
                 <p className="text-xs text-grey mt-0.5 truncate">{o.customer.name} · {o.customer.phone}</p>
                 <p className="text-[11px] text-grey/70 mt-0.5">{formatOrderDate(o.created_at)}</p>
+                {/* Shipping, kept to one compact line so the list does not grow a
+                    column. Never claims a courier or an AWB that isn't stored. */}
+                {hasAwb(o) ? (
+                  <p className="text-[11px] text-bone-dim mt-0.5 truncate">
+                    {shippingStatusLabel(shippingStatusOf(o))}
+                    {o.courier_name ? ` · ${o.courier_name}` : ''} · AWB{' '}
+                    <span className="tabular-nums">{awbOf(o)}</span>
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-grey/70 mt-0.5">Not shipped</p>
+                )}
               </div>
               <div className="text-right shrink-0">
                 <p className="text-sm font-semibold text-bone">{formatPrice(o.total_amount)}</p>
@@ -2447,13 +3147,22 @@ function RetailOrdersPanel() {
                       )}
                       <div className="flex justify-between"><span className="text-bone-dim">Shipping</span><span className="font-medium text-bone">{formatPrice(o.shipping)}</span></div>
                       <div className="flex justify-between border-t border-line pt-1"><span className="text-bone">Total (Sale)</span><span className="font-semibold text-bone">{formatPrice(o.total_amount)}</span></div>
-                      {o.is_cod && (
-                        <>
-                          <div className="flex justify-between"><span className="text-bone-dim">COD Advance (min ₹100)</span><span className="font-medium text-green-700">{formatPrice(o.amount_paid_upfront ?? 0)}</span></div>
-                          <div className="flex justify-between"><span className="text-bone-dim">Pay at Delivery</span><span className="font-medium text-bone">{formatPrice(o.amount_due_on_delivery ?? 0)}</span></div>
-                        </>
-                      )}
-                      {!o.is_cod && Number(o.payment_discount) > 0 && (
+                      {o.is_cod ? (
+                        /* COD is collected in full by the agent - no advance,
+                           no remaining balance. Historical advance-model orders
+                           still show the real split they were actually paid under. */
+                        Number(o.amount_paid_upfront ?? 0) > 0 ? (
+                          <>
+                            <div className="flex justify-between"><span className="text-bone-dim">Amount Collected</span><span className="font-medium text-green-700">{formatPrice(o.amount_paid_upfront ?? 0)}</span></div>
+                            <div className="flex justify-between"><span className="text-bone-dim">Due on Delivery</span><span className="font-medium text-bone">{formatPrice(o.amount_due_on_delivery ?? 0)}</span></div>
+                          </>
+                        ) : (
+                          <div className="flex justify-between border-t border-line pt-1">
+                            <span className="text-bone">Due on Delivery</span>
+                            <span className="font-semibold text-bone">{formatPrice(o.amount_due_on_delivery ?? o.total_amount)}</span>
+                          </div>
+                        )
+                      ) : Number(o.payment_discount) > 0 && (
                         <div className="flex justify-between"><span className="text-bone-dim">Online Payment Discount</span><span className="font-medium text-green-700">−{formatPrice(o.payment_discount ?? 0)}</span></div>
                       )}
                       <div className="flex justify-between text-xs text-grey"><span>Qty</span><span>{o.total_qty}</span></div>
@@ -2465,17 +3174,29 @@ function RetailOrdersPanel() {
                 <div className="bg-white border border-line rounded p-3 sm:p-4">
                   <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Items ({o.items.length})</p>
                   <div className="divide-y divide-line">
-                    {o.items.map((it, i) => (
+                    {o.items.map((it, i) => {
+                      // Same resolver the storefront uses: order lines store no
+                      // image URL, so the picture comes from the catalogue by
+                      // product code (then id) + colour.
+                      const img = imageForItem(imageIndex, it);
+                      return (
                       <div key={`${it.product_id}-${it.color_id}-${it.size_label}-${i}`} className="flex items-center gap-3 py-2">
-                        <div className="w-6 h-6 rounded border border-line shrink-0" style={{ backgroundColor: it.color_hex }} />
+                        <div className="h-12 w-10 shrink-0 overflow-hidden rounded border border-line bg-paper-3">
+                          {img ? (
+                            <img src={img} alt={it.name} className="h-full w-full object-cover" loading="lazy" />
+                          ) : (
+                            <div className="h-full w-full" style={{ backgroundColor: it.color_hex }} />
+                          )}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-bone truncate">{it.name}</p>
-                          <p className="text-[11px] text-grey">{it.code} · {it.color} · {it.size_label}</p>
+                          <p className="text-[11px] text-bone-dim">{it.code} · {it.color} · {it.size_label}</p>
                         </div>
                         <span className="text-sm text-bone-dim">× {it.quantity}</span>
                         <span className="text-sm font-medium text-bone">{formatPrice(it.line_total)}</span>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -2493,24 +3214,22 @@ function RetailOrdersPanel() {
                       value={o.order_status}
                       onChange={async (e) => {
                         const next = e.target.value;
-                        // Consistency guard: never mark an unpaid order as
-                        // partial-paid/processing/shipped/delivered — payment
-                        // status comes from the verified provider, not from
-                        // fulfillment. cod_partial_paid additionally only
-                        // applies to COD orders (an advance was verified).
-                        if (o.payment_status !== 'success' && ['cod_partial_paid', 'processing', 'shipped', 'delivered'].includes(next)) {
-                          setLoadError('Cannot mark an unpaid order as paid/processing/shipped/delivered. Payment must be verified first.');
+                        // Consistency guard. Payment status comes from the
+                        // verified provider (or, for COD, from the confirmed
+                        // 'cod_pending' state) — never from a fulfillment click.
+                        //
+                        // CONFIRMED orders may advance freely. 'cod_pending'
+                        // IS confirmed: a COD order owes its money to the
+                        // delivery agent, not to us, so requiring
+                        // payment_status = 'success' here would have made new
+                        // COD orders impossible to pack, ship or deliver.
+                        const confirmed = (VERIFIED_PAYMENTS as readonly string[]).includes(o.payment_status);
+                        if (!confirmed && ['processing', 'shipped', 'delivered'].includes(next)) {
+                          setLoadError('Cannot move an unconfirmed order into fulfillment. Payment must be verified first.');
                           return;
                         }
-                        if (next === 'cod_partial_paid' && !o.is_cod) {
-                          setLoadError('COD — Advance Paid only applies to COD orders.');
-                          return;
-                        }
-                        const draft = draftFor(o);
                         const patch: Record<string, unknown> = {
                           order_status: next,
-                          tracking_id: draft.tracking_id.trim() || null,
-                          tracking_url: draft.tracking_url.trim() || null,
                         };
                         const { error } = await supabase
                           .from('retail_orders')
@@ -2524,7 +3243,7 @@ function RetailOrdersPanel() {
                       }}
                       className="border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
                     >
-                      {ORDER_STATUS_FLOW.map((s) => (
+                      {orderStatusOptions(o.order_status).map((s) => (
                         <option key={s} value={s}>
                           {ORDER_STATUS_LABEL[s].label}
                         </option>
@@ -2533,38 +3252,88 @@ function RetailOrdersPanel() {
                   </label>
                 </div>
 
+                {/* Collection status — COD ONLY, and deliberately separate from
+                    Order Status.
+
+                    Order Status is the fulfilment lifecycle and is identical for
+                    every order: Pending -> Processing -> Shipped -> Delivered,
+                    advanced by the Delhivery tracking webhook. A COD order is
+                    confirmed at creation (payment_status 'cod_pending'), so it
+                    walks that exact same path — there is no separate "confirm
+                    the payment" step gating Delivered.
+
+                    Collection is a different fact: whether the agent actually
+                    took the cash. Delhivery's tracking payload does NOT carry
+                    it. Both sources we receive — the pull
+                    GET /api/v1/packages/json/ and the pushed Shipment webhook —
+                    expose only AWB, Status.StatusType (DL/UD/RT/IT/NDR) and
+                    Scans[]. There is no per-order collected/pending/failed
+                    field; COD remittance reaches the merchant as an account
+                    settlement, not as a per-waybill status on the shipment.
+
+                    So this is a static note, NOT a live value. It is shown
+                    rather than hidden so an operator knows exactly where to
+                    look for the money, and so nobody reads "Delivered" as
+                    "cash in hand". See codCollectionNote() for the single
+                    source of this string. */}
+                {o.is_cod && (
+                  <div className="mt-3 flex items-center gap-2 flex-wrap border-t border-line pt-3">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">
+                      Collection status
+                    </span>
+                    <span
+                      className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-1 rounded bg-grey/15 text-bone-dim"
+                      title="Delhivery does not expose per-order COD collection in its tracking data."
+                    >
+                      <Info size={11} strokeWidth={2} className="shrink-0" />
+                      {codCollectionNote(o)}
+                    </span>
+                    <span className="text-[11px] text-grey">
+                      settled via your Delhivery remittance report
+                    </span>
+                  </div>
+                )}
+
                 <div className="border-t border-line pt-3">
                     <div className="bg-white border border-line rounded p-3 sm:p-4">
                       <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey mb-2">Shipment</p>
                       <div className="mb-3 pb-3 border-b border-line space-y-2">
                         <div className="flex items-center gap-1.5">
                           <Truck size={13} strokeWidth={1.8} className="text-grey" />
-                          <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Delhivery</span>
+                          {/* The courier is whatever was actually chosen, not a
+                              hard-coded provider. An order with no courier yet
+                              is not "Delhivery" — it simply has not shipped. */}
+                          <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">
+                            {o.courier_name || 'Courier not assigned'}
+                          </span>
                         </div>
                         {hasLiveShipment(o) && o.shiprocket_order_id !== 'creating' ? (
                           <>
                             <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide-2 text-green-700">
                               <Check size={13} strokeWidth={2.5} />
-                              Shipment created {['auto', 'webhook', 'fastrr', 'cashfree'].includes(o.ship_source ?? '') ? 'automatically' : 'manually'}
+                              {hasAwb(o) ? 'AWB assigned' : 'Shipment created'}{' '}
+                              {['auto', 'webhook'].includes(o.ship_source ?? '') ? 'automatically' : 'manually'}
                             </p>
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
                               <div>
                                 <p className="text-[10px] uppercase tracking-wide-2 text-grey">Courier</p>
-                                <p className="text-bone font-medium mt-0.5">{o.courier_name || '…'}</p>
+                                <p className="text-bone font-medium mt-0.5">{o.courier_name || '—'}</p>
                               </div>
                               <div>
                                 <p className="text-[10px] uppercase tracking-wide-2 text-grey">AWB / Tracking</p>
-                                <p className="text-bone font-medium mt-0.5 tabular-nums">{o.awb_number || o.tracking_id || '…'}</p>
+                                <p className="text-bone font-medium mt-0.5 tabular-nums">{awbOf(o) || '—'}</p>
                               </div>
                               <div>
-                                <p className="text-[10px] uppercase tracking-wide-2 text-grey">Latest status</p>
+                                <p className="text-[10px] uppercase tracking-wide-2 text-grey">Shipping status</p>
                                 <p className="text-bone font-medium mt-0.5 capitalize">
-                                  {o.tracking_current_status || o.shiprocket_current_status || '—'}
-                                  {o.tracking_location || o.shiprocket_location ? ` · ${o.tracking_location || o.shiprocket_location}` : ''}
-                                  {(() => {
-                                    const ts = o.last_tracking_sync_at ?? o.shiprocket_updated_at;
-                                    return ts ? ` · ${formatOrderDate(ts)}` : '';
-                                  })()}
+                                  {shippingStatusLabel(shippingStatusOf(o))}
+                                  {/* The courier's own scan status, only when a
+                                      provider actually reported one. Never
+                                      invented, never used as a substitute. */}
+                                  {o.tracking_current_status
+                                    ? ` · courier: ${o.tracking_current_status}`
+                                    : ''}
+                                  {o.tracking_location ? ` · ${o.tracking_location}` : ''}
                                 </p>
                               </div>
                             </div>
@@ -2841,46 +3610,153 @@ function RetailOrdersPanel() {
                             )}
                           </div>
                         ) : (
-                          <p className="text-xs text-grey">Not shippable — this order is not paid or not in a shippable state.</p>
+                          <p className="text-xs text-grey">Not shippable — this order is not confirmed, already has a shipment, or is not in a shippable state.</p>
                         )}
                         {shipErrors[o.id] && <p className="text-xs text-crimson">{shipErrors[o.id]}</p>}
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <label className="block">
-                          <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Tracking ID</span>
-                          <input
-                            value={draftFor(o).tracking_id}
-                            onChange={(e) => setDraft(o.id, { tracking_id: e.target.value })}
-                            placeholder="AWB / consignment no."
-                            className="mt-1 w-full border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Tracking Link</span>
-                          <input
-                            value={draftFor(o).tracking_url}
-                            onChange={(e) => setDraft(o.id, { tracking_url: e.target.value })}
-                            placeholder="https://courier.com/track/… (optional)"
-                            className="mt-1 w-full border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
-                          />
-                        </label>
+                      {/* --- Manual courier + AWB ---------------------------
+                          Always visible, in every shipment state, so an admin can
+                          enter or correct an AWB without any courier API, label
+                          or account. This is the primary shipping control; the
+                          Delhivery automation above is an optional shortcut. */}
+                      <div className="mt-3 pt-3 border-t border-line space-y-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Shipping</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <label className="block">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Courier</span>
+                            <select
+                              value={shipFormFor(o).courier}
+                              onChange={(e) => setShipForm(o.id, shipFormFor(o), { courier: e.target.value })}
+                              className="mt-1 w-full border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
+                            >
+                              <option value="">Select courier…</option>
+                              {COURIER_OPTIONS.map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                              {/* A courier that is not in our list stays selectable
+                                  by name, so the admin is never blocked. */}
+                              {shipFormFor(o).courier &&
+                                !COURIER_OPTIONS.includes(shipFormFor(o).courier as (typeof COURIER_OPTIONS)[number]) && (
+                                  <option value={shipFormFor(o).courier}>{shipFormFor(o).courier}</option>
+                                )}
+                            </select>
+                            {/* "Other" is a choice, not a courier name. Ask which
+                                one, and refuse to save a bare "Other". */}
+                            {shipFormFor(o).courier === 'Other' && (
+                              <input
+                                value={shipFormFor(o).courier_other}
+                                onChange={(e) => setShipForm(o.id, shipFormFor(o), { courier_other: e.target.value })}
+                                placeholder="Which courier? e.g. Ecom Express"
+                                autoComplete="off"
+                                className="mt-1 w-full border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
+                              />
+                            )}
+                            {shipFormFor(o).courier === 'Other' && !shipFormFor(o).courier_other.trim() && (
+                              <p className="mt-1 text-[10px] text-amber-700">
+                                Enter the courier name, or pick one from the list.
+                              </p>
+                            )}
+                          </label>
+                          <label className="block">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Shipping status</span>
+                            <select
+                              value={shipFormFor(o).shipping_status}
+                              onChange={(e) => setShipForm(o.id, shipFormFor(o), { shipping_status: e.target.value })}
+                              className="mt-1 w-full border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
+                            >
+                              {SHIPPING_STATUS_FLOW.map((s) => (
+                                <option key={s} value={s}>
+                                  {SHIPPING_STATUS_LABEL[s].label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <label className="block">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Tracking / AWB number</span>
+                            <input
+                              value={shipFormFor(o).awb}
+                              onChange={(e) => setShipForm(o.id, shipFormFor(o), { awb: e.target.value })}
+                              placeholder="Enter the AWB the courier gave you"
+                              autoComplete="off"
+                              className="mt-1 w-full border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Tracking URL</span>
+                            <input
+                              value={shipFormFor(o).tracking_url}
+                              onChange={(e) => setShipForm(o.id, shipFormFor(o), { tracking_url: e.target.value })}
+                              placeholder={
+                                shipFormFor(o).courier === 'Delhivery' && shipFormFor(o).awb.trim()
+                                  ? `Auto: ${delhiveryTrackingUrl(shipFormFor(o).awb.trim()) ?? ''}`
+                                  : 'Optional — https://…'
+                              }
+                              autoComplete="off"
+                              className="mt-1 w-full border border-line bg-white px-2 py-1.5 text-sm text-bone rounded focus:border-bone focus:outline-none"
+                            />
+                          </label>
+                        </div>
+                        {!shipFormFor(o).awb.trim() && isPostHandoff(shipFormFor(o).shipping_status) && (
+                          <p className="text-[11px] text-amber-700">
+                            Enter an AWB to save this status — an order cannot be shown as shipped to the customer without a tracking number.
+                          </p>
+                        )}
+                        <div className="flex items-center gap-2 flex-wrap mt-1">
+                          <button
+                            type="button"
+                            onClick={() => saveShipping(o)}
+                            disabled={savingShipId === o.id || !courierToSave(shipFormFor(o))}
+                            className="btn-dark inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded disabled:opacity-50"
+                          >
+                            {savingShipId === o.id ? (
+                              <Loader2 size={14} strokeWidth={2} className="animate-spin" />
+                            ) : (
+                              <Save size={14} strokeWidth={2} />
+                            )}
+                            Save Shipping Details
+                          </button>
+                          {hasAwb(o) && o.shipped_at && (
+                            <span className="text-[11px] text-grey">Shipped {formatOrderDate(o.shipped_at)}</span>
+                          )}
+                          {o.delivered_at && (
+                            <span className="text-[11px] text-green-700">Delivered {formatOrderDate(o.delivered_at)}</span>
+                          )}
+                        </div>
+                        {shipMsgs[o.id] && <p className="text-[11px] text-crimson">{shipMsgs[o.id]}</p>}
                       </div>
                       <div className="flex items-center gap-2 flex-wrap mt-3">
                         <button
                           type="button"
-                          onClick={() => saveTracking(o)}
-                          className="btn-dark inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded"
+                          onClick={() => emailCustomer(o)}
+                          disabled={emailingOrderId === o.id || !o.customer.email}
+                          title={!o.customer.email ? 'No customer email on this order.' : undefined}
+                          className="inline-flex items-center gap-2 bg-teal-700 text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-teal-800 transition-colors disabled:opacity-50"
                         >
-                          <Save size={14} strokeWidth={2} /> Save tracking
+                          {emailingOrderId === o.id ? (
+                            <Loader2 size={14} strokeWidth={2.5} className="animate-spin" />
+                          ) : (
+                            <Mail size={14} strokeWidth={2} />
+                          )}
+                          {o.last_email_sent_at ? 'Resend Email' : 'Email Customer'}
                         </button>
-                        <a
-                          href={updateWhatsAppLink(o)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 bg-green-600 text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-green-700 transition-colors"
-                        >
-                          <Phone size={14} strokeWidth={2} /> Send Order Update via WhatsApp
-                        </a>
+                      </div>
+                      <div className="mt-3 flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide-2 text-grey">Customer email</span>
+                        <span className="text-xs text-bone">{o.customer.email ?? <span className="text-crimson">no email on order</span>}</span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 flex-wrap">
+                        {o.last_email_sent_at ? (
+                          <span className="inline-flex items-center gap-1.5 text-[11px] text-green-700">
+                            <Check size={13} strokeWidth={2.5} /> {emailStatusLabel(o)} emailed · {formatOrderDate(o.last_email_sent_at)}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-grey">Not emailed yet</span>
+                        )}
+                        {emailMsgs[o.id] && <span className="text-[11px] text-crimson">{emailMsgs[o.id]}</span>}
                       </div>
                     </div>
                   </div>

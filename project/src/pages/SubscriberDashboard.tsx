@@ -15,6 +15,7 @@ import { useAuth } from '@/lib/auth';
 import { linkHref } from '@/lib/router';
 import { fetchProducts, formatPrice, type CatalogProduct } from '@/lib/catalog';
 import { LoadingDots } from '@/components/LoadingDots';
+import { Reveal } from '@/components/Reveal';
 
 interface Announcement {
   id: string;
@@ -42,7 +43,7 @@ const TYPE_META: Record<string, { label: string; icon: typeof TrendingUp; color:
 };
 
 export function SubscriberDashboard() {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const [subscriber, setSubscriber] = useState<Subscriber | null | undefined>(undefined);
   const [announcements, setAnnouncements] = useState<Announcement[] | null>(null);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
@@ -75,7 +76,12 @@ export function SubscriberDashboard() {
   }, [user, loadAll]);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    // Go through the auth context, NOT supabase.auth.signOut() directly. The
+    // context is the app's single source of truth for user/isAdmin; calling the
+    // client directly used to leave that state frozen at the signed-in values,
+    // so the navigation drawer kept offering ADMIN PANEL after sign-out until a
+    // hard refresh. signOut() clears it immediately and re-syncs.
+    await signOut();
     window.location.hash = '#/';
   };
 
@@ -122,7 +128,7 @@ export function SubscriberDashboard() {
 
   if (user === null) {
     return (
-      <div className="min-h-screen bg-paper-2 flex items-center justify-center px-5">
+      <div className="min-h-dvh bg-paper-2 flex items-center justify-center px-5">
         <div className="text-center">
           <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">Sign In Required</p>
           <p className="mt-3 text-sm text-grey">
@@ -141,7 +147,7 @@ export function SubscriberDashboard() {
 
   if (loadError) {
     return (
-      <div className="min-h-screen bg-paper-2 flex items-center justify-center px-5">
+      <div className="min-h-dvh bg-paper-2 flex items-center justify-center px-5">
         <div className="text-center">
           <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">Couldn't Load Your Updates</p>
           <p className="mt-3 text-sm text-grey">{loadError}</p>
@@ -158,7 +164,7 @@ export function SubscriberDashboard() {
 
   if (subscriber === undefined) {
     return (
-      <div className="min-h-screen bg-paper-2 flex items-center justify-center">
+      <div className="min-h-dvh bg-paper-2 flex items-center justify-center">
         <LoadingDots />
       </div>
     );
@@ -171,10 +177,10 @@ export function SubscriberDashboard() {
   });
 
   return (
-    <div className="min-h-screen bg-paper-2">
+    <div className="min-h-dvh bg-paper-2">
       {/* Header */}
       <header className="bg-white border-b border-line sticky top-0 z-10">
-        <div className="mx-auto max-w-4xl px-5 md:px-8 h-16 flex items-center justify-between">
+        <div className="shell shell--content h-16 flex items-center justify-between">
           <a href={linkHref('/')} className="font-brand text-2xl tracking-[0.03em] text-bone leading-none">
             DSLANG
           </a>
@@ -187,7 +193,7 @@ export function SubscriberDashboard() {
               <Settings size={18} strokeWidth={1.8} />
             </button>
             <a
-              href={linkHref('/collection')}
+              href={linkHref('/collections')}
               className="text-[11px] uppercase tracking-wide-2 font-medium text-bone-dim hover:text-bone transition-colors hidden sm:block"
             >
               Collection
@@ -203,9 +209,9 @@ export function SubscriberDashboard() {
         </div>
       </header>
 
-      <div className="mx-auto max-w-4xl px-5 md:px-8 py-8 md:py-12">
+      <div className="shell shell--content py-8 md:py-12">
         {/* Welcome */}
-        <div className="mb-8">
+        <Reveal className="mb-8">
           <p className="font-label text-[11px] uppercase tracking-ultra text-grey mb-2">My Account</p>
           <h1 className="font-display text-3xl md:text-5xl uppercase tracking-wide-2 text-bone leading-none">
             Drop Updates
@@ -214,7 +220,44 @@ export function SubscriberDashboard() {
             <Mail size={14} strokeWidth={1.6} className="text-grey" />
             <span>{user?.email}</span>
           </div>
-        </div>
+        </Reveal>
+
+        {/* Account details + the two things a customer can actually DO here.
+            Both read straight off the existing Supabase session — no second
+            identity, no new credential. Orders and log out live here rather
+            than in the nav drawer so the drawer keeps a single MY ACCOUNT
+            entry. */}
+        <Reveal className="mb-8">
+          <div className="bg-white border border-line rounded p-6">
+            <h2 className="font-display text-xl tracking-wide-2 text-bone uppercase">Account</h2>
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <dt className="font-label text-[10px] uppercase tracking-ultra text-grey">Email</dt>
+                <dd className="mt-0.5 text-sm text-bone break-all">{user?.email}</dd>
+              </div>
+              <div>
+                <dt className="font-label text-[10px] uppercase tracking-ultra text-grey">Customer ID</dt>
+                <dd className="mt-0.5 text-sm text-bone break-all tabular-nums">{user?.id}</dd>
+              </div>
+            </dl>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <a
+                href={linkHref('/account/orders')}
+                className="inline-flex items-center gap-2 btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3"
+              >
+                <ShoppingBag size={14} strokeWidth={1.8} />
+                Orders
+              </a>
+              <button
+                onClick={handleLogout}
+                className="inline-flex items-center gap-2 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3"
+              >
+                <LogOut size={14} strokeWidth={1.8} />
+                Log Out
+              </button>
+            </div>
+          </div>
+        </Reveal>
 
         {/* Preferences panel */}
         {prefsOpen && subscriber && (
@@ -279,7 +322,7 @@ export function SubscriberDashboard() {
             <p className="font-label text-2xl uppercase tracking-wide-2 text-grey">No updates yet</p>
             <p className="mt-2 text-sm text-grey">New drops and restocks will show up here first.</p>
             <a
-              href={linkHref('/collection')}
+              href={linkHref('/collections')}
               className="mt-6 inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold text-bone hover:text-bone-dim transition-colors"
             >
               Browse The Collection <ExternalLink size={13} />
@@ -294,8 +337,10 @@ export function SubscriberDashboard() {
               return (
                 <div
                   key={ann.id}
-                  className={`bg-white border rounded p-5 md:p-6 transition-all ${
-                    isRead ? 'border-line' : 'border-bone/30 shadow-[0_2px_12px_rgba(0,0,0,0.05)]'
+                  className={`bg-white border rounded-[10px] p-5 md:p-6 transition-all ${
+                    isRead
+                      ? 'border-line shadow-[0_1px_2px_rgba(0,0,0,0.03)]'
+                      : 'border-bone/30 shadow-[0_2px_12px_rgba(0,0,0,0.05)]'
                   }`}
                 >
                   <div className="flex items-start gap-4">
@@ -351,7 +396,7 @@ export function SubscriberDashboard() {
         )}
       </div>
 
-      <div className="mx-auto max-w-4xl px-5 md:px-8 pt-6 pb-10">
+      <div className="shell shell--content pt-6 pb-10">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line pt-5 text-[11px] text-grey">
           <a href={linkHref('/terms-and-conditions')} className="underline hover:text-bone transition-colors">Terms &amp; Conditions</a>
           <a href={linkHref('/privacy-policy')} className="underline hover:text-bone transition-colors">Privacy Policy</a>

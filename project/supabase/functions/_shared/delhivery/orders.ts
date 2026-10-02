@@ -2,18 +2,18 @@
 //
 // The ONLY place that knows the exact Delhivery create-shipment + waybill
 // contract:
-//   create   POST {delhiveryBase()}/api/p/create
+//   create   POST {delhiveryBase()}/api/cmu/create.json
 //              Authorization: Token <api-token>
 //              body: {
-//                shipments: [{ name, phone, address, city, state, pincode,
+//                shipments: [{ name, phone, add, city, state, pin,
 //                       country:'India', payment_mode, order:<ref>,
-//                       total_amount, waybill:'', add:'',
+//                       total_amount, waybill:'', quantity:'1',
 //                       ...item slots (item_name/item_qty/item_amount)...
 //                     }],
 //                pickup_location: { name: delhiveryPickupLocation() },
 //                client: delhiveryClient(),
 //              }
-//            success -> { shipments:[{ waybill:'60…', ... }], ... } — waybill
+//            success -> { success, packages:[{ waybill:'60…', ... }], rmk, ... } — waybill
 //              AUTO-ASSIGNED by the provider when left blank (provider-owned
 //              pool assigned to the account; the only always-safe path).
 //            error   -> 4xx/5xx { error:'…' } (auth 401, rate 429).
@@ -96,16 +96,16 @@ export async function createDelhiveryOrder(
       {
         name: addr.name,
         phone: addr.phone,
-        address: addr.address,
+        add: addr.address,
         city: addr.city,
         state: addr.state,
-        pincode: addr.pincode,
+        pin: addr.pincode,
         country: addr.country || 'India',
         payment_mode: order.isCod ? 'COD' : 'Prepaid',
         order: String(order.ref ?? order.id).slice(0, 15),
         total_amount: codOrPrepaidAmount(order),
         waybill: '',
-        add: '',
+        quantity: '1',
         ...sl,
       },
     ],
@@ -114,7 +114,12 @@ export async function createDelhiveryOrder(
   };
 
   const base = delhiveryBase();
-  const res = await fetch(`${base}/api/p/create`, {
+  // Delhivery's current API contract uses /api/cmu/create.json on BOTH staging
+  // and production. The legacy /api/p/create path now 404s (returns an HTML
+  // login shell) on staging-express.delhivery.com, so we must hit the cmu
+  // endpoint. It reports results like:
+  //   { success, rmk, packages: [{ waybill, remarks }], ... }
+  const res = await fetch(`${base}/api/cmu/create.json`, {
     method: 'POST',
     headers: delhiveryHeaders(config.token),
     body: JSON.stringify(body),
@@ -124,7 +129,7 @@ export async function createDelhiveryOrder(
     let detail = '';
     try {
       const j = JSON.parse(text);
-      detail = String(j?.error ?? '') || '(no detail)';
+      detail = String(j?.error ?? j?.rmk ?? '') || '(no detail)';
     } catch {
       detail = text.slice(0, 200);
     }
@@ -132,7 +137,19 @@ export async function createDelhiveryOrder(
   }
   const awb = extractWaybill(text);
   if (!awb) {
-    return { awb: null, trackingUrl: null, courierName: null, labelUrl: null, shippedAt: null };
+    // HTTP 200 but no trustworthy waybill — surface the API's own reason (rmk /
+    // packages[].remarks) as a real failure instead of silently storing a null AWB.
+    let why = 'Delhivery create returned no waybill.';
+    try {
+      const j = JSON.parse(text);
+      const remarks = Array.isArray(j?.packages)
+        ? (j.packages as Array<Record<string, unknown>>).map((p) => String(p.remarks ?? '')).filter(Boolean).join('; ')
+        : '';
+      why = String(j?.rmk ?? '') || remarks || why;
+    } catch {
+      /* keep the default message */
+    }
+    throw new Error(why);
   }
   return {
     awb,
@@ -176,25 +193,34 @@ export async function fetchDelhiveryWaybill(
 
 function resolveAddress(customer: Record<string, unknown>): Record<string, string> {
   const c = (customer ?? {}) as Record<string, unknown>;
-  const addr = (c.address ?? {}) as Record<string, unknown>;
+  // The app stores the FLAT checkout shape (customer.address/city/state/pincode
+  // are SIBLINGS — see RetailCustomer). A nested "address": {line1, ...} object
+  // is a safe fallback. Reading the wrong shape would silently empty street &
+  // pincode and Delhivery rejects — so resolve both, never guess further.
+  const nested = typeof c.address === 'object' && c.address !== null;
+  const addr = nested ? (c.address as Record<string, unknown>) : {};
   return {
     name: String(c.name ?? ''),
     phone: String(c.phone ?? c.mobile ?? ''),
-    address: String(addr.line1 ?? addr.address ?? ''),
-    city: String(addr.city ?? ''),
-    state: String(addr.state ?? ''),
-    pincode: String(addr.pincode ?? addr.zip ?? ''),
-    country: String(addr.country ?? 'India'),
+    address: String(nested ? (addr.line1 ?? addr.address ?? '') : (c.address ?? '')),
+    city: String(nested ? (addr.city ?? '') : (c.city ?? '')),
+    state: String(nested ? (addr.state ?? '') : (c.state ?? '')),
+    pincode: String(nested ? (addr.pincode ?? addr.zip ?? '') : (c.pincode ?? '')),
+    country: String(nested ? (addr.country ?? 'India') : (c.country ?? 'India')) || 'India',
   };
 }
 
 function lineItems(items: Array<Record<string, unknown>>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   (items ?? []).forEach((it, i) => {
+    const itm = (it ?? {}) as Record<string, unknown>;
     const idx = i === 0 ? '' : `_${i + 1}`;
-    out[`item_name${idx}`] = String(it?.name ?? '');
-    out[`item_qty${idx}`] = Number(it?.qty ?? 1);
-    out[`item_amount${idx}`] = Number(it?.amount ?? 0);
+    const qty = Number(itm?.qty ?? itm?.quantity ?? 1);
+    const q = Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 1;
+    const amt = Number(itm?.amount ?? itm?.line_total ?? Number(itm?.unit_price) * q);
+    out[`item_name${idx}`] = String(itm?.name ?? '');
+    out[`item_qty${idx}`] = q;
+    out[`item_amount${idx}`] = Number.isFinite(amt) && amt >= 0 ? amt : 0;
   });
   return out;
 }
@@ -209,6 +235,7 @@ function extractWaybill(text: string): string | null {
     const candidates: unknown[] = [];
     if (Array.isArray(j?.shipments)) candidates.push(...j.shipments);
     if (Array.isArray(j?.Shipments)) candidates.push(...j.Shipments);
+    if (Array.isArray(j?.packages)) candidates.push(...j.packages);
     if (Array.isArray(j?.data)) candidates.push(...j.data);
     for (const c of candidates) {
       const w = (c as Record<string, unknown>)?.waybill;

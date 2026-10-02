@@ -65,10 +65,20 @@ export interface RetailOrder {
   order_status: string;
   // Cash on Delivery + online-payment discount (added via migration; optional
   // so old rows still load). Canonical pricing (server-authoritative):
-  //   online: amount_paid_upfront = total_amount - payment_discount (fixed ₹50)
-  //   COD:    amount_paid_upfront = min(100, total_amount) — fixed ₹100 advance
-  //           (capped at the order value),
-  //           amount_due_on_delivery = balance
+  //   online: payment_discount = min(50, total_amount)
+  //           amount_paid_upfront = total_amount - payment_discount  (charged
+  //           in full to Cashfree)
+  //           amount_due_on_delivery = 0
+  //   COD:    payment_discount = 0, amount_paid_upfront = 0 (nothing is
+  //           charged online — the full-COD order skips Cashfree entirely)
+  //           amount_due_on_delivery = total_amount, paid by the agent on
+  //           arrival; payment_status = 'cod_pending'
+  // The retired partial-payment COD model no longer exists in the application:
+  // no checkout path, admin control or UI can produce one, and a new COD order
+  // always has amount_paid_upfront = 0. `amount_paid_upfront` itself is RETAINED
+  // because it is the authoritative record of what an ONLINE order actually
+  // charged, and because pre-existing rows carry real values for it that are
+  // read verbatim rather than recomputed.
   is_cod?: boolean;
   payment_discount?: number;
   amount_paid_upfront?: number;
@@ -99,6 +109,13 @@ export interface RetailOrder {
   shiprocket_updated_at?: string | null;
   shipping_sms_sent_at?: string | null;
   sms_sent_at?: string | null;
+  // --- Manual courier + AWB shipping -------------------------------------
+  // The shipping LIFECYCLE, admin-entered and independent of payment_status.
+  // The four fields above (shipping_provider / tracking_current_status /
+  // tracking_location / tracking_scans) are the COURIER's own reported scan
+  // data and are never faked when absent.
+  shipping_status?: string | null; // pending|packed|shipped|in_transit|out_for_delivery|delivered|rto|cancelled
+  delivered_at?: string | null;
   // fastrr (Shiprocket Checkout) — added via migration; optional for old rows
   fastrr_order_id?: string | null;
   fastrr_payment_ref?: string | null;
@@ -107,6 +124,9 @@ export interface RetailOrder {
   last_ship_attempt_at?: string | null;
   ship_source?: 'fastrr' | 'cashfree' | 'admin' | 'auto' | 'webhook' | null;
   auto_ship_at?: string | null;
+  // Transactional email audit trail (added via migration; optional for old rows)
+  last_email_kind?: 'confirmed' | 'shipped' | null;
+  last_email_sent_at?: string | null;
   referral: string | null;
   created_at: string;
   updated_at?: string;
@@ -157,4 +177,227 @@ export interface CatalogProduct extends ProductRow {
   colors: ProductColorRow[];
   sizes: ProductSizeRow[];
   size_chart: SizeChartRow[];
+}
+
+/* ---- Operations / inventory platform (ops migration) ---- */
+
+export interface VariantInventory {
+  variant_id: string;
+  product_id: string;
+  color_id: string;
+  size_label: string;
+  available: number;
+  committed: number;
+  on_hand: number;
+  incoming: number;
+  unavailable: number;
+  damaged: number;
+  reserved: number;
+  reorder_point: number;
+  target_stock: number;
+  min_stock: number;
+  in_stock: boolean;
+  low_stock: boolean;
+  out_of_stock: boolean;
+  value: number;
+  product_name: string;
+  product_code: string;
+  category: string;
+  published: boolean;
+  retail_visible: boolean;
+  color_name: string;
+  color_hex: string;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface ProductSizeOpsRow {
+  id: string;
+  product_id: string;
+  color_id: string;
+  size_label: string;
+  stock: number;
+  available: boolean;
+  incoming: number;
+  reorder_point: number;
+  target_stock: number;
+  min_stock: number;
+  unavailable: number;
+  damaged: number;
+  reserved: number;
+  updated_at: string;
+}
+
+export type StockMovementType =
+  | 'SALE'
+  | 'RESERVATION'
+  | 'RELEASE'
+  | 'RECEIPT'
+  | 'ADJUSTMENT'
+  | 'DAMAGE'
+  | 'RETURN'
+  | 'CANCELLATION'
+  | 'PRODUCTION'
+  | 'TRANSFER'
+  | 'CORRECTION'
+  | 'REJECTED';
+
+export interface StockMovement {
+  id: string;
+  product_id: string;
+  color_id: string;
+  size_label: string;
+  movement_type: StockMovementType;
+  quantity: number;
+  previous_stock: number;
+  new_stock: number;
+  reason: string | null;
+  source_type: string | null;
+  source_id: string | null;
+  actor: string | null;
+  note: string | null;
+  created_at: string;
+  product_name?: string;
+  color_name?: string;
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+  contact_person: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  payment_terms: string | null;
+  lead_time_days: number | null;
+  notes: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PurchaseOrderStatus = 'DRAFT' | 'ORDERED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED';
+
+export interface PurchaseOrder {
+  id: string;
+  po_number: string;
+  supplier_id: string | null;
+  supplier_name?: string | null;
+  status: PurchaseOrderStatus;
+  created_date: string;
+  expected_date: string | null;
+  destination: string | null;
+  payment_terms: string | null;
+  notes: string | null;
+  total_cost: number;
+  created_by: string | null;
+  updated_at: string;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  po_id: string;
+  product_id: string;
+  color_id: string;
+  size_label: string;
+  quantity_ordered: number;
+  quantity_received: number;
+  quantity_rejected: number;
+  unit_cost: number;
+  total_cost: number;
+  product_name?: string;
+  color_name?: string;
+}
+
+export interface AdminActivity {
+  id: string;
+  actor_id: string | null;
+  actor_email: string | null;
+  action: string;
+  entity: string;
+  entity_id: string | null;
+  entity_ref: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DashboardStats {
+  range: string;
+  from: string;
+  kpi: {
+    sales: number;
+    orders: number;
+    units: number;
+    pending_orders: number;
+    to_pack: number;
+    ready_to_ship: number;
+    low_stock_variants: number;
+    out_of_stock_variants: number;
+  };
+  charts: {
+    labels: string[];
+    sales: number[];
+    orders: number[];
+    units: number[];
+  };
+  inventory: {
+    available: number;
+    committed: number;
+    incoming: number;
+    low_stock: number;
+    out_of_stock: number;
+    value: number;
+  };
+  attention: {
+    to_pack: Array<{ ref: string; total: number; payment: string; created: string }>;
+    ready_to_ship: Array<{ ref: string; total: number; created: string }>;
+    shipment_exceptions: Array<{ ref: string; error: string; at: string }>;
+    low_stock: Array<{
+      product_id: string; color_id: string; size_label: string;
+      name: string; color: string; available: number; reorder_point: number; target_stock: number;
+    }>;
+    out_of_stock: Array<{
+      product_id: string; color_id: string; size_label: string;
+      name: string; color: string; reorder_point: number; target_stock: number;
+    }>;
+  };
+  ts: string;
+}
+
+export interface CustomerSummary {
+  phone: string;
+  name: string | null;
+  city: string | null;
+  order_count: number;
+  total_spent: number;
+  average_order: number;
+  units_ordered: number;
+  has_cod: boolean;
+  last_ref: string | null;
+  last_order_at: string | null;
+}
+
+export interface CustomerOverviewResult {
+  total: number;
+  customers: CustomerSummary[];
+}
+
+export interface AnalyticsResult {
+  range: string;
+  top_products: Array<{
+    product_id: string;
+    name: string;
+    code: string;
+    color_id: string;
+    color: string;
+    size_label: string;
+    units: number;
+    revenue: number;
+    orders: number;
+  }>;
+  payment_mix: Array<{ method: string; orders: number; revenue: number }>;
+  status_funnel: Array<{ status: string; count: number }>;
+  geo: Array<{ city: string; orders: number; revenue: number }>;
+  repeat: { returning: number; customers: number };
+  ts: string;
 }

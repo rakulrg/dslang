@@ -2,8 +2,18 @@
 //
 // The frontend never decides payment success. This function asks Cashfree for
 // the real payment state of the order, checks the paid amount matches the
-// DSLANG order total (tamper protection) and only then marks the order PAID
-// (payment_status = 'success', order_status = 'processing').
+// DSLANG expected charge and only then marks the order PAID.
+//
+//   * the gateway amount is matched against amount_paid_upfront — the single
+//     authoritative "payable now" figure:
+//     online -> total_amount - payment_discount (₹50 off the Sale Price, capped)
+//     COD    -> never reaches the gateway: a full-COD order is confirmed at
+//              creation with payment_status 'cod_pending' and payment_id null,
+//              and is answered directly below without any Cashfree call.
+//   * online success -> order_status 'processing'.
+//
+//   A historical order with a genuine gateway collection retains that recorded
+//   money and follows the ordinary processing status.
 //
 // Idempotent: already-paid orders short-circuit; the payment_id partial unique
 // index prevents a second Cashfree order ever pairing with one DSLANG order.
@@ -13,6 +23,7 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { sendOrderEmail } from '../_shared/emails.ts';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -83,6 +94,15 @@ Deno.serve(async (req) => {
     return json({ verified: false, status: 'pending', order: null }, 200);
   }
 
+  // COD GUARD: a full-COD order is confirmed the moment it is created and owes
+  // its money to the delivery agent, so there is nothing for Cashfree to verify
+  // and `payment_id` is null. Answer "confirmed" directly instead of touching
+  // the gateway. Legacy COD orders that DID pay an advance carry a real
+  // payment_id and still fall through to the normal verification below.
+  if (order.is_cod && (order.payment_status === 'cod_pending' || !order.payment_id)) {
+    return json({ verified: true, status: 'cod_pending', order });
+  }
+
   if (order.payment_status === 'success') {
     return json({ verified: true, status: 'paid', order });
   }
@@ -128,30 +148,60 @@ Deno.serve(async (req) => {
   const last = payments[payments.length - 1];
   const paymentStatus = String(last?.payment_status ?? '').toUpperCase();
   const paidAmount = Number(last?.order_amount ?? last?.amount ?? 0);
-  const expected = Number(order.total_amount);
+  // Authoritative expected charge = amount_paid_upfront (what Cashfree was
+  // actually charged: online = Sale Price minus the capped ₹50 discount).
+  // Never the client-supplied amount. A COD order that reaches here is a
+  // legacy advance-model one, so this is its real advance.
+  const expected = Number(order.amount_paid_upfront ?? order.total_amount);
 
   if (paymentStatus === 'SUCCESS') {
     // Amount-tamper guard: only mark paid when the gateway amount matches the
-    // DSLANG order total (within sub-paise float tolerance).
+    // DSLANG expected charge (within sub-paise float tolerance).
     if (Math.abs(paidAmount - expected) > 0.005) {
       return json({ verified: false, status: 'pending', order });
     }
     const gatewayId = last?.payment_gateway_details as Record<string, unknown> | undefined;
-    await supabase
+    // Grace before the auto-ship sweep may claim this order (same default and
+    // semantics as the webhook path).
+    const graceRaw = Number(Deno.env.get('SHIP_AUTO_GRACE_MINUTES') ?? '45');
+    const graceMinutes = Number.isFinite(graceRaw) && graceRaw >= 0 ? graceRaw : 45;
+    const { data: flippedRows } = await supabase
       .from('retail_orders')
       .update({
         payment_status: 'success',
+        // COD is guarded above. A historical gateway-confirmed row retains its
+        // recorded amounts but follows the normal fulfilment status.
         order_status: 'processing',
         paid_at: new Date().toISOString(),
         txn_id: String(last?.cf_payment_id ?? gatewayId?.gateway_transaction_id ?? '') || order.txn_id,
         payment_provider: 'cashfree',
+        auto_ship_at: new Date(Date.now() + graceMinutes * 60_000).toISOString(),
       })
-      .eq('id', order.id);
+      .eq('id', order.id)
+      // Hard guard, independent of the early return above: a new COD order
+      // must never be settled through the gateway, so the CAS matches zero rows
+      // for one even if this handler were reached with a stale event.
+      .neq('payment_status', 'cod_pending')
+      // Idempotency with the webhook: whichever confirmation runs FIRST stamps
+      // the grace window; a redundant poll (or late duplicate webhook) matches
+      // zero rows here via `.is('auto_ship_at', null)` and never extends it.
+      .is('auto_ship_at', null)
+      .select('id');
+    const flipped = (flippedRows?.length ?? 0) > 0;
     const { data: fresh } = await supabase
       .from('retail_orders')
       .select('*')
       .eq('id', order.id)
       .maybeSingle();
+    // Order Confirmed email — fired by the winning flip only (mirrors the
+    // webhook path's single-fire). Fail-open: never fails the confirmation.
+    if (flipped && fresh) {
+      try {
+        await sendOrderEmail(supabase, fresh, 'confirmed');
+      } catch {
+        /* best-effort */
+      }
+    }
     return json({ verified: true, status: 'paid', order: fresh || order });
   }
 

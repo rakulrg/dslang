@@ -30,7 +30,7 @@ interface PolicyPageShellProps {
 export function PolicyPageShell({ eyebrow, title, intro, children }: PolicyPageShellProps) {
   return (
     <div className="pt-4 pb-12 md:pt-8 md:pb-20">
-      <div className="mx-auto max-w-[1000px] px-5 md:px-8">
+      <div className="shell shell--reading">
         <p className="font-label text-[10px] uppercase tracking-ultra text-grey mb-2">
           {eyebrow}
         </p>
@@ -112,7 +112,7 @@ export function PolicyUl({ items }: { items: ReactNode[] }) {
 
 export function PolicyNote({ children }: { children: ReactNode }) {
   return (
-    <p className="border border-line bg-paper-2 px-4 py-3 text-sm text-grey leading-relaxed">
+    <p className="rounded-card border border-bone/20 bg-white px-4 py-3 text-sm text-bone-dim leading-relaxed">
       {children}
     </p>
   );

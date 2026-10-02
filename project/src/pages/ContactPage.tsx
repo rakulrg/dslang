@@ -22,27 +22,27 @@ export function ContactPage() {
       icon: Instagram,
       label: 'Instagram',
       value: '@dslang.in',
-      note: 'New drops, restocks, and behind-the-scenes.',
+      note: 'Restocks, and behind-the-scenes.',
       href: INSTAGRAM_URL,
     },
     {
       icon: Mail,
       label: 'Email',
       value: EMAIL,
-      note: 'New drops, returns & order support.',
+      note: 'Restocks, returns & order support.',
       href: `mailto:${EMAIL}`,
     },
 ];
 
   return (
     <div className="pb-12 md:pb-20">
-      <div className="mx-auto px-6 md:px-12 lg:px-20 xl:px-28">
+      <div className="shell">
         {/* Header */}
         <h1 className="mt-6 font-display text-5xl md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
           Let's Talk
         </h1>
 <p className="mt-4 text-bone-dim max-w-xl leading-relaxed">
-            A question about an order, a product or a drop — reach out and the DSLANG team replies fast. No bots, no call centres.
+            A question about an order or a product — reach out and the DSLANG team replies fast. No bots, no call centres.
           </p>
 
         {/* Channels */}
@@ -53,7 +53,7 @@ export function ContactPage() {
               href={c.href}
               target="_blank"
               rel="noopener noreferrer"
-              className="group min-w-0 border border-line bg-paper-2 p-5 md:p-6 hover:border-bone-dim transition-colors duration-150 animate-fade-up"
+              className="group min-w-0 rounded-card border border-bone/20 bg-white p-5 md:p-6 hover:border-bone transition-colors duration-150 animate-fade-up"
               style={{ animationDelay: `${i * 80}ms` }}
             >
               <c.icon size={24} className="text-bone mb-3" strokeWidth={1.5} />
@@ -69,7 +69,7 @@ export function ContactPage() {
         {/* Location note */}
         <div className="mt-8 flex items-center gap-3 text-bone-soft text-sm">
           <MapPin size={16} strokeWidth={1.6} className="text-bone-soft" />
-          <span>Manufactured in Tiruppur, Tamil Nadu. Pan-India dispatch.</span>
+          <span>Crafted in India. Pan-India dispatch.</span>
         </div>
       </div>
     </div>

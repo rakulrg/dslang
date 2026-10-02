@@ -27,7 +27,7 @@ const CART_ITEM = {
   colorId: 'c755ed6c-b8db-4775-a777-693eb0f1f513',
   color: 'Black',
   colorHex: '#000000',
-  sizeLabel: 'M',
+  sizeLabel: 'L',
   quantity: 1,
   unitPrice: 399,
   mrp: 499,
@@ -46,6 +46,12 @@ const FORM = {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Headless Chrome sometimes hangs screenshotting on document.fonts.ready
+// (webfont stall) — never let a diagnostic screenshot abort a run.
+const shotSafe = async (page, file) => {
+  try { await page.screenshot({ path: file, animations: 'disabled' }); } catch {}
+};
 
 async function gotoRetry(page, url, label) {
   for (let i = 1; i <= 4; i++) {
@@ -130,7 +136,7 @@ async function cashfreeSnapshot(page, name) {
   await sleep(1500);
   const frames = scanFrames(page);
   log(`${name}: frames=${JSON.stringify(frames)}`);
-  await page.screenshot({ path: path.join(SHOT_DIR, `${name}.png`), fullPage: false });
+  await shotSafe(page, path.join(SHOT_DIR, `${name}.png`));
   // Dump EVERY frame's url + body text so we can see exactly what the gateway
   // is showing when something stalls.
   const parts = [];
@@ -688,7 +694,7 @@ async function successRun() {
   await setupCart(page, true);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await fillCheckout(page);
-  await page.screenshot({ path: path.join(SHOT_DIR, 'checkout-form.png') });
+  await shotSafe(page, path.join(SHOT_DIR, 'checkout-form.png'));
 
   const { deltaMs } = await payNowAndMeasure(page, 'success');
 
@@ -713,7 +719,7 @@ async function successRun() {
     }
     await sleep(2500);
   }
-  await page.screenshot({ path: path.join(SHOT_DIR, 'success-result.png') });
+  await shotSafe(page, path.join(SHOT_DIR, 'success-result.png'));
   dump('success-result-text', confirmBody.slice(0, 6000));
   const onOrderStatus = result.hash.includes('order-status');
   const ok = onOrderStatus && confirmed;

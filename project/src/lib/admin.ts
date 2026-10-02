@@ -401,16 +401,79 @@ export async function adminRemoveProductSize(
   invalidateCatalog();
 }
 
-export async function adminFetchRetailOrders(options?: { offset?: number; limit?: number }): Promise<RetailOrder[]> {
+/** Server-side filter for the retail orders list — also used for tab counts. */
+export interface RetailOrderQuery {
+  /** Offset for pagination. */
+  offset?: number;
+  /** Page size (default 100, max 500). */
+  limit?: number;
+  /** Only include rows whose order_status is in this set. */
+  statuses?: readonly string[];
+  /** Only include rows whose payment_status is in this set. */
+  payments?: readonly string[];
+  /** When true, payments is treated as an exclusion set instead of an inclusion set. */
+  excludePayments?: boolean;
+  /** Free-text search across order ref, customer name, and customer phone (ilike). */
+  search?: string;
+  /** Only include rows created at/after this ISO instant (created_at >= from). */
+  from?: string;
+  /** Only include rows created at/before this ISO instant (created_at <= to). */
+  to?: string;
+}
+
+/** Turn a user-typed search term into a safe ilike pattern (escape LIKE
+ *  wildcards, strip characters that would break the PostgREST or() filter). */
+function orderSearchPattern(term: string): string {
+  return `%${term.replace(/[\\%_]/g, (ch) => `\\${ch}`).replace(/[,"()]/g, ' ').trim().replace(/\s+/g, ' ')}%`;
+}
+
+export async function adminFetchRetailOrders(options?: RetailOrderQuery): Promise<RetailOrder[]> {
   const offset = Math.max(0, Math.floor(options?.offset ?? 0));
   const limit = Math.min(500, Math.max(1, Math.floor(options?.limit ?? 100)));
-  const { data, error } = await supabase
-    .from('retail_orders')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1);
+  let q = supabase.from('retail_orders').select('*');
+  if (options?.statuses && options.statuses.length > 0) {
+    q = q.in('order_status', [...options.statuses]);
+  }
+  if (options?.payments && options.payments.length > 0) {
+    if (options.excludePayments) {
+      q = q.not('payment_status', 'in', `(${options.payments.join(',')})`);
+    } else {
+      q = q.in('payment_status', [...options.payments]);
+    }
+  }
+  if (options?.search) {
+    const pattern = orderSearchPattern(options.search);
+    q = q.or(`ref.ilike.${pattern},customer->>name.ilike.${pattern},customer->>phone.ilike.${pattern}`);
+  }
+  if (options?.from) q = q.gte('created_at', options.from);
+  if (options?.to) q = q.lte('created_at', options.to);
+  const { data, error } = await q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
   if (error) throw new Error(describeSupabaseError(error, 'Could not load retail orders.'));
   return (data as RetailOrder[]) ?? [];
+}
+
+/** Exact row count for a given retail-order filter — powers the tab badges. */
+export async function adminCountRetailOrders(options?: RetailOrderQuery): Promise<number> {
+  let q = supabase.from('retail_orders').select('*', { count: 'exact', head: true });
+  if (options?.statuses && options.statuses.length > 0) {
+    q = q.in('order_status', [...options.statuses]);
+  }
+  if (options?.payments && options.payments.length > 0) {
+    if (options.excludePayments) {
+      q = q.not('payment_status', 'in', `(${options.payments.join(',')})`);
+    } else {
+      q = q.in('payment_status', [...options.payments]);
+    }
+  }
+  if (options?.search) {
+    const pattern = orderSearchPattern(options.search);
+    q = q.or(`ref.ilike.${pattern},customer->>name.ilike.${pattern},customer->>phone.ilike.${pattern}`);
+  }
+  if (options?.from) q = q.gte('created_at', options.from);
+  if (options?.to) q = q.lte('created_at', options.to);
+  const { count, error } = await q;
+  if (error) throw new Error(describeSupabaseError(error, 'Could not count retail orders.'));
+  return count ?? 0;
 }
 
 /**
@@ -427,6 +490,51 @@ export async function adminDeleteRetailOrder(orderId: string): Promise<void> {
   if ((data as number) !== 1) {
     throw new Error('The order could not be found and was not deleted.');
   }
+}
+
+/**
+ * Saves the courier + AWB by hand via the admin-only `admin_set_order_shipping`
+ * RPC.
+ *
+ * Why an RPC and not a direct `.update()`: the shipping write has invariants a
+ * client must not be trusted to enforce — an AWB is required before any
+ * post-handoff status, shipped_at/delivered_at are stamped once, auto_ship_at is
+ * cleared so courier automation cannot overwrite a hand-entered AWB, and no
+ * payment column is ever part of the write. The RPC re-checks admin_users
+ * server-side, so a forged client call is refused even if RLS were misconfigured.
+ */
+export interface AdminShippingResult {
+  ok: boolean;
+  ref: string | null;
+  shipping_status: string;
+  courier_name: string | null;
+  awb_number: string | null;
+  tracking_url: string | null;
+  status_clamped?: boolean;
+  note?: string | null;
+  error?: string | null;
+}
+
+export async function adminSetOrderShipping(input: {
+  orderId: string;
+  courier: string;
+  awb: string;
+  trackingUrl: string;
+  shippingStatus: string;
+}): Promise<AdminShippingResult> {
+  const { data, error } = await supabase.rpc('admin_set_order_shipping', {
+    p_order_id: input.orderId,
+    p_courier: input.courier,
+    p_awb: input.awb,
+    p_tracking_url: input.trackingUrl,
+    p_shipping_status: input.shippingStatus,
+  });
+  if (error) {
+    // The RPC raises a plain sentence for a refused save; surface it verbatim
+    // rather than hiding a real validation failure behind generic wording.
+    throw new Error(describeSupabaseError(error, 'Could not save shipping details.'));
+  }
+  return (data ?? { ok: false, shipping_status: 'pending' }) as AdminShippingResult;
 }
 
 // Colors

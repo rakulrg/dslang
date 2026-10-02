@@ -3,18 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="description" content="DSLANG — premium streetwear brand. Shop new drops, hoodies, tees & joggers with pan-India delivery." />
+    <meta name="description" content="DSLANG — premium streetwear brand. Shop the collection — hoodies, tees & joggers with pan-India delivery." />
     <meta name="theme-color" content="#f7f6f3" />
 
     <meta property="og:title" content="DSLANG | Premium Streetwear India" />
-    <meta property="og:description" content="DSLANG — premium streetwear brand. Shop new drops, hoodies, tees & joggers with pan-India delivery." />
+    <meta property="og:description" content="DSLANG — premium streetwear brand. Shop the collection — hoodies, tees & joggers with pan-India delivery." />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://dslang.in" />
     <meta property="og:image" content="https://images.pexels.com/photos/30636000/pexels-photo-30636000.jpeg?auto=compress&cs=tinysrgb&h=650&w=940" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="DSLANG | Premium Streetwear India" />
-    <meta name="twitter:description" content="DSLANG — premium streetwear brand. Shop new drops, hoodies, tees & joggers with pan-India delivery." />
+    <meta name="twitter:description" content="DSLANG — premium streetwear brand. Shop the collection — hoodies, tees & joggers with pan-India delivery." />
     <meta name="twitter:image" content="https://images.pexels.com/photos/30636000/pexels-photo-30636000.jpeg?auto=compress&cs=tinysrgb&h=650&w=940" />
+
+    <!-- Hero loading state. The hero's loading state is its own dark DSLANG
+         treatment (see .hero-shell / .hero-curtain in src/index.css), which
+         fades out as the photograph fades in once it has decoded. There is no
+         blurred preview, no LQIP and no skeleton.
+
+         The --hero-lqip custom property below is intentionally `none` and is
+         NOT referenced by any stylesheet: the blurred preview was removed from
+         the hero's visual. The property and its markers are kept only because
+         scripts/generate-hero-lqip.mjs rewrites between them (it still
+         regenerates src/lib/heroLqip.generated.ts for the runtime cache), and
+         it errors out if the markers are missing. Nothing paints it. -->
+    <style>
+      /*HERO_LQIP_START*/:root{--hero-lqip:none;}/*HERO_LQIP_END*/
+    </style>
 
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fryxswzrpqujivtbguim.supabase.co" crossorigin />

@@ -9,15 +9,30 @@
 //   * We never trust the webhook's stated status alone. After signature
 //     verification the authoritative Cashfree status API is consulted and the
 //     amount is checked before the DSLANG order is marked PAID.
+//   * the gateway amount is matched against amount_paid_upfront — the single
+//     authoritative "payable now" figure:
+//     online -> total_amount - payment_discount (₹50 off the Sale Price, capped)
+//     COD    -> never reaches this handler: a full-COD order is confirmed at
+//              creation with payment_status 'cod_pending' and payment_id null,
+//              and Cashfree never creates a session for it. Historical gateway
+//              collections retain their facts and use normal fulfilment.
 //   * Idempotent: already-paid orders short-circuit; only one path can flip
-//     payment_status -> 'success' (guarded) so duplicate/replayed webhooks are
-//     safe.
+//     payment_status -> 'success' (guarded with a CAS update), so
+//     duplicate/replayed webhooks are safe.
+//   * AUTO-SHIP: this handler does NOT create a shipment inline. It stamps
+//     auto_ship_at = now() + SHIP_AUTO_GRACE_MINUTES (default 45) so the
+//     scheduled auto-ship-orders sweep can create the Shiprocket order AFTER a
+//     cancel-before-ship window — the admin keeps time to catch address errors
+//     or fraud. Orders before this automation (or with a NULL stamp) ship only
+//     via the Admin 'Ship Order' button.
 //
 // Env (Supabase Edge Function secrets):
 //   CASHFREE_SECRET_KEY, CASHFREE_ENV (TEST|PRODUCTION),
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+//   SHIP_AUTO_GRACE_MINUTES (optional, default 45).
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { sendOrderEmail } from '../_shared/emails.ts';
 
 async function verifyWebhookSignature(
   secretKey: string,
@@ -93,6 +108,19 @@ Deno.serve(async (req) => {
     return new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
+  // Defence in depth against a stale gateway event on a full-COD order.
+  //
+  // A new COD order has payment_id = null, so the lookup above cannot match it
+  // and this branch is normally unreachable. It exists so that even if a COD
+  // row were ever re-attached to a payment id (a bad backfill, a manual fix, a
+  // retried conversion), the webhook acknowledges the event and mutates
+  // NOTHING. A COD order's money is collected at the door by the agent and is
+  // never settled through Cashfree, so no gateway event may change its state.
+  // In particular it must never become a gateway-settled order.
+  if (order.is_cod && order.payment_status === 'cod_pending') {
+    return new Response('{"ok":true,"ignored":"cod_order"}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
   // Re-verify with the authoritative status API before marking paid.
   const base = env.toUpperCase() === 'PRODUCTION' ? 'https://api.cashfree.com' : 'https://sandbox.cashfree.com';
   const headers = {
@@ -115,19 +143,56 @@ Deno.serve(async (req) => {
     const last = payments[payments.length - 1];
     const status = String(last?.payment_status ?? '').toUpperCase();
     const paidAmount = Number(last?.order_amount ?? last?.amount ?? 0);
-    const expected = Number(order.total_amount);
+    // Authoritative expected charge = amount_paid_upfront (what Cashfree was
+    // actually charged: online = Sale Price minus the capped ₹50 discount).
+    // Never the client-supplied amount. A full-COD order has no payment_id and
+    // can never be looked up here; a COD order that does resolve is a legacy
+    // advance-model one, so this is its real advance.
+    const expected = Number(order.amount_paid_upfront ?? order.total_amount);
     if (status === 'SUCCESS' && Math.abs(paidAmount - expected) <= 0.005) {
       const gatewayId = last?.payment_gateway_details as Record<string, unknown> | undefined;
-      await supabase
+      // Grace window before the auto-ship sweep may claim this order.
+      const graceRaw = Number(Deno.env.get('SHIP_AUTO_GRACE_MINUTES') ?? '45');
+      const graceMinutes = Number.isFinite(graceRaw) && graceRaw >= 0 ? graceRaw : 45;
+      // CAS flip (CAS = same idempotency principle used everywhere else): only
+      // the first confirmation wins; a concurrent/replayed delivery updates
+      // zero rows. The stamp is written ONLY by the winning confirmation so a
+      // duplicate webhook can never re-arm (or extend) the grace window.
+      const flip = await supabase
         .from('retail_orders')
         .update({
           payment_status: 'success',
+          // COD is excluded by the guard below. A historical gateway-confirmed
+          // row keeps its stored monetary facts and follows normal fulfilment.
           order_status: 'processing',
           paid_at: new Date().toISOString(),
           txn_id: String(last?.cf_payment_id ?? gatewayId?.gateway_transaction_id ?? '') || order.txn_id,
           payment_provider: 'cashfree',
-})
-      .eq('id', order.id);
+          auto_ship_at: new Date(Date.now() + graceMinutes * 60_000).toISOString(),
+        })
+        .eq('id', order.id)
+        .neq('payment_status', 'success')
+        // Hard guard, independent of the early return above: a new COD order
+        // must never be settled through the gateway. Even if this handler were
+        // reached with a stale event for a COD row, the CAS matches zero rows
+        // and nothing changes.
+        .neq('payment_status', 'cod_pending')
+        .select('id');
+      if (flip.error) {
+        return new Response('{"ok":false,"error":"Order update failed."}', { status: 502, headers: { 'Content-Type': 'application/json' } });
+      }
+      // Order Confirmed email — fired by the WINNING flip only (replayed/
+      // duplicate webhooks short-circuit above, so this runs exactly once).
+      // Fail-open: an email hiccup never fails the payment confirmation.
+      if ((flip.data?.length ?? 0) > 0) {
+        try {
+          await sendOrderEmail(supabase, order, 'confirmed');
+        } catch {
+          /* best-effort */
+        }
+      }
+      // The shipment itself is NOT created here: the auto-ship-orders sweep
+      // creates it once auto_ship_at is in the past (cancel-before-ship window).
     } else if (status === 'CANCELLED' || status === 'USER_DROPPED' || status === 'FAILED') {
       // Confirmed failure (not provisional/pending): mark failed + cancelled.
       // Order status always stays consistent: a failed payment is a cancelled

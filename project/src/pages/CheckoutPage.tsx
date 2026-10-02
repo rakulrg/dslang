@@ -5,8 +5,10 @@ import { useCartDrawer } from '@/lib/cartDrawer';
 import { useRouter } from '@/lib/router';
 import { formatPrice } from '@/lib/catalog';
 import { computeShipping } from '@/lib/settings';
-import { createRetailOrder, type RetailOrderResult, type RetailCustomer, type RetailOrderLineSnapshot } from '@/lib/orders';
+import { createRetailOrder, convertRetailOrderToCod, type RetailOrderResult, type RetailCustomer, type RetailOrderLineSnapshot, type RetailPaymentMethod } from '@/lib/orders';
+import { invokeFunction } from '@/lib/rest';
 import { validatePromo, computeDiscount, promoApplies } from '@/lib/promo';
+import { isIndianPincode } from '@/lib/pincodes';
 import {
   getPaymentConfig,
   paymentStatusMessage,
@@ -17,6 +19,13 @@ import {
 } from '@/lib/payment';
 import { openCashfreeCheckout, preloadCashfreeSdk } from '@/lib/cashfreeSdk';
 import { fetchLiveVariantStock, reconcileCartWithLive, describeStockChanges } from '@/lib/cartStock';
+import { NO_AWB_NOTICE, shippingStatusMessage } from '@/lib/shipping';
+import { PaymentMethodsRow } from '@/components/PaymentMethodIcons';
+import { ConfettiBurst } from '@/components/ConfettiBurst';
+import { addCheckoutHistory } from '@/lib/trackHistory';
+import { useAuth } from '@/lib/auth';
+import { SaveDetailsPrompt } from '@/components/SaveDetailsPrompt';
+import { customerToProfile, saveProfile, loadSavedProfile, attachOrderToUser } from '@/lib/account';
 
 /**
  * Retail checkout — places the order via the server-side create_retail_order
@@ -56,9 +65,12 @@ interface LiveOrder {
   ref: string;
   order_id: string;
   amount: number;
-  /** Cart fingerprint at placement time — a retry only reuses the order while
+  /** Cart fingerprint at placement time - a retry only reuses the order while
    *  the cart is unchanged, so a paid session always matches what is in the bag. */
   itemsKey: string;
+  /** COD orders never reach the Cashfree
+   *  session or retry paths. */
+  is_cod?: boolean;
 }
 
 interface PendingPayload extends LiveOrder {
@@ -183,8 +195,21 @@ function asDigits(v: string, max: number): string {
   return v.replace(/\D/g, '').slice(0, max);
 }
 
-const REQUIRED_FIELDS = ['firstName', 'lastName', 'phone', 'address', 'city', 'state', 'pincode'] as const;
+// `email` is REQUIRED from this change on. The order-confirmation email is a
+// genuine customer notification, and it can only be delivered if the order
+// carries an address — every historical order placed before this was left
+// untouched, and none of them have one (see the admin Audit Trail, which shows
+// "no email on file" for them rather than inventing one).
+//
+// It was deliberately NOT made a login/OTP/password requirement: guest checkout
+// stays exactly as it was — one field more to fill, and nothing else changes
+// about ordering, payment or the COD flow.
+const REQUIRED_FIELDS = ['firstName', 'lastName', 'phone', 'email', 'address', 'city', 'state', 'pincode'] as const;
 type RequiredField = (typeof REQUIRED_FIELDS)[number];
+/** Every validated field is now a required one, so this is simply the union. */
+type ValidatedField = RequiredField;
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function validateField(key: keyof CheckoutForm, value: string): string | null {
   const v = value.trim();
@@ -193,8 +218,11 @@ function validateField(key: keyof CheckoutForm, value: string): string | null {
       return v ? null : 'Please enter your first name';
     case 'lastName':
       return v ? null : 'Please enter your last name';
-    case 'phone':
-      return v.replace(/\D/g, '').length === 10 ? null : 'Please enter a valid 10-digit mobile number';
+    case 'phone': {
+      const digits = v.replace(/\D/g, '');
+      if (digits.length !== 10 || !/^[6-9]/.test(digits)) return 'Please enter a valid phone number';
+      return null;
+    }
     case 'address':
       return v ? null : 'Please enter your address';
     case 'city':
@@ -202,17 +230,22 @@ function validateField(key: keyof CheckoutForm, value: string): string | null {
     case 'state':
       return v ? null : 'Please enter your state';
     case 'pincode':
-      return v.replace(/\D/g, '').length === 6 ? null : 'Please enter a valid PIN code';
-    case 'apartment':
+      return isIndianPincode(v) ? null : 'Please enter a valid pincode';
     case 'email':
+      // Required: the order-confirmation email is sent to this address.
+      if (!v) return 'Please enter your email for order updates';
+      return EMAIL_RE.test(v) ? null : 'Enter a valid email address';
+    case 'apartment':
       return null;
     default:
       return null;
   }
 }
 
-function validateForm(f: CheckoutForm): Partial<Record<RequiredField, string>> {
-  const errs: Partial<Record<RequiredField, string>> = {};
+function validateForm(f: CheckoutForm): Partial<Record<ValidatedField, string>> {
+  const errs: Partial<Record<ValidatedField, string>> = {};
+  // 'email' is inside REQUIRED_FIELDS, so it is validated (and marked missing)
+  // here exactly like every other required field.
   for (const key of REQUIRED_FIELDS) {
     const msg = validateField(key, f[key]);
     if (msg) errs[key] = msg;
@@ -234,6 +267,7 @@ export function CheckoutPage() {
   const { items, count, subtotal, clear, reconcileWithLiveStock, promo, applyPromo, removeAppliedPromo, reloadFromStorage } = useD2cCart();
   const { openCart } = useCartDrawer();
   const { navigate } = useRouter();
+  const { user } = useAuth();
   const shipping = computeShipping(subtotal);
   const placingRef = useRef(false);
 
@@ -295,12 +329,22 @@ export function CheckoutPage() {
   const [checkingNote, setCheckingNote] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [result, setResult] = useState<RetailOrderResult | null>(null);
-  const [errors, setErrors] = useState<Partial<Record<RequiredField, string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<ValidatedField, string>>>({});
   const [liveOrder, setLiveOrder] = useState<LiveOrder | null>(() => {
     const v = readSessionValue<LiveOrder | null>(LIVE_ORDER_KEY, (raw) => {
       const parsed = JSON.parse(raw) as LiveOrder;
       if (typeof parsed?.ref === 'string' && typeof parsed?.order_id === 'string' && typeof parsed?.amount === 'number') {
-        return { ref: parsed.ref, order_id: parsed.order_id, amount: parsed.amount, itemsKey: typeof parsed.itemsKey === 'string' ? parsed.itemsKey : '' };
+        // `is_cod` MUST survive the round-trip through sessionStorage. If it is
+        // dropped here, a rehydrated COD handle looks like an online one and gets
+        // reused for an online payment — which the server then refuses, leaving
+        // the shopper unable to buy that cart online at all.
+        return {
+          ref: parsed.ref,
+          order_id: parsed.order_id,
+          amount: parsed.amount,
+          itemsKey: typeof parsed.itemsKey === 'string' ? parsed.itemsKey : '',
+          is_cod: parsed.is_cod === true,
+        };
       }
       return null;
     });
@@ -323,10 +367,13 @@ export function CheckoutPage() {
   const [showNewOrder, setShowNewOrder] = useState(false);
   // New Shopify-style checkout UI state (layout only — no order data impact).
   const [saveNext, setSaveNext] = useState(false);
-  const [billingSame, setBillingSame] = useState(true);
   const [discountOpen, setDiscountOpen] = useState(false);
-  const [showBreakdown, setShowBreakdown] = useState(false);
   const [phoneHelpOpen, setPhoneHelpOpen] = useState(false);
+  // Order summary collapsed on first paint. The collapsed header always shows
+  // the payable amount, so the total is never hidden — only the per-item
+  // breakdown and the price roll-up wait for a tap. Same behaviour at every
+  // width, so the chevron is the single source of truth for its state.
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
 
   // Promo code — single source of truth shared with the Cart drawer via the
@@ -335,20 +382,67 @@ export function CheckoutPage() {
   const [promoInput, setPromoInput] = useState('');
   const [applying, setApplying] = useState(false);
   const [promoError, setPromoError] = useState('');
+  // Payment method: online via Cashfree, or COD (paid IN FULL by the delivery
+  // agent — no advance, no online payment at all). Only 'cod' is sent to the
+  // RPC. Persisted with the form so a failed-payment return to checkout (SPA
+  // remount) restores the same selection — the displayed payable must always
+  // match the reserved order, never silently switch the shopper to the other
+  // method.
+  const [paymentMethod, setPaymentMethod] = useState<RetailPaymentMethod>(() => {
+    try {
+      const raw = window.sessionStorage.getItem(CHECKOUT_FORM_KEY);
+      if (!raw) return 'online';
+      const saved = JSON.parse(raw) as { paymentMethod?: string };
+      return saved?.paymentMethod === 'cod' ? 'cod' : 'online';
+    } catch {
+      return 'online';
+    }
+  });
 
   const discount = promoApplies(subtotal, promo) ? computeDiscount(subtotal, promo) : 0;
   const total = subtotal - discount + shipping;
 
+  // Client-side DISPLAY math mirroring the server (create_retail_order) — the
+  // server stays authoritative and re-computes every figure; these are only
+  // used to show the shopper what will be charged.
+  //   * COD:   the FULL amount, collected by the delivery agent. No online
+  //            discount, no advance, no handling fee, and Cashfree is never
+  //            called. ₹0 is charged now.
+  //   * online: fixed ₹50 off the ORDER TOTAL after the promo (capped at the
+  //            order value) and the whole reduced amount is charged now.
+  //            Note this is the post-promo, shipping-inclusive total, NOT the
+  //            "Sale Price" the summary headline shows — that one is the
+  //            undiscounted product subtotal, purely for display.
+  // Math.max(NaN, 0) is NaN, so a non-finite total must be floored to 0 rather
+  // than propagated: the payment cards and the CTA would otherwise render a
+  // non-amount. The server remains authoritative and re-prices every order.
+  const safeTotal = Number.isFinite(total) ? Math.max(total, 0) : 0;
+  const onlineDiscount = Math.min(50, safeTotal);
+  const onlineTotal = safeTotal - onlineDiscount;
+  // COD is never charged online — the entire total is due at delivery.
+  const codDue = safeTotal;
+  const payableNow = paymentMethod === 'cod' ? 0 : onlineTotal;
+
+  // Pay Now gate: re-validated from the live form on every render (not just on
+  // the error display state) so the button hard-blocks the moment anything is
+  // invalid — before order creation or a Cashfree handoff can be reached.
   const set = (key: keyof CheckoutForm, value: string) => {
     if (key === 'phone') value = asDigits(value, 10);
     if (key === 'pincode') value = asDigits(value, 6);
     setForm((f) => ({ ...f, [key]: value }));
-    if (REQUIRED_FIELDS.includes(key as RequiredField) && validateField(key, value)) return;
+    // Live validation on every change: re-validate THIS field and refresh its
+    // inline error immediately (clear when valid, show when invalid) — errors
+    // never wait for a submit.
+    const err = validateField(key, value);
     setErrors((prev) => {
-      if (!(key in prev)) return prev;
-      const next = { ...prev };
-      delete next[key as RequiredField];
-      return next;
+      const k = key as ValidatedField;
+      if (!err) {
+        if (!(k in prev)) return prev;
+        const next = { ...prev };
+        delete next[k];
+        return next;
+      }
+      return { ...prev, [k]: err };
     });
   };
 
@@ -382,15 +476,38 @@ export function CheckoutPage() {
     setPromoInput('');
   };
 
+  /**
+   * Switching the payment method must never let a stale online total survive
+   * into a COD order, or a pending Cashfree session leak into the new method.
+   *
+   * The displayed totals are derived from `paymentMethod` on every render, so
+   * the numbers themselves recalculate immediately. What is NOT derived are the
+   * side effects of a previous attempt, and those are dropped here:
+   *   * a pending-payment record for a session that belongs to the OTHER method
+   *     (a COD order must never resume an online session),
+   *   * an error left over from the previous method's attempt.
+   * A live order is intentionally kept: it still holds this cart's stock
+   * reservation, and startCheckout only reuses it for the online path.
+   */
+  const changePaymentMethod = (next: RetailPaymentMethod) => {
+    if (next === paymentMethod) return;
+    setPaymentMethod(next);
+    clearPendingKey();
+    setErrorMsg('');
+    setExpired(false);
+    setVerdict('checking');
+    setCheckingNote('');
+  };
+
   // Persist the partially-filled delivery form so it survives Cart <-> Checkout
   // navigation (SPA remount) without an abrupt blank/blink. Cleared on success.
   useEffect(() => {
     try {
-      window.sessionStorage.setItem(CHECKOUT_FORM_KEY, JSON.stringify(form));
+      window.sessionStorage.setItem(CHECKOUT_FORM_KEY, JSON.stringify({ ...form, paymentMethod }));
     } catch {
       // ignore — persistence is best-effort
     }
-  }, [form]);
+  }, [form, paymentMethod]);
 
   // "Save this information for next time": while ticked, mirror the form into a
   // cross-session key so the NEXT checkout (fresh visit, cleared session) can
@@ -406,6 +523,42 @@ export function CheckoutPage() {
       // ignore — persistence is best-effort
     }
   }, [saveNext, form]);
+
+  // Signed-in prefill: a returning shopper with a saved profile gets their
+  // address back on checkout. Priority stays storage-first (this session's form
+  // or their opted-in local copy win); the profile only fills a BLANK checkout.
+  // Loads through supabase-js (owned row via RLS) and silently no-ops on any
+  // error — a missing migration never affects the guest path.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const hasStored =
+          Boolean(window.sessionStorage.getItem(CHECKOUT_FORM_KEY)) ||
+          Boolean(window.localStorage.getItem(SAVED_CHECKOUT_KEY));
+        if (hasStored || cancelled) return;
+        const p = await loadSavedProfile(user.id);
+        if (cancelled || !p) return;
+        const [firstName = '', ...rest] = (p.name || '').trim().split(/\s+/);
+        setForm({
+          firstName,
+          lastName: rest.join(' '),
+          phone: p.phone.replace(/\D/g, '').slice(0, 10),
+          email: p.email ?? '',
+          address: p.address,
+          apartment: p.apartment ?? '',
+          city: p.city,
+          state: p.state,
+          pincode: p.pincode,
+        });
+      } catch {
+        // ignore — prefill is best-effort
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const paymentCfg = getPaymentConfig();
 
@@ -553,9 +706,14 @@ export function CheckoutPage() {
         total_amount: Number(order.total_amount ?? 0),
         payment_status: 'success',
         order_status: String(order.order_status ?? 'pending'),
+        is_cod: Boolean(order.is_cod),
+        payment_discount: Number(order.payment_discount ?? 0),
+        amount_paid_upfront: Number(order.amount_paid_upfront ?? 0),
+        amount_due_on_delivery: Number(order.amount_due_on_delivery ?? 0),
         items: Array.isArray(order.items) ? (order.items as RetailOrderLineSnapshot[]) : [],
         customer: (order.customer as RetailCustomer) ?? undefined,
       });
+      addCheckoutHistory(String(order.ref), form.phone);
       setVerdict('success');
     };
 
@@ -643,9 +801,11 @@ export function CheckoutPage() {
     if (items.length === 0 || placingRef.current) return;
 
     // Instant client-side validation FIRST so an invalid form never triggers a
-    // network call — the button only ever shows its micro-state in flight.
+    // network call. The button stays enabled so this path is actually reachable;
+    // each bad field already renders its own red message directly beneath
+    // itself, so the summary this replaced was only ever a second copy of them.
     const errs = validateForm(form);
-    if (REQUIRED_FIELDS.some((k) => errs[k])) {
+    if (Object.keys(errs).length > 0) {
       setErrors(errs);
       setErrorMsg('');
       const first = REQUIRED_FIELDS.find((k) => errs[k]);
@@ -666,16 +826,51 @@ export function CheckoutPage() {
     // Kick the SDK download NOW so it overlaps order + session creation —
     // by the time the Cashfree link is ready the SDK is warm and the handoff
     // starts instantly. Idempotent: the module caches its loading promise.
-    preloadCashfreeSdk();
+    // COD never reaches a gateway, so it does not preload the SDK at all.
+    if (paymentMethod !== 'cod') preloadCashfreeSdk();
 
     const t0 = performance.now();
     try {
-      let order: Pick<RetailOrderResult, 'ref' | 'order_id' | 'total_amount'>;
+      let order: Pick<RetailOrderResult, 'ref' | 'order_id' | 'total_amount' | 'amount_paid_upfront' | 'is_cod'>;
 
-      if (reuseOrder && liveOrder && liveOrder.itemsKey === itemsKeyOf(items)) {
-        // Same order, new Cashfree session — stock was already reserved and the
-        // cart still matches, so reuse it to avoid a duplicate.
-        order = { ref: liveOrder.ref, order_id: liveOrder.order_id, total_amount: liveOrder.amount };
+      if (reuseOrder && liveOrder && liveOrder.itemsKey === itemsKeyOf(items) && !liveOrder.is_cod) {
+        // An order already exists and its stock is reserved. Two cases:
+        //
+        // 1. The method is UNCHANGED (online -> online). Reuse it verbatim: same
+        //    order, new Cashfree session, no duplicate stock reservation.
+        //
+        // 2. The shopper just switched ONLINE -> COD. The reserved order is still
+        //    an online row (is_cod = false, payment_status 'pending'), so
+        //    confirming it as COD would produce an order the admin New Orders
+        //    tab never shows and that expire-stale-orders would then cancel and
+        //    restock. Calling create_retail_order() again instead would reserve
+        //    the same stock a SECOND time. So the existing order is re-priced
+        //    server-side, in place, keeping exactly one reservation.
+        if (paymentMethod === 'cod') {
+          // Any gateway state for the OLD online attempt is now stale.
+          clearResultKey();
+          clearPendingKey();
+          const converted = await convertRetailOrderToCod(liveOrder.ref, form.phone);
+          const liveOrderHandle: LiveOrder = {
+            ref: converted.ref,
+            order_id: converted.order_id,
+            amount: 0,
+            itemsKey: itemsKeyOf(items),
+            is_cod: true,
+          };
+          setLiveOrder(liveOrderHandle);
+          persistLiveOrder(liveOrderHandle);
+          setResult(converted);
+          order = {
+            ref: converted.ref,
+            order_id: converted.order_id,
+            total_amount: converted.total_amount,
+            amount_paid_upfront: converted.amount_paid_upfront,
+            is_cod: true,
+          };
+        } else {
+          order = { ref: liveOrder.ref, order_id: liveOrder.order_id, total_amount: liveOrder.amount, is_cod: false };
+        }
       } else {
         // Authoritative order creation: the server re-prices every line,
         // re-validates stock as the final gate, reserves inventory and records
@@ -696,6 +891,7 @@ export function CheckoutPage() {
             // unit_price/line_total intentionally NOT sent — the server re-prices.
           })),
           promoCode: promo?.code ?? null,
+          paymentMethod,
         });
         // A brand-new order was created for this cart — anything the gateway
         // result page might remember from an OLD order is stale, drop it so a
@@ -704,13 +900,25 @@ export function CheckoutPage() {
         const liveOrderHandle: LiveOrder = {
           ref: res.ref,
           order_id: res.order_id,
-          amount: res.total_amount,
+          amount: res.amount_paid_upfront ?? res.total_amount,
           itemsKey: itemsKeyOf(items),
+          is_cod: Boolean(res.is_cod),
         };
         setLiveOrder(liveOrderHandle);
         persistLiveOrder(liveOrderHandle);
         setResult(res);
         order = res;
+        if (user) {
+          // Non-blocking account link + silent details save — never gates the
+          // purchase flow. Both fail softly, and a claimed/guest order stays
+          // fully trackable meanwhile.
+          //
+          // The phone is passed because the claim RPC now requires email AND
+          // phone to match; `form.phone` is the number captured on this order
+          // two lines above, so it is the proof, not a guess.
+          void attachOrderToUser(res.ref, form.phone);
+          void saveProfile(user.id, customerToProfile(toCustomer(form), form.apartment));
+        }
       }
 
       const finished = await proceedToPayment(order);
@@ -735,14 +943,35 @@ export function CheckoutPage() {
   };
 
   const proceedToPayment = async (
-    order: Pick<RetailOrderResult, 'ref' | 'order_id' | 'total_amount'>
+    order: Pick<RetailOrderResult, 'ref' | 'order_id' | 'total_amount' | 'amount_paid_upfront' | 'is_cod'>
   ): Promise<boolean> => {
+    /* ------------------------------------------------------------------ *
+     * COD short-circuit. The order is already created, confirmed and
+     * inventory-reserved by the time we get here, and the server stored
+     * amount_paid_upfront = 0 for it. There is nothing to charge and nobody
+     * to charge it to, so the flow ENDS here: no Cashfree session, no
+     * /payment/return, no pending-payment record. The customer goes straight
+     * to the confirmation screen with the full amount due on delivery.
+     * ------------------------------------------------------------------ */
+    if (order.is_cod || paymentMethod === 'cod') {
+      clear();
+      removeAppliedPromo();
+      clearPendingKey();
+      window.sessionStorage.removeItem(CHECKOUT_FORM_KEY);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+      addCheckoutHistory(order.ref, form.phone);
+      setVerdict('success');
+      setStage('result');
+      return true;
+    }
+
     if (!paymentCfg.configured) {
       // No gateway on this deployment: record the order and finish cleanly.
       clear();
       removeAppliedPromo();
       window.sessionStorage.removeItem(CHECKOUT_FORM_KEY);
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+      addCheckoutHistory(order.ref, form.phone);
       setVerdict('success');
       setStage('result');
       return true;
@@ -750,13 +979,22 @@ export function CheckoutPage() {
 
     let session;
     try {
+      // The client-sent amount is IGNORED server-side (cashfree-order re-reads
+      // amount_paid_upfront from the DB) — it exists only for display.
+      const payableNow = order.amount_paid_upfront ?? order.total_amount;
       session = await createPaymentSession({
         orderRef: order.ref,
         orderId: order.order_id,
-        amount: order.total_amount,
+        amount: payableNow,
         customer: { name: toCustomer(form).name, phone: form.phone, email: form.email || undefined },
       });
-    } catch {
+    } catch (err) {
+      // A PaymentSessionError already carries an honest, server-authored
+      // message and code (ALREADY_PAID, ORDER_EXPIRED, ORDER_NOT_PAYABLE,
+      // COD_NO_ONLINE_PAYMENT). Replacing it with a blanket "has not been
+      // charged" would tell a customer who HAS paid that they were not charged,
+      // so only genuinely unexpected failures get the generic wording.
+      if (err instanceof PaymentSessionError) throw err;
       throw new Error("We couldn't start the online payment. Your order has not been charged — please try again.");
     }
     if (session.status !== 'pending' || !session.paymentSessionId) {
@@ -765,7 +1003,7 @@ export function CheckoutPage() {
     persistPendingKey({
       ref: order.ref,
       order_id: order.order_id,
-      amount: order.total_amount,
+      amount: order.amount_paid_upfront ?? order.total_amount,
       itemsKey: itemsKeyOf(items),
       phone: String(form.phone ?? '').replace(/\D/g, '').slice(-10),
     });
@@ -805,13 +1043,18 @@ export function CheckoutPage() {
   const retryHandle = (): LiveOrder | null => {
     const bagEmpty = items.length === 0;
     const matchesBag = (key: string) => bagEmpty || key === itemsKeyOf(items);
-    if (liveOrder?.order_id && matchesBag(liveOrder.itemsKey)) return liveOrder;
+    // A COD order has amount_paid_upfront = 0 and never had a payment session,
+    // so it can never be "retried" — there is nothing to retry. Refusing it here
+    // keeps a COD order from ever being handed to the Cashfree retry path.
+    const codGuard = (h: LiveOrder | null): LiveOrder | null =>
+      h && (h.is_cod || paymentMethod === 'cod') ? null : h;
+    if (liveOrder?.order_id && matchesBag(liveOrder.itemsKey)) return codGuard(liveOrder);
     if (result?.order_id && result?.ref && (result?.total_amount ?? 0) > 0) {
-      return { ref: result.ref, order_id: result.order_id, amount: result.total_amount, itemsKey: itemsKeyOf(items) };
+      return codGuard({ ref: result.ref, order_id: result.order_id, amount: result.amount_paid_upfront ?? result.total_amount, itemsKey: itemsKeyOf(items), is_cod: Boolean(result.is_cod) });
     }
     const pending = readPendingPayload();
     if (pending?.order_id && pending.amount > 0 && matchesBag(pending.itemsKey)) {
-      return { ref: pending.ref, order_id: pending.order_id, amount: pending.amount, itemsKey: pending.itemsKey };
+      return codGuard({ ref: pending.ref, order_id: pending.order_id, amount: pending.amount, itemsKey: pending.itemsKey });
     }
     return null;
   };
@@ -891,13 +1134,56 @@ export function CheckoutPage() {
     }
   };
 
+  // COD order-confirmation email.
+  //
+  // A COD order is confirmed the moment the server commits it, and it never
+  // touches Cashfree — so the paid-flip trigger that sends the ONLINE
+  // confirmation could never fire for it, and COD customers got no mail at all.
+  //
+  // This watches for a settled COD result and asks the `cod-order-mail` edge
+  // function to send it. The function is authoritative: it takes only the order
+  // ref and the customer's 10-digit phone (the same possession factors
+  // cashfree-status and track_lookup_order use), then re-reads the order, and
+  // only mails a genuinely confirmed COD order. So this effect is a *trigger*,
+  // not the decision: it cannot make a failed/cancelled order look confirmed,
+  // cannot choose a recipient, and cannot alter any figure in the mail.
+  //
+  // Idempotent end to end — the function refuses a second 'confirmed' send
+  // using retail_orders.last_email_kind, so re-running this on a retry, a
+  // double-tap, or a page refresh that re-hydrates `result` still produces
+  // exactly one email. Failures are swallowed: a mail problem must never fail
+  // or roll back an order the server has already confirmed.
+  useEffect(() => {
+    const ref = result?.ref;
+    if (!result?.is_cod || !ref) return;
+    const phone = form.phone;
+    if (!phone) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        await invokeFunction<{ ok?: boolean; sent?: boolean }>('cod-order-mail', {
+          orderRef: ref,
+          phone,
+        });
+      } catch {
+        // Best-effort. Never surface a mail failure to the shopper and never
+        // let it affect the order they just placed.
+      } finally {
+        void cancelled;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [result?.ref, result?.is_cod, form.phone]);
+
   if (items.length === 0 && stage === 'form' && !liveOrder) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5">
         <p className="font-display text-5xl uppercase tracking-wide-2 text-bone leading-none">Empty</p>
         <p className="mt-3 text-sm text-grey">Your bag is empty.</p>
         <button
-          onClick={() => navigate('/collection')}
+          onClick={() => navigate('/collections')}
           className="mt-8 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
         >
           Shop The Collection
@@ -908,21 +1194,31 @@ export function CheckoutPage() {
 
   /* ---- Single result page (returning from Cashfree) ---- */
   if (stage === 'result' && verdict === 'success' && result) {
+    /* Cash on Delivery is one amount, collected on arrival. Read straight from
+       the order row; never recomputed. */
+    const codDue = result.amount_due_on_delivery ?? result.total_amount;
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
-        <CheckCircle2 size={40} strokeWidth={1.4} className="text-bone" />
+        {/* The burst wraps the mark itself, so it reads as the confirmation
+            landing rather than as an effect stuck on the page. */}
+        <span className="relative flex h-14 w-14 items-center justify-center">
+          <CheckCircle2 size={40} strokeWidth={1.4} className="text-bone" />
+          <ConfettiBurst />
+        </span>
         <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">Order Confirmed</p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
           Thank You
         </h1>
         <p className="mt-4 text-sm text-grey max-w-md leading-relaxed">
           Your order <span className="font-semibold text-bone">#{result.ref}</span> is confirmed and recorded.
-          We are processing it and will confirm delivery details soon.
+          {result.is_cod
+            ? ` Pay ${formatPrice(codDue)} to the delivery agent on arrival.`
+            : ' We are processing it and will confirm delivery details soon.'}
         </p>
 
         <div className="mt-8 w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-5 lg:gap-6 text-left">
           <div className="space-y-5">
-            <div className="w-full border border-line bg-paper-3 p-5">
+            <div className="panel p-5">
               <div className="flex justify-between border-b border-line pb-2 text-sm">
                 <span className="text-grey">Order</span>
                 <span className="font-semibold text-bone">{result.ref}</span>
@@ -931,24 +1227,70 @@ export function CheckoutPage() {
                 <span className="text-grey">Items</span>
                 <span className="font-semibold text-bone">{result.total_qty}</span>
               </div>
+              {/* Shipping is a fact in its own right, and at this moment the
+                  only honest one is "we have not handed it to a courier yet".
+                  No AWB, no courier and no movement are implied. */}
+              <div className="flex justify-between border-b border-line py-2 text-sm">
+                <span className="text-grey">Shipping</span>
+                <span className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-bone">
+                  {shippingStatusMessage('pending')}
+                </span>
+              </div>
+              <p className="py-2 text-xs text-grey">{NO_AWB_NOTICE}</p>
               <div className="flex justify-between border-b border-line py-2 text-sm">
                 <span className="text-grey">Payment</span>
-                <span className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-bone">{result.payment_status === 'success' ? 'PAID' : 'PENDING'}</span>
+                <span className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-bone">
+                  {result.is_cod
+                    ? 'CASH ON DELIVERY'
+                    : result.payment_status === 'success'
+                      ? 'PAID'
+                      : 'PENDING'}
+                </span>
               </div>
+              {result.is_cod ? (
+                /* One amount for the agent to collect on arrival. */
+                <div className="flex justify-between border-b border-line py-2 text-sm">
+                  <span className="text-grey">Amount due on delivery</span>
+                  <span className="font-semibold text-bone">{formatPrice(codDue)}</span>
+                </div>
+              ) : (
+                result.payment_status === 'success' && (
+                  <div className="flex justify-between border-b border-line py-2 text-sm">
+                    <span className="text-grey">Paid</span>
+                    <span className="font-semibold text-green-700">{formatPrice(result.amount_paid_upfront ?? result.total_amount)}</span>
+                  </div>
+                )
+              )}
               {result.discount > 0 && (
                 <div className="flex justify-between border-b border-line py-2 text-sm">
                   <span className="text-grey">Discount</span>
                   <span className="font-semibold text-green-700">−{formatPrice(result.discount)}</span>
                 </div>
               )}
+              {!result.is_cod && (result.payment_discount ?? 0) > 0 && (
+                <div className="flex justify-between border-b border-line py-2 text-sm">
+                  <span className="text-grey">Online Payment Discount</span>
+                  <span className="font-semibold text-green-700">−{formatPrice(result.payment_discount ?? 0)}</span>
+                </div>
+              )}
               <div className="flex justify-between pt-2 text-sm">
-                <span className="text-grey">Total</span>
-                <span className="font-price text-lg font-bold text-bone tabular-nums">{formatPrice(result.total_amount)}</span>
+                <span className="text-grey">
+                  {result.is_cod
+                    ? 'Total (Cash on Delivery)'
+                    : (result.payment_discount ?? 0) > 0
+                      ? 'Online Payment Total'
+                      : 'Total'}
+                </span>
+                <span className="font-price text-lg font-bold text-bone tabular-nums">
+                  {formatPrice(
+                    result.is_cod ? codDue : (result.amount_paid_upfront ?? result.total_amount)
+                  )}
+                </span>
               </div>
             </div>
 
             {result.items && result.items.length > 0 && (
-              <div className="w-full border border-line bg-paper-3 p-5">
+              <div className="panel p-5">
                 <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-2">Your Products</p>
                 <div className="divide-y divide-line">
                   {result.items.map((it, idx) => (
@@ -966,45 +1308,32 @@ export function CheckoutPage() {
           </div>
 
           <div className="space-y-5">
-            {result.customer && (
-              <div className="w-full border border-line bg-paper-3 p-5">
-                <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-2">Delivery</p>
-                <p className="text-sm text-bone">{result.customer.name} · {result.customer.phone}</p>
-                {result.customer.email && <p className="text-xs text-grey mt-0.5">{result.customer.email}</p>}
-                <p className="text-xs text-grey mt-1 leading-relaxed">
-                  {result.customer.address}, {result.customer.city}, {result.customer.state} — {result.customer.pincode}
-                </p>
-              </div>
-            )}
-
+            {/* Customer/delivery details are deliberately NOT repeated here.
+                They were entered two screens ago, they are already on the
+                order, and Track Order re-displays them for anyone who needs
+                them. Echoing the full address back adds nothing and makes the
+                confirmation feel like a receipt. */}
             <div
               className={
                 result.payment_status === 'success'
                   ? 'w-full border border-lime-300 bg-lime-50 px-4 py-3 text-xs text-green-800 leading-relaxed'
-                  : 'w-full border border-line bg-paper-3 px-4 py-3 text-xs text-grey leading-relaxed'
+                  : 'w-full rounded-card border border-bone/20 bg-white px-4 py-3 text-xs text-bone-dim leading-relaxed'
               }
             >
-              {result.payment_status === 'success'
-                ? 'Your payment has been verified and received. We are preparing your order for dispatch.'
-                : paymentStatusMessage()}
+              {result.is_cod
+                ? `Order ${result.ref} is confirmed. Pay ${formatPrice(codDue)} to the delivery agent when your order arrives.`
+                : result.payment_status === 'success'
+                  ? 'Your payment has been verified and received. We are preparing your order for dispatch.'
+                  : paymentStatusMessage()}
             </div>
 
-            <div className="w-full border border-line bg-paper-3 p-5">
-              <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-3">What Happens Next</p>
-              <ol className="space-y-3">
-                <li className="flex gap-3 text-sm">
-                  <span className="font-label text-bone font-semibold shrink-0">1</span>
-                  <span className="text-grey leading-relaxed">We personally review order <span className="text-bone font-medium">{result.ref}</span> — every order is checked by hand.</span>
-                </li>
-                <li className="flex gap-3 text-sm">
-                  <span className="font-label text-bone font-semibold shrink-0">2</span>
-                  <span className="text-grey leading-relaxed">Your order is dispatched from Tiruppur within 24-48 hours, with stock confirmed before it ships.</span>
-                </li>
-                <li className="flex gap-3 text-sm">
-                  <span className="font-label text-bone font-semibold shrink-0">3</span>
-                  <span className="text-grey leading-relaxed">Track your order anytime with <span className="text-bone font-medium">{result.ref}</span> on the Track Order page — we will also keep you updated on WhatsApp.</span>
-                </li>
-              </ol>
+            {/* One plain sentence, no origin, no process theatre. The dispatch
+                window is the only forward-looking fact a shopper actually
+                needs at this moment. */}
+            <div className="rounded-card border border-bone/20 bg-white px-4 py-3">
+              <p className="text-sm text-bone-dim leading-relaxed">
+                Your order will be dispatched within 24–48 hours.
+              </p>
             </div>
           </div>
         </div>
@@ -1012,18 +1341,20 @@ export function CheckoutPage() {
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <button
             onClick={() => navigate(`/track-order/${encodeURIComponent(result.ref)}`)}
-            className="btn-soft btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+            className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
           >
             <Truck size={15} strokeWidth={2} />
             Track Order
           </button>
           <button
-            onClick={() => navigate('/collection')}
+            onClick={() => navigate('/collections')}
             className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Continue Shopping
           </button>
         </div>
+
+        <SaveDetailsPrompt customer={result.customer} apartment={form.apartment} />
 
         <div className="mt-8 w-full max-w-2xl mx-auto border-t border-line pt-5">
           <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold mb-3">Useful Links</p>
@@ -1057,15 +1388,15 @@ export function CheckoutPage() {
         >
           {isSuccess ? (
             <>
-              <CheckCircle2 size={36} strokeWidth={1.5} className="text-crimson animate-scale-in" />
-              <span className="absolute inset-0 rounded-full border border-crimson/25 animate-fade-in" aria-hidden />
+              <CheckCircle2 size={36} strokeWidth={1.5} className="text-bone animate-scale-in" />
+              <span className="absolute inset-0 rounded-full border border-bone/25 animate-fade-in" aria-hidden />
             </>
           ) : isChecking ? (
-            <Loader2 size={32} strokeWidth={1.5} className="animate-spin text-crimson" />
+            <Loader2 size={32} strokeWidth={1.5} className="animate-spin text-bone" />
           ) : isPending ? (
-            <Clock size={30} strokeWidth={1.4} className="text-crimson" />
+            <Clock size={30} strokeWidth={1.4} className="text-bone" />
           ) : (
-            <XCircle size={32} strokeWidth={1.4} className="text-crimson" />
+            <XCircle size={32} strokeWidth={1.4} className="text-bone" />
           )}
         </div>
 
@@ -1116,7 +1447,7 @@ export function CheckoutPage() {
                 }
               }}
               disabled={placing}
-              className="btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+              className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
             >
               {placing ? (
                 <>
@@ -1133,16 +1464,33 @@ export function CheckoutPage() {
           )}
           <button
             type="button"
-            onClick={() => navigate('/collection')}
+            onClick={() => navigate('/collections')}
             className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Continue Shopping
           </button>
+          {/* Track Order is offered from EVERY post-checkout state that still
+              has a live order, not just the success page: a pending payment and
+              a failed payment both leave a real, reserved order behind, and
+              those are exactly the visits where a customer wants to see it.
+              Gated on `!expired` because a swept / restocked order no longer
+              exists to track. TrackOrderPage picks the phone back up from this
+              browser's own checkout history, so nothing is added to the URL. */}
+          {ref && !expired && (isPending || isFailed) && (
+            <button
+              type="button"
+              onClick={() => navigate(`/track-order/${encodeURIComponent(ref)}`)}
+              className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+            >
+              <Truck size={15} strokeWidth={2} />
+              Track Order
+            </button>
+          )}
           {showNewOrder && !expired && (isPending || isFailed) && (
             <button
               type="button"
               onClick={startNewCheckout}
-              className="btn-soft border border-crimson/60 text-crimson text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-crimson hover:text-paper transition-colors"
+              className="btn-soft border border-bone text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
             >
               Start New Order
             </button>
@@ -1166,47 +1514,78 @@ export function CheckoutPage() {
     );
   }
 
-  return (
-    <div className="mx-auto max-w-2xl px-6 md:px-8 py-8">
-      <button
-        onClick={() => { openCart(); navigate('/'); }}
-        className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey hover:text-bone transition-colors"
-      >
-        <ArrowLeft size={14} strokeWidth={2} /> Back To Bag
-      </button>
+    return (
+      <div className="shell shell--form py-8">
+        <button
+          onClick={() => { openCart(); navigate('/'); }}
+          className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey hover:text-bone transition-colors"
+        >
+          <ArrowLeft size={14} strokeWidth={2} /> Back To Bag
+        </button>
 
-      <form onSubmit={handleSubmit} noValidate className="mt-7">
+      {/* Desktop splits the two halves of the job: delivery on the left, the
+          whole purchase (discount, summary, payment, CTA) on the right. The
+          ratio leans slightly toward the summary, which is the denser of the
+          two once the payment method moved into it. Below lg it collapses to
+          a single column in the same DOM order, i.e. exactly the previous
+          mobile layout. */}
+      <form
+        onSubmit={handleSubmit}
+        noValidate
+        className="mt-7 grid grid-cols-1 items-start gap-y-8 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] lg:gap-x-8 xl:gap-x-10"
+      >
         {errorMsg && (
-          <p className="mb-6 text-sm text-crimson bg-crimson/5 border border-crimson/20 px-3 py-3" role="alert">
+          <p className="mb-6 lg:col-span-2 text-sm text-bone border border-bone/25 bg-bone/5 px-3 py-3 rounded-soft" role="alert">
             {errorMsg}
           </p>
         )}
 
-        {/* Delivery — full-width stacked fields with in-box placeholder labels */}
+        {/* Customer details column. Everything up to the discount is the
+            "who and where" half of checkout. */}
+        <div className="min-w-0">
+        {/* Delivery — NO outer panel. The form sits directly on the page with
+            the section's own gutters providing the side padding, so the whole
+            checkout reads as one continuous surface instead of a card inside a
+            card. Row pairing is decided per pair: first/last name stay side by
+            side at every width (the two shortest labels, and the pairing the
+            screenshots call for), while City/State and PIN/Phone only pair from
+            sm up, where two real inputs still fit legibly. Address, Apartment
+            and Email are always full width. */}
         <section>
-          <h2 className="font-label text-xl font-bold tracking-tight text-bone">Delivery</h2>
+          {/* One step below the Payment heading, so the delivery block reads as
+              context rather than as the page's subject. */}
+          {/* Anton is a single-weight face: it is already the boldest voice available,
+              and a `font-bold` here would only be a SYNTHETIC emboldening that
+              smears the strokes. Size is therefore the honest lever for making
+              this read as a section title rather than a label — one step up,
+              from `lg` to `xl`, with the family, colour, tracking and the
+              `mt-5` below it all untouched. */}
+        <h2 className="font-display text-xl uppercase tracking-wide-2 text-bone">Delivery</h2>
           <div className="mt-5 space-y-3">
-            <SelectField label="Country/Region" value="India" onChange={() => {}} autoComplete="country">
-              <option value="India">India</option>
-            </SelectField>
-            <Field
-              label="First name"
-              value={form.firstName}
-              onChange={(v) => set('firstName', v)}
-              autoComplete="given-name"
-              required
-              inputRef={(el) => { fieldRefs.current.firstName = el; }}
-              errorMsg={errors.firstName}
-            />
-            <Field
-              label="Last name"
-              value={form.lastName}
-              onChange={(v) => set('lastName', v)}
-              autoComplete="family-name"
-              required
-              inputRef={(el) => { fieldRefs.current.lastName = el; }}
-              errorMsg={errors.lastName}
-            />
+            {/* First + Last pair at EVERY width. Both are short single-word
+                labels, so two columns still leave ~160px each on a 360px
+                screen — enough for a real name. This is the one row the
+                screenshots require to be side by side on mobile. */}
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label="First name"
+                value={form.firstName}
+                onChange={(v) => set('firstName', v)}
+                autoComplete="given-name"
+                required
+                inputRef={(el) => { fieldRefs.current.firstName = el; }}
+                errorMsg={errors.firstName}
+              />
+              <Field
+                label="Last name"
+                value={form.lastName}
+                onChange={(v) => set('lastName', v)}
+                autoComplete="family-name"
+                required
+                inputRef={(el) => { fieldRefs.current.lastName = el; }}
+                errorMsg={errors.lastName}
+              />
+            </div>
             <Field
               label="Address"
               value={form.address}
@@ -1223,75 +1602,81 @@ export function CheckoutPage() {
               onChange={(v) => set('apartment', v)}
               autoComplete="address-line2"
             />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="City"
+                value={form.city}
+                onChange={(v) => set('city', v)}
+                autoComplete="address-level2"
+                required
+                inputRef={(el) => { fieldRefs.current.city = el; }}
+                errorMsg={errors.city}
+              />
+              <SelectField
+                label="State"
+                value={form.state}
+                onChange={(v) => set('state', v)}
+                autoComplete="address-level1"
+                required
+                elRef={(el) => { fieldRefs.current.state = el; }}
+                errorMsg={errors.state}
+                placeholder="State"
+              >
+                {form.state && !INDIAN_STATES.includes(form.state) && <option value={form.state}>{form.state}</option>}
+                {INDIAN_STATES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </SelectField>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="PIN code"
+                value={form.pincode}
+                onChange={(v) => set('pincode', v)}
+                inputMode="numeric"
+                autoComplete="postal-code"
+                required
+                maxLength={6}
+                inputRef={(el) => { fieldRefs.current.pincode = el; }}
+                errorMsg={errors.pincode}
+              />
+              <Field
+                label="Phone"
+                value={form.phone}
+                onChange={(v) => set('phone', v)}
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel"
+                required
+                maxLength={10}
+                inputRef={(el) => { fieldRefs.current.phone = el; }}
+                errorMsg={errors.phone}
+                icon={
+                  <button
+                    type="button"
+                    onClick={() => setPhoneHelpOpen((o) => !o)}
+                    aria-expanded={phoneHelpOpen}
+                    aria-label="Why we need your phone number"
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-2 text-grey transition-colors hover:border-bone-dim hover:text-bone"
+                  >
+                    <HelpCircle size={11} strokeWidth={2} />
+                  </button>
+                }
+              />
+              {phoneHelpOpen && (
+                <p className="rounded-soft border border-bone/20 bg-white px-3.5 py-2.5 text-xs leading-relaxed text-bone-dim sm:col-span-2">
+                  We use this number to send delivery updates and to confirm your order.
+                </p>
+              )}
+            </div>
             <Field
-              label="City"
-              value={form.city}
-              onChange={(v) => set('city', v)}
-              autoComplete="address-level2"
-              required
-              inputRef={(el) => { fieldRefs.current.city = el; }}
-              errorMsg={errors.city}
-            />
-            <SelectField
-              label="State"
-              value={form.state}
-              onChange={(v) => set('state', v)}
-              autoComplete="address-level1"
-              required
-              elRef={(el) => { fieldRefs.current.state = el; }}
-              errorMsg={errors.state}
-              placeholder="State"
-            >
-              {form.state && !INDIAN_STATES.includes(form.state) && <option value={form.state}>{form.state}</option>}
-              {INDIAN_STATES.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </SelectField>
-            <Field
-              label="PIN code"
-              value={form.pincode}
-              onChange={(v) => set('pincode', v)}
-              inputMode="numeric"
-              autoComplete="postal-code"
-              required
-              maxLength={6}
-              inputRef={(el) => { fieldRefs.current.pincode = el; }}
-              errorMsg={errors.pincode}
-            />
-            <Field
-              label="Phone"
-              value={form.phone}
-              onChange={(v) => set('phone', v)}
-              type="tel"
-              inputMode="numeric"
-              autoComplete="tel"
-              required
-              maxLength={10}
-              inputRef={(el) => { fieldRefs.current.phone = el; }}
-              errorMsg={errors.phone}
-              icon={
-                <button
-                  type="button"
-                  onClick={() => setPhoneHelpOpen((o) => !o)}
-                  aria-expanded={phoneHelpOpen}
-                  aria-label="Why we need your phone number"
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-2 text-grey transition-colors hover:border-bone-dim hover:text-bone"
-                >
-                  <HelpCircle size={11} strokeWidth={2} />
-                </button>
-              }
-            />
-            {phoneHelpOpen && (
-              <p className="rounded-soft border border-line bg-paper-3 px-3.5 py-2.5 text-xs leading-relaxed text-bone-soft">
-                We use this number to send delivery updates and to confirm your order.
-              </p>
-            )}
-            <Field
-              label="Email (optional)"
+              label="Email"
               value={form.email}
               onChange={(v) => set('email', v)}
               type="email"
               autoComplete="email"
+              errorMsg={errors.email}
+              inputRef={(el) => { fieldRefs.current.email = el; }}
             />
           </div>
 
@@ -1304,86 +1689,34 @@ export function CheckoutPage() {
             <span className="text-[13px] text-grey">Save this information for next time</span>
           </button>
         </section>
+        </div>
 
-        {/* Shipping method */}
-        <section className="mt-9">
-          <h2 className="font-label text-xl font-bold tracking-tight text-bone">Shipping method</h2>
-          <div className="mt-4">
-            {!form.address.trim() ? (
-              <div className="rounded-soft border border-line bg-paper-3 px-4 py-4 text-[13px] italic text-bone-soft">
-                Enter your shipping address to view available shipping methods.
-              </div>
-            ) : (
-              <div className="flex items-center gap-3 rounded-soft border border-line bg-white px-4 py-4">
-                <Truck size={20} strokeWidth={1.6} className="shrink-0 text-bone-soft" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-bone">Standard Shipping</p>
-                  <p className="text-xs text-grey">
-                    {shipping === 0 ? 'FREE' : formatPrice(shipping)}
-                    {form.city ? ` to ${form.city}` : ''}{form.state ? `, ${form.state}` : ''}
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Payment — one live method (Cashfree). COD/Snapmint are NOT enabled — business decisions, per spec. */}
-        <section className="mt-9">
-          <h2 className="font-label text-xl font-bold tracking-tight text-bone">Payment</h2>
-          <p className="mt-1 text-xs text-grey">All transactions are secure and encrypted.</p>
-          <div className="mt-4">
-            <RadioOption
-              selected
-              title="Cashfree Payments"
-              sub="(UPI, Cards, Int'l cards, Wallets)"
-              onClick={() => {}}
-              badges={
-                <span className="flex shrink-0 items-center gap-1.5">
-                  <span className="rounded border border-line px-1.5 py-0.5 font-label text-[9px] uppercase tracking-wide-2 text-bone-soft">UPI</span>
-                  <span className="rounded border border-line px-1.5 py-0.5 font-label text-[9px] uppercase tracking-wide-2 text-bone-soft">Card</span>
-                  <span className="rounded border border-line px-1.5 py-0.5 font-label text-[9px] uppercase tracking-wide-2 text-bone-soft">+11</span>
-                </span>
-              }
-            />
-          </div>
-        </section>
-
-        {/* Billing address */}
-        <section className="mt-9">
-          <h2 className="font-label text-xl font-bold tracking-tight text-bone">Billing address</h2>
-          <div className="mt-4 space-y-2.5">
-            <RadioOption
-              selected={billingSame}
-              title="Same as shipping address"
-              onClick={() => setBillingSame(true)}
-            />
-            <RadioOption
-              selected={!billingSame}
-              title="Use a different billing address"
-              onClick={() => setBillingSame(false)}
-            />
-          </div>
-          {!billingSame && (
-            <p className="mt-3 rounded-soft border border-line bg-paper-3 px-4 py-3 text-xs leading-relaxed text-bone-soft">
-              Your billing details are collected securely by the payment gateway when you pay.
-              The delivery address above is always used for shipping.
-            </p>
-          )}
-        </section>
-
-        {/* Discount — collapsed pill that opens the promo entry */}
-        <div className="mt-8">
+        {/* Order summary column — discount, the collapsible summary, the payment
+            section, the CTA and the legal line, held beside the details on wide
+            screens. No wrapping panel here either: the right column is the same
+            flat surface as the left, and the individual blocks (discount row,
+            summary, payment) carry their own borders. The sticky offset keeps
+            the payable amount in view while a long address form is filled in;
+            below lg the column simply follows the form. */}
+        <div className="min-w-0 lg:sticky lg:top-28">
+        {/* Discount — quiet expandable row that opens the promo entry */}
+        <div>
           {!promo && (
             <button
               type="button"
               onClick={() => setDiscountOpen((o) => !o)}
               aria-expanded={discountOpen}
-              className="flex w-full items-center justify-center gap-2 rounded-full border border-line-2 bg-white px-5 py-3 text-sm font-semibold text-bone transition-colors hover:border-bone-dim"
+              className="flex w-full items-center justify-between gap-3 rounded-[10px] border border-line-2 bg-white px-3.5 py-3 text-left transition-colors hover:border-bone-dim/45"
             >
-              <Tag size={15} strokeWidth={2} className="text-bone-soft" />
-              Add discount
-              <ChevronDown size={15} strokeWidth={2} className={`text-bone-soft transition-transform ${discountOpen ? 'rotate-180' : ''}`} />
+              <span className="inline-flex items-center gap-2.5">
+                <Tag size={14} strokeWidth={2} className="shrink-0 text-bone-soft" />
+                <span className="text-[13px] font-semibold text-bone">Add discount</span>
+              </span>
+              <ChevronDown
+                size={15}
+                strokeWidth={2}
+                className={`shrink-0 text-bone-soft transition-transform duration-150 ${discountOpen ? 'rotate-180' : ''}`}
+              />
             </button>
           )}
           {discountOpen && !promo && (
@@ -1407,7 +1740,7 @@ export function CheckoutPage() {
                   {applying ? <Loader2 size={14} strokeWidth={2} className="animate-spin" /> : 'Apply'}
                 </button>
               </div>
-              {promoError && <p className="mt-1.5 text-xs text-crimson">{promoError}</p>}
+              {promoError && <p className="mt-1.5 text-xs text-bone-dim">{promoError}</p>}
             </div>
           )}
           {promo && (
@@ -1432,44 +1765,74 @@ export function CheckoutPage() {
           )}
         </div>
 
-        {/* Total — compact row; chevron opens the itemized breakdown */}
-        <div className="mt-8">
-          <div className="flex items-center gap-3">
-            <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-line bg-paper-3">
-              {items[0]?.image && (
-                <img src={items[0].image} alt={items[0].name} className="h-full w-full object-cover" loading="lazy" />
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-[15px] font-bold leading-tight text-bone">Total</p>
-              <p className="text-xs text-grey">{count} {count === 1 ? 'item' : 'items'}</p>
-            </div>
-            <span className="text-xs text-grey">INR</span>
-            <span className="font-price text-xl font-bold text-bone tabular-nums">
-              {(total || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowBreakdown((o) => !o)}
-              aria-expanded={showBreakdown}
-              aria-label={showBreakdown ? 'Hide order summary' : 'Show order summary'}
-              className="shrink-0 text-grey transition-colors hover:text-bone"
-            >
-              <ChevronDown size={18} strokeWidth={2} className={`transition-transform ${showBreakdown ? 'rotate-180' : ''}`} />
-            </button>
-          </div>
+        {/* Order summary — collapsible, and in the same light house style as
+            the rest of the page rather than an inverted black slab. Collapsed
+            by default: the header carries the payable amount so the total is
+            always visible, and the per-item rows plus the price breakdown stay
+            folded away until tapped. One button, one aria-expanded, one
+            chevron that rotates to mirror its state. */}
+        <div className="mt-5 overflow-hidden rounded-card border border-line-2 bg-white">
+          <button
+            type="button"
+            onClick={() => setSummaryOpen((o) => !o)}
+            aria-expanded={summaryOpen}
+            className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors hover:bg-bone/[0.04] sm:px-5"
+          >
+            {/* The collapsed bar IS the product line — thumbnail, name, variant,
+                then the payable total and the chevron — so the shopper sees what
+                they are buying before opening anything, instead of a caption
+                telling them a summary exists.
 
-          {showBreakdown && (
-            <div className="mt-4 animate-slide-down rounded-soft border border-line bg-paper-2 p-4">
-              <div className="divide-y divide-line">
+                `items[0]` only, deliberately. This stays ONE compact row, and the
+                full per-item list is already revealed on expand, so a leading
+                product row outside the bar (or a second one inside it) would just
+                duplicate what is one tap away. The existing data, image and `count`
+                are reused as-is; nothing is computed.
+
+                The left block is `flex-1 min-w-0` so the name and variant
+                `truncate`: a long product name gives way on a narrow screen
+                rather than growing the bar's height or shoving the total past the
+                right edge. The total/chevron span stays `shrink-0`, so the
+                payable amount is never the thing that loses. */}
+            <span className="flex min-w-0 flex-1 items-center gap-3">
+              {items[0]?.image && (
+                <span className="h-10 w-10 shrink-0 overflow-hidden rounded border border-line-2 bg-bone/[0.06]">
+                  <img src={items[0].image} alt={items[0].name} className="h-full w-full object-cover" loading="lazy" />
+                </span>
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-semibold text-bone">{items[0]?.name ?? 'Your bag'}</span>
+                <span className="mt-0.5 block truncate font-label text-[10px] uppercase tracking-wide-2 text-bone-soft">
+                  {items[0]
+                    ? `${items[0].color} · ${items[0].sizeLabel} × ${items[0].quantity}`
+                    : 'Nothing selected yet'}
+                  {count > 1 && ` · ${count} items`}
+                </span>
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="font-price text-[15px] font-semibold text-bone tabular-nums">
+                {formatPrice(paymentMethod === 'cod' ? codDue : onlineTotal)}
+              </span>
+              <ChevronDown
+                size={16}
+                strokeWidth={2}
+                className={`text-bone-soft transition-transform duration-150 ${summaryOpen ? 'rotate-180' : ''}`}
+              />
+            </span>
+          </button>
+
+          {summaryOpen && (
+            <div className="animate-slide-down border-t border-line-2 px-4 pb-4 pt-3.5 sm:px-5 sm:pb-5">
+              <div className="divide-y divide-line-2">
                 {items.map((item) => (
                   <div key={`${item.productId}-${item.colorId}-${item.sizeLabel}`} className="flex gap-3 py-2.5">
-                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded border border-line bg-paper-3">
+                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded border border-line-2 bg-bone/[0.06]">
                       {item.image && <img src={item.image} alt={item.name} className="h-full w-full object-cover" loading="lazy" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="line-clamp-2 text-xs font-semibold text-bone">{item.name}</p>
-                      <p className="font-label text-[10px] uppercase tracking-wide-2 text-grey mt-0.5">
+                      <p className="font-label text-[10px] uppercase tracking-wide-2 text-bone-soft mt-0.5">
                         {item.color} · {item.sizeLabel} × {item.quantity}
                       </p>
                     </div>
@@ -1479,54 +1842,212 @@ export function CheckoutPage() {
                   </div>
                 ))}
               </div>
-              <dl className="mt-3 space-y-2 border-t border-line pt-3 text-sm">
+              <dl className="mt-4 space-y-2 border-t border-line-2 pt-4 text-sm">
+                {/* The PRODUCT subtotal, deliberately NOT `total`.
+                    `total` is subtotal - promo + shipping, i.e. it is already
+                    discounted AND already includes shipping, so it is neither
+                    the product price nor the amount the shopper actually pays
+                    online. `subtotal` is the authoritative pre-discount figure:
+                    useD2cCart derives it as SUM(unitPrice * quantity) straight
+                    from the cart lines, with no promo and no shipping folded in.
+                    The rows below list Shipping/Discount/Online Discount and
+                    roll up to the payable total, so this is the one line that
+                    must show the undiscounted product price. Calculations are
+                    untouched; only the displayed source moved. */}
                 <div className="flex items-center justify-between">
-                  <dt className="text-grey">Items ({count})</dt>
+                  <dt className="text-bone-soft">Items ({count})</dt>
                   <dd className="font-semibold text-bone tabular-nums">{formatPrice(subtotal)}</dd>
                 </div>
                 <div className="flex items-center justify-between">
-                  <dt className="text-grey">Shipping</dt>
+                  <dt className="text-bone-soft">Shipping</dt>
                   <dd className="font-semibold text-bone tabular-nums">
-                    {shipping > 0 ? formatPrice(shipping) : <span className="text-green-700">FREE</span>}
+                    {shipping > 0 ? formatPrice(shipping) : <span className="text-green-600">FREE</span>}
                   </dd>
                 </div>
                 {discount > 0 && (
                   <div className="flex items-center justify-between">
-                    <dt className="text-grey">Discount ({promo?.code})</dt>
-                    <dd className="font-semibold text-green-700 tabular-nums">−{formatPrice(discount)}</dd>
+                    <dt className="text-bone-soft">Discount ({promo?.code})</dt>
+                    <dd className="font-semibold text-green-600 tabular-nums">−{formatPrice(discount)}</dd>
                   </div>
                 )}
-                <div className="flex items-center justify-between border-t border-line pt-3">
-                  <dt className="font-label text-xs uppercase tracking-wide-2 text-bone">Total</dt>
-                  <dd className="font-price text-xl text-bone tabular-nums">{(total || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                {paymentMethod === 'cod' ? (
+                  /* COD: no advance, no remaining balance, no online discount —
+                     the complete amount is due to the delivery agent. */
+                  <div className="flex items-center justify-between">
+                    <dt className="text-bone-soft">Amount due on delivery</dt>
+                    <dd className="font-semibold text-bone tabular-nums">{formatPrice(codDue)}</dd>
+                  </div>
+                ) : (
+                  onlineDiscount > 0 && (
+                    <div className="flex items-center justify-between">
+                      <dt className="text-bone-soft">Online Payment Discount</dt>
+                      <dd className="font-semibold text-green-600 tabular-nums">−{formatPrice(onlineDiscount)}</dd>
+                    </div>
+                  )
+                )}
+                {/* The one place emphasis is allowed: the payable total. */}
+                <div className="flex items-center justify-between border-t border-line-2 pt-3">
+                  <dt className="font-label text-xs uppercase tracking-wide-2 text-bone-soft">
+                    {paymentMethod === 'cod' ? 'Total (Cash on Delivery)' : onlineDiscount > 0 ? 'Online Payment Total' : 'Total'}
+                  </dt>
+                  <dd className="font-price text-xl text-bone tabular-nums">
+                    {formatPrice(paymentMethod === 'cod' ? codDue : onlineTotal)}
+                  </dd>
                 </div>
               </dl>
             </div>
           )}
         </div>
+        {/* Payment — a standalone section below the summary, not nested inside
+            it. Section rhythm (margin + hairline rule) does the separating that
+            a wrapping card used to do, so the page reads as one flat column. The
+            RPC
+            re-prices everything server-side; create_retail_order is the single
+            authoritative calculator. COD is paid IN FULL by the delivery agent
+            (no advance, no online payment); online gets the fixed ₹50
+            payment-method discount. Cards are presentation-only and answer one
+            question: which method? */}
+        {/* The summary above is now a light outlined box, so it no longer
+            doubles as the separator — a hairline here does that job. */}
+        <section className="mt-7 border-t border-line-2 pt-6">
+          {/* Payment is a sibling of the summary, not a child: the method sits
+              directly above the CTA it drives, and the CTA lives INSIDE this
+              section for exactly that reason — the method and the button that
+              submits it read as one decision.
 
-        {/* Primary CTA — same order + Cashfree redirect flow as before */}
-        <button
-          type="submit"
-          disabled={placing}
-          className="mt-6 w-full btn-dark text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5 disabled:opacity-60"
-        >
-          {placing ? (
-            <>
-              <Loader2 size={16} strokeWidth={2} className="animate-spin" /> Placing Order…
-            </>
-          ) : paymentCfg.configured ? (
-            `Pay Now${total > 0 ? ` · ${formatPrice(total)}` : ''}`
-          ) : (
-            `Place Order${total > 0 ? ` · ${formatPrice(total)}` : ''}`
-          )}
-        </button>
+              Stacked, not baseline-aligned. Sharing one line was what kept both
+              small: at 360px the heading and the security note fought for the
+              same ~40px, so the note was set to 10.5px and the heading to 11px
+              to fit. On its own line each can be the size it wants to be. The
+              heading now carries real ink (text-bone, not the secondary
+              bone-soft) because this is the section that decides how a customer
+              pays, and the note steps down to supporting weight beneath it. */}
+          {/* Exactly the same class string as the DELIVERY <h2>, so the two
+              section headings are typographically identical: same family, size,
+              weight, tracking, case and colour. They are peers on the page —
+              one names each half of the single act of buying — and the previous
+              `font-label text-[13px] font-bold` treatment made this heading
+              read like a form label instead, competing with the ONLINE PAYMENT /
+              COD option names it sits above. Anton is single-weight, so matching
+              DELIVERY's `font-display text-xl` is what makes them match; the
+              `h2`/`h3` tag difference is kept because the document outline has
+              always nested payment under the page-level h1. */}
+          <h3 className="font-display text-xl uppercase tracking-wide-2 text-bone">
+            Payment Method
+          </h3>
+          <p className="mt-1.5 flex items-center gap-1.5 text-[11px] font-medium leading-none text-bone-soft">
+            <ShieldCheck size={13} strokeWidth={2} className="shrink-0 text-bone-soft" />
+            Secure &amp; encrypted
+          </p>
 
-        <div className="mt-6 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-[11px] text-grey">
+          <div className="mt-4 space-y-3" role="radiogroup" aria-label="Payment method">
+            <PaymentMethodCard
+              selected={paymentMethod === 'online'}
+              name="ONLINE PAYMENT"
+              sub="Pay securely with"
+              onClick={() => changePaymentMethod('online')}
+              price={
+                <>
+                  {/* Amount first, badge second: the price is the headline and
+                      the saving is the supporting fact, which is also the
+                      intended reading order. Putting the amount on top of the
+                      right-hand column lines both cards' amounts up.
+
+                      26px on mobile, 22px from sm: this is the number the
+                      customer is about to be charged, and at 360px it was the
+                      one piece of the card that could still be read at a glance
+                      from arm's length. It steps back on desktop only because
+                      there the card is beside a price summary and needs to sit
+                      under the summary's own total, not compete with it. */}
+                  <span className="block font-price text-[26px] font-bold leading-none text-bone tabular-nums sm:text-[22px]">
+                    {formatPrice(onlineTotal)}
+                  </span>
+                  {/* Solid crimson pill, right-hand column under the amount.
+                      The saving is real and unconditional, so it is stated once,
+                      plainly. There is no timer and no "limited time" copy here —
+                      the discount is ₹50 whenever the shopper picks online.
+
+                      Slightly larger and given real side padding, because at
+                      10px/px-2 the "SAVE ₹50" was the same optical weight as the
+                      word "Saving" in the footnote directly under it — the
+                      benefit was being stated twice at two different weights,
+                      and the weaker of the two is the one a customer acts on. */}
+                  <span className="relative mt-1.5 inline-flex overflow-hidden rounded-full bg-crimson px-2.5 py-1 align-middle">
+                    <span className="text-[10.5px] font-bold uppercase leading-none tracking-[0.06em] text-white">
+                      Save {formatPrice(onlineDiscount)}
+                    </span>
+                    <span
+                      aria-hidden
+                      className="save-badge-sheen pointer-events-none absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-white/55 to-transparent"
+                    />
+                  </span>
+                </>
+              }
+              extra={<PaymentMethodsRow />}
+              footnote={`You save ${formatPrice(onlineDiscount)} by paying online`}
+            />
+            <PaymentMethodCard
+              selected={paymentMethod === 'cod'}
+              name="CASH ON DELIVERY (COD)"
+              sub="Pay when your order arrives"
+              onClick={() => changePaymentMethod('cod')}
+              price={
+                /* ₹698 is the amount the shopper will actually pay on delivery,
+                   so it is set in the same full-strength ink and weight as the
+                   online amount. Only the SIZE steps down — 21px against the
+                   online card's 26px — which is what keeps online reading as the
+                   better deal without making COD look unavailable. It is
+                   deliberately NOT text-grey: a greyed price on a real,
+                   selectable option reads as disabled. The 5px step is also
+                   what keeps COD the clear SECONDARY choice; make it equal and
+                   the page stops having a recommendation. */
+                <span className="block font-price text-[21px] font-bold leading-none text-bone tabular-nums sm:text-[18px]">
+                  {formatPrice(codDue)}
+                </span>
+              }
+            />
+          </div>
+
+          {/* Primary CTA — clean, solid crimson; no glow, no shadow, no lift.
+              Hover is a slightly darker colour transition only; active is a
+              subtle 1px press. Same order + Cashfree redirect flow as before.
+              Disabled while any field is invalid so it can never reach order
+              creation until pincode/phone/email all pass.
+
+              INSIDE the payment section, not after it. It is the button that
+              submits the method chosen directly above it, and while it sat
+              outside the <section> the only thing relating the two was shared
+              margins — which the summary block above already used, so the
+              button read as belonging to the summary's group instead. Nesting
+              it makes the method and the button one unit in the DOM as well as
+              on screen. mt-5 leaves clear air so it never looks welded on. */}
+          <button
+            type="submit"
+            disabled={placing}
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-[10px] bg-crimson px-5 py-4 text-[13px] font-bold uppercase tracking-[0.08em] text-white transition-[background-color,transform] duration-150 ease-out hover:bg-[#bd0929] active:translate-y-px disabled:opacity-60 disabled:hover:bg-crimson sm:py-3.5"
+          >
+            {placing ? (
+              <>
+                <Loader2 size={15} strokeWidth={2} className="animate-spin" /> Placing Order…
+              </>
+            ) : paymentMethod === 'cod' ? (
+              `Place Order · ${formatPrice(codDue)}`
+            ) : paymentCfg.configured ? (
+              `Pay Now · ${formatPrice(onlineTotal)}`
+            ) : (
+              `Place Order${onlineTotal > 0 ? ` · ${formatPrice(onlineTotal)}` : ''}`
+            )}
+          </button>
+        </section>
+
+        {/* Legal — small and low-contrast so it reads as fine print beneath the
+            CTA, never as another call to action. */}
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-[10.5px] text-bone-soft">
           <a href="#/return-policy" className="underline underline-offset-2 transition-colors hover:text-bone">Refund policy</a>
           <a href="#/shipping-policy" className="underline underline-offset-2 transition-colors hover:text-bone">Shipping</a>
           <a href="#/privacy-policy" className="underline underline-offset-2 transition-colors hover:text-bone">Privacy policy</a>
           <a href="#/terms-and-conditions" className="underline underline-offset-2 transition-colors hover:text-bone">Terms of service</a>
+        </div>
         </div>
       </form>
     </div>
@@ -1566,8 +2087,8 @@ function Field({
     <label className={`block ${className}`}>
       <span className="sr-only">{label}{required ? ' (required)' : ''}</span>
       <span
-        className={`relative flex w-full items-center rounded-soft border bg-white transition-colors focus-within:border-bone ${
-          errorMsg ? 'border-crimson' : 'border-line-2'
+        className={`relative flex w-full items-center rounded-soft border bg-white field-focus float-box ${
+          errorMsg ? 'is-invalid border-crimson/50 focus-within:border-crimson' : 'border-line-2'
         }`}
       >
         <input
@@ -1579,10 +2100,11 @@ function Field({
           inputMode={inputMode}
           maxLength={maxLength}
           autoComplete={autoComplete}
-          placeholder={label}
+          placeholder=" "
           aria-invalid={errorMsg ? true : undefined}
-          className="w-full min-w-0 bg-transparent px-3.5 py-3 text-[15px] leading-snug text-bone placeholder:text-grey focus:outline-none"
+          className="float-input relative z-[1] w-full min-w-0 bg-transparent px-3.5 text-[15px] leading-snug focus:outline-none"
         />
+        <span className="float-label" aria-hidden>{label}</span>
         {icon && <span className="relative z-10 shrink-0 pr-3 text-grey">{icon}</span>}
       </span>
       {errorMsg && <p className="mt-1.5 text-xs text-crimson" role="alert">{errorMsg}</p>}
@@ -1618,8 +2140,8 @@ function SelectField({
     <label className={`block ${className}`}>
       <span className="sr-only">{label}{required ? ' (required)' : ''}</span>
       <span
-        className={`relative flex w-full items-center rounded-soft border bg-white transition-colors focus-within:border-bone ${
-          errorMsg ? 'border-crimson' : 'border-line-2'
+        className={`relative flex w-full items-center rounded-soft border bg-white field-focus float-box ${
+          errorMsg ? 'is-invalid border-crimson/50 focus-within:border-crimson' : 'border-line-2'
         }`}
       >
         <select
@@ -1629,13 +2151,12 @@ function SelectField({
           required={required}
           autoComplete={autoComplete}
           aria-invalid={errorMsg ? true : undefined}
-          className={`w-full min-w-0 appearance-none bg-transparent px-3.5 py-3 text-[15px] leading-snug focus:outline-none ${
-            value ? 'text-bone' : 'text-grey'
-          }`}
+          className="float-select relative z-[1] w-full min-w-0 appearance-none bg-transparent px-3.5 text-[15px] leading-snug focus:outline-none"
         >
           {placeholder && <option value="" disabled>{placeholder}</option>}
           {children}
         </select>
+        <span className="float-label" aria-hidden>{label}</span>
         <span className="pointer-events-none shrink-0 pr-3 text-grey">
           <ChevronDown size={16} strokeWidth={2} />
         </span>
@@ -1645,42 +2166,178 @@ function SelectField({
   );
 }
 
-/** Full-width option card with a radio dot — crimson for the selected state. */
-function RadioOption({
+/** Payment-option row — one system shared by Online Payment and COD.
+ *
+ *  Default:  white fill, 1px light-gray border, small radius, no shadow.
+ *  Selected: still white; only the border and the radio go crimson, with a
+ *            barely-there red wash on the inner edge. The one solid red fill on
+ *  the card is the SAVE pill, which is the point of the card.
+ *
+ *  TYPE. The method name is set in the site's label voice (--font-label, i.e.
+ *  Open Sans, uppercase + wide tracking) and the section headings above are set
+ *  in the display voice (--font-display, i.e. Anton). f336558 replaced both
+ *  with sentence-case Open Sans bold + tracking-tight, which is why the form
+ *  read flat while the Order Confirmed and Track Order screens — which kept
+ *  font-display throughout — did not.
+ *
+ *  The price lives in a FIXED-width right column. That is what keeps the two
+ *  options on one grid: the amounts start at the same x, the row height does
+ *  not change when the shopper switches methods, and the title can never be
+ *  pushed into the price at 320px because the price's width is reserved
+ *  before the text is measured. That column is deliberately no wider than the
+ *  amount and the SAVE pill need: the extra width used to be spent on the
+ *  savings line, which wrapped to three lines and made this card ~148px tall
+ *  for ~60px of content. The savings line now spans the full card width on one
+ *  line instead, and the card is sized only by what it actually contains.
+ *
+ *  The whole card is the tap target (it is a <button>), with a 250ms
+ *  border/background/shadow transition on a decelerating curve and nothing
+ *  else. The radio ring and dot share that curve, so the whole card resolves
+ *  into its selected state as one movement. It is a CSS state transition with
+ *  no keyframes or iteration count, so it plays once per change and never on
+ *  its own. */
+function PaymentMethodCard({
   selected,
-  title,
+  name,
   sub,
+  note,
+  price,
   onClick,
-  badges,
+  extra,
+  footnote,
 }: {
   selected: boolean;
-  title: string;
+  name: string;
   sub?: string;
+  /** Small muted third line under the sub, in the left text block. */
+  note?: string;
+  /** Right-hand column: the amount, right-aligned in a fixed width. */
+  price: React.ReactNode;
   onClick: () => void;
-  badges?: React.ReactNode;
+  /** Full-width strip under the row (the accepted-methods marks). */
+  extra?: React.ReactNode;
+  /** One full-width line under `extra`, indented to the text block. Used for
+   *  the online savings line: at card width it fits on a SINGLE line, where in
+   *  the right-hand column it wrapped to three and was the single biggest
+   *  contributor to the card's height. */
+  footnote?: string;
 }) {
   return (
     <button
       type="button"
+      role="radio"
+      aria-checked={selected}
+      aria-label={`${name}. ${sub ?? ''}`}
       onClick={onClick}
-      aria-pressed={selected}
-      className={`flex w-full items-center gap-3 rounded-soft border px-4 py-3.5 text-left transition-colors ${
-        selected ? 'border-crimson bg-crimson/5' : 'border-line-2 bg-white hover:border-bone-dim'
+      /* Selection animates rather than snaps: the border, the wash and the
+         shadow ease out over 250ms on a decelerating curve, so the card
+         settles into place instead of jumping. It is a state change only —
+         there is no keyframe or loop, so nothing animates while the shopper is
+         not switching methods.
+
+         `payment-card-shine` is the periodic diagonal knife shine. One class on
+         this shared card, so Online Payment and COD both get it and the CSS
+         does the rest: an `::after` band sweeps across, and the class only
+         supplies the `position: relative` / `overflow: hidden` pair that keeps
+         it inside the rounded corner. No markup, no second element, no change
+         to size, content or alignment — and because the band is
+         `pointer-events: none` the whole card stays the tap target.
+
+         PREMIUM BADGE TREATMENT, entirely in `box-shadow` + one radius token,
+         so nothing about the box changes: no padding, no border width, no
+         width, no height. Three layers, outside-in:
+           1. a hairline outer ring, which is the "layered border" — it reads as
+              a second, softer edge just outside the 1px border and separates
+              the card from the page on a white background;
+           2. a 1px inset white highlight along the top edge, which is what
+              makes a flat rectangle read as a raised physical badge;
+           3. a very light drop shadow directly under it, for the last fraction
+              of depth.
+         Because `box-shadow` is already in the transitioned property list, the
+         whole treatment cross-fades with the existing 250ms curve — no new
+         transition, no new timing.
+         `rounded-xl` is 0.75rem, which is the site's own `--radius-card`, so
+         the softer corner is a token already in use rather than a new number. */
+      className={`payment-card-shine block w-full rounded-xl border px-3.5 py-3 text-left transition-[border-color,background-color,box-shadow] duration-[250ms] ease-[cubic-bezier(0.16,1,0.3,1)] sm:py-2.5 ${
+        // Selected reads as the primary decision, but by TINT and a hairline
+        // weight — not by turning dark. The ring is layered into the shadow
+        // rather than being a second border because a 1px->2px border change
+        // would reflow the card by 1px on selection and make the two options
+        // visibly jump. Soft shadows cost no layout and do the same "lifted"
+        // work, so the whole badge treatment animates for free.
+        selected
+          ? 'border-crimson/60 bg-[#fff4f6] shadow-[0_0_0_1px_rgba(210,10,46,0.22),inset_0_1px_0_rgba(255,255,255,0.85),0_2px_10px_rgba(210,10,46,0.14)]'
+          : 'border-line-2 bg-white shadow-[0_0_0_1px_rgba(26,26,26,0.045),inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_rgba(26,26,26,0.05)] hover:border-bone-dim/45'
       }`}
     >
-      <span
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
-          selected ? 'border-crimson' : 'border-bone-dim/50'
-        }`}
-        aria-hidden
-      >
-        {selected && <span className="h-2.5 w-2.5 rounded-full bg-crimson" />}
+      <span className="flex items-start gap-2.5 sm:gap-3">
+        {/* The radio is the "which method" affordance, so it grows with the
+            card on mobile: 17px there, 15px from sm. The selected ring also
+            picks up a faint crimson fill so the chosen option is legible as
+            chosen at a glance, without the dot itself getting bigger. */}
+        <span
+          className={`mt-[2px] flex h-[17px] w-[17px] shrink-0 items-center justify-center rounded-full border transition-[border-color,background-color] duration-[250ms] ease-[cubic-bezier(0.16,1,0.3,1)] sm:mt-[3px] sm:h-[15px] sm:w-[15px] ${
+            selected ? 'border-crimson bg-crimson/10' : 'border-bone-dim/45'
+          }`}
+          aria-hidden
+        >
+          {/* The dot grows AND fades on the same curve as the ring, so the
+              indicator finishes filling the circle rather than popping in at
+              75%. No overshoot or bounce — the deceleration carries it. */}
+          <span className={`h-[7px] w-[7px] rounded-full bg-crimson transition-[opacity,transform] duration-[250ms] ease-[cubic-bezier(0.16,1,0.3,1)] ${selected ? 'scale-100 opacity-100' : 'scale-75 opacity-0'}`} />
+        </span>
+
+        <span className="min-w-0 flex-1">
+          {/* The option name sits a step above `sub` and `note` below it, so the
+              card reads name > explanation > qualifier rather than three lines
+              at one weight. Only the name changed: `sub` and `note` keep their
+              lighter bone-soft treatment, which is what keeps them supporting. */}
+          <span className="block font-label text-[12px] font-bold uppercase leading-[1.3] tracking-wide-2 text-bone">{name}</span>
+          {sub && <span className="mt-0.5 block text-[11.5px] font-normal leading-[1.35] text-bone-soft">{sub}</span>}
+          {note && (
+            <span className="mt-1 block text-[9.5px] font-medium uppercase leading-[1.4] tracking-[0.03em] text-bone-soft">
+              {note}
+            </span>
+          )}
+        </span>
+
+        {/* Fixed width => the two amounts share one right-hand alignment, and it
+            is no wider than it has to be: the column only ever holds the amount
+            and the SAVE pill, so every px saved here goes to the method name on
+            the left, which is what lets "CASH ON DELIVERY (COD)" stay on one
+            line at 390px and up.
+
+            88px rather than the old 76px, because the amount is now 26px on
+            mobile and "₹3,847" no longer fits in 76px — it was being clipped
+            at its widest. 88px is measured to hold six digits plus the ₹ sign
+            at 26px bold tabular, and it steps back up to 96px on desktop where
+            the amount drops to 22px and the name has room to spare.
+
+            A flex column, not a plain block: as a block the amount and the pill
+            were inline-level, so the pill sat in an anonymous line box and the
+            inherited 24px line-height silently added 8px of empty space under
+            it. Blockifying the children hands the column only its own content
+            height. `items-end` is what right-aligns them. */}
+        <span className="flex w-[88px] shrink-0 flex-col items-end text-right sm:w-[96px]">{price}</span>
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-[15px] font-semibold leading-snug text-bone">{title}</span>
-        {sub && <span className="mt-0.5 block text-xs leading-snug text-grey">{sub}</span>}
-      </span>
-      {badges}
+
+      {/* Also a flex container, for the same reason: as a block the logo strip
+          is inline-level and its 22px row picked up an anonymous line box too.
+          `items-center` re-asserts the centring the flex row was doing.
+          mt-1.5 (6px) rather than mt-2: 6px of clear air under the price
+          column already reads as separated, and the 22px logo row sits closer
+          to the text it belongs to. */}
+      {extra && (
+        <span className="mt-1.5 flex items-center pl-[26px]">{extra}</span>
+      )}
+      {footnote && (
+        /* The saving restated in words, under the logos. 11.5px rather than
+           10.5px: this is the line that converts a price comparison into a
+           decision, and it was previously the smallest text in the card. */
+        <span className="mt-1.5 flex items-center pl-[26px] text-[11.5px] font-semibold leading-[1.35] text-crimson">
+          {footnote}
+        </span>
+      )}
     </button>
   );
 }
@@ -1690,7 +2347,7 @@ function CheckboxSquare({ checked }: { checked: boolean }) {
   return (
     <span
       className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] border transition-colors ${
-        checked ? 'border-crimson bg-crimson text-white' : 'border-line-2 bg-white text-transparent'
+        checked ? 'border-bone bg-bone text-white' : 'border-line-2 bg-white text-transparent'
       }`}
       aria-hidden
     >

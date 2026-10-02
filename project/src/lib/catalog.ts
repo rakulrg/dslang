@@ -124,12 +124,15 @@ export function refreshCatalog(): Promise<CatalogProduct[]> {
 }
 
 /**
- * THE catalog data source for every storefront surface (home, shop, new drops,
+ * THE catalog data source for every storefront surface (the collection page,
  * search, related products, account). All callers share ONE promise, so
- * Home → Shop → Product → back never refetches the same unchanged catalog, and
- * concurrent mounters (e.g. StrictMode, search while home renders) coalesce
+ * Collection → Product → back never refetches the same unchanged catalog, and
+ * concurrent mounters (e.g. StrictMode, search open over the grid) coalesce
  * into a single request. Errors evict the cache so a retry actually refetches;
  * a short TTL bounds staleness if someone edits the DB out-of-band.
+ *
+ * The homepage deliberately does NOT call this: it renders only the hero, whose
+ * slides come from fetchHeroSlides().
  *
  * SAFETY: this caches LISTING data including the current per-variant stock
  * numbers. Purchase paths never trust it — the product detail page calls

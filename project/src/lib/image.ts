@@ -6,6 +6,11 @@
  * trigger only ONE network request) and remembers successful loads, so
  * revisiting the same slide/card never refetches. Failed loads are evicted so
  * a later attempt can retry (e.g. after a transient network hiccup).
+ *
+ * The hero used to call a batch variant here to warm EVERY slide up front,
+ * which on mobile meant downloading several photographs before the shopper had
+ * seen the first one. It now preloads one image ahead via `preloadImage`, which
+ * is all a crossfade needs.
  */
 const preloadCache = new Map<string, Promise<string>>();
 
@@ -27,18 +32,4 @@ export function preloadImage(src: string): Promise<string> {
   });
 
   return promise;
-}
-
-/** Preloads many images in parallel. Never rejects — resolves with the lists
- *  of successfully loaded and failed URLs so callers can react to failures. */
-export async function preloadImages(srcs: string[]): Promise<{ ok: string[]; failed: string[] }> {
-  const unique = Array.from(new Set(srcs.filter((s) => typeof s === 'string' && s.trim().length > 0)));
-  const settled = await Promise.allSettled(unique.map((src) => preloadImage(src)));
-  const ok: string[] = [];
-  const failed: string[] = [];
-  settled.forEach((result, i) => {
-    if (result.status === 'fulfilled') ok.push(unique[i]);
-    else failed.push(unique[i]);
-  });
-  return { ok, failed };
 }

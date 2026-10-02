@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#10100f"/>
+      <stop offset="1" stop-color="#1a1a18"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.42" r="0.55">
+      <stop offset="0" stop-color="#2b2b27"/>
+      <stop offset="1" stop-color="#10100f" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="800" fill="url(#bg)"/>
+  <circle cx="600" cy="360" r="300" fill="url(#halo)"/>
+  <g fill="none" stroke="#EDE8DB" stroke-width="2">
+    <rect x="470" y="210" width="260" height="300" rx="4"/>
+    <path d="M470 360 H730"/>
+    <path d="M490 210 q110 -70 220 0"/>
+    <path d="M500 210 q-90 55 0 150 M500 210 q90 55 0 150" opacity="0.7"/>
+  </g>
+  <text x="600" y="558" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="24" letter-spacing="8" fill="#8a8a85">FIT 03 — OVERSIZED CREW</text>
+  <text x="600" y="606" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" letter-spacing="5" fill="#5b5b56">FLAT-LAY PLACEHOLDER</text>
+  <rect x="280" y="648" width="640" height="36" fill="#20201d"/>
+  <text x="600" y="673" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="19" letter-spacing="3" font-weight="700" fill="#B7B2A6">PLACEHOLDER — REPLACE WITH FINAL PHOTOGRAPHY</text>
+</svg>

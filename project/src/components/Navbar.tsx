@@ -9,9 +9,12 @@ import { Instagram } from '@/components/icons/Instagram';
 import { SearchDialog } from '@/components/SearchDialog';
 import { lockScroll, unlockScroll } from '@/lib/scrollLock';
 
+// The storefront has ONE browsing destination. "New Drops" is deliberately not a
+// second one: it is a filtered copy of the same catalogue, so listing it beside
+// Collection offered two doors to one room. The catalogue is small enough that
+// Collection is the whole shop, and /new-drops redirects here.
 const NAV_LINKS = [
-  { label: 'Collection', to: '/collection' },
-  { label: 'New Drops', to: '/new-drops' },
+  { label: 'Collection', to: '/collections' },
   { label: 'Track Order', to: '/track-order' },
   { label: 'About', to: '/stock-dslang' },
 ];
@@ -19,9 +22,11 @@ const NAV_LINKS = [
 export function Navbar({
   currentPath,
   onOpenLogin,
+  minimal,
 }: {
   currentPath: string;
   onOpenLogin: (mode: 'signin' | 'signup') => void;
+  minimal?: boolean;
 }) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -29,8 +34,19 @@ export function Navbar({
 
   const { count: retailCount } = useD2cCart();
   const { openCart } = useCartDrawer();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, isAdminLoading } = useAuth();
   const { navigate } = useRouter();
+
+  // The single gate for every ADMIN affordance in the header and the drawer.
+  //
+  // `isAdmin` alone is not safe to render from: the admin_users check is async,
+  // so between a sign-out (or a user switch) and the check resolving, the flag
+  // can still describe the PREVIOUS identity. Requiring a settled user and a
+  // completed check means ADMIN PANEL is only ever painted for an identity that
+  // has actually been confirmed against admin_users â€” never for a signed-out
+  // visitor, and never optimistically while the answer is in flight. This is
+  // pure UI gating; the real authorization is still enforced server-side.
+  const showAdminPanel = !!user && !isAdminLoading && isAdmin;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -55,8 +71,8 @@ export function Navbar({
     return () => window.removeEventListener('keydown', onKey);
   }, [menuOpen]);
 
-  // A route change — menu link tap, browser back/forward, or programmatic
-  // navigation — must always close the mobile menu. The scroll-lock effect
+  // A route change â€” menu link tap, browser back/forward, or programmatic
+  // navigation â€” must always close the mobile menu. The scroll-lock effect
   // above releases the body scroll via its cleanup when menuOpen turns false.
   useEffect(() => {
     setMenuOpen(false);
@@ -72,18 +88,39 @@ export function Navbar({
 
   const solid = scrolled || currentPath !== '/';
 
+  // Minimal header (payment return flow): brand only â€” no nav, no hamburger,
+  // no search/cart icons. The shopper just landed back from the gateway and
+  // must not be pulled toward checkout/navigation while payment is verified.
+  if (minimal) {
+    return (
+      <header className="fixed top-8 inset-x-0 z-50 bg-white/85 backdrop-blur-xl border-b border-line/60 shadow-[0_2px_20px_rgba(0,0,0,0.04)]">
+        <nav className="shell">
+          <div className="flex h-12 md:h-14 items-center justify-center">
+            <a
+              href={linkHref('/')}
+              className="font-brand text-2xl md:text-3xl tracking-[0.18em] leading-none select-none text-bone"
+              aria-label="DSLANG home"
+            >
+              DSLANG
+            </a>
+          </div>
+        </nav>
+      </header>
+    );
+  }
+
   return (
     <>
       <header
-        className={`fixed top-8 inset-x-0 z-50 transition-all duration-200 ${
+        className={`fixed top-8 inset-x-0 z-50 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
           solid
-            ? 'bg-white/95 backdrop-blur-xl border-b border-line shadow-[0_1px_20px_rgba(0,0,0,0.04)]'
-            : 'bg-white/80 backdrop-blur-md border-b border-transparent'
+            ? 'bg-white/85 backdrop-blur-xl border-b border-line/60 shadow-[0_2px_20px_rgba(0,0,0,0.04)]'
+            : 'bg-white/70 backdrop-blur-md border-b border-transparent'
         }`}
       >
-        <nav className="mx-auto px-4 md:px-12 lg:px-20 xl:px-28">
+        <nav className="shell">
           <div className="flex h-12 md:h-14 items-center gap-3 md:gap-6">
-            {/* Left — hamburger (mobile) */}
+            {/* Left â€” hamburger (mobile) */}
             <button
               onClick={() => setMenuOpen(true)}
               className="text-bone p-1 -ml-1 lg:hidden"
@@ -129,10 +166,10 @@ export function Navbar({
               )}
               {user && (
                 <button
-                  onClick={() => navigate(isAdmin ? '/admin' : '/account')}
+                  onClick={() => navigate(showAdminPanel ? '/admin' : '/account')}
                   className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-bone transition-colors"
                 >
-                  {isAdmin ? 'Admin' : 'Account'}
+                  {showAdminPanel ? 'Admin' : 'Account'}
                 </button>
               )}
               <button
@@ -159,7 +196,7 @@ export function Navbar({
         </nav>
       </header>
 
-      {/* Menu drawer — always rendered, transform-based */}
+      {/* Menu drawer â€” always rendered, transform-based */}
       <div
         className="fixed inset-0 z-[60]"
         style={{ pointerEvents: menuOpen ? 'auto' : 'none' }}
@@ -187,7 +224,7 @@ export function Navbar({
           </div>
           <div className="flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
             <p className="px-5 pt-4 text-[10px] uppercase tracking-[0.2em] text-grey font-semibold">
-              DSLANG · Slang Of Design
+              DSLANG Â· Slang Of Design
             </p>
             <ul className="flex flex-col py-2">
               {NAV_LINKS.map((l) => (
@@ -214,26 +251,42 @@ export function Navbar({
                   Contact
                 </a>
               </li>
-              <li className="mt-2">
-                <div className="px-5 pt-3 pb-1 text-[10px] uppercase tracking-[0.2em] text-grey font-semibold">
-                  Account
-                </div>
-                {user ? (
+              {/* Signed-in: an "Account" group holding MY ACCOUNT â€” the single
+                  customer entry point â€” plus ADMIN PANEL only for a confirmed
+                  admin. Orders and log out live INSIDE My Account, so "My
+                  Orders" is deliberately not a top-level item here. Signed-out:
+                  no group heading and no admin entry at all, so a stale isAdmin
+                  can never surface. */}
+              {user ? (
+                <li className="mt-2">
+                  <div className="px-5 pt-3 pb-1 text-[10px] uppercase tracking-[0.2em] text-grey font-semibold">
+                    Account
+                  </div>
                   <button
-                    onClick={() => { setMenuOpen(false); navigate(isAdmin ? '/admin' : '/account'); }}
+                    onClick={() => { setMenuOpen(false); navigate('/account'); }}
                     className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
                   >
-                    {isAdmin ? 'Admin Panel' : 'Account'}
+                    My Account
                   </button>
-                ) : (
+                  {showAdminPanel && (
+                    <button
+                      onClick={() => { setMenuOpen(false); navigate('/admin'); }}
+                      className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
+                    >
+                      Admin Panel
+                    </button>
+                  )}
+                </li>
+              ) : (
+                <li className="mt-2">
                   <button
                     onClick={() => { setMenuOpen(false); onOpenLogin('signin'); }}
                     className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
                   >
                     LOGIN
                   </button>
-                )}
-              </li>
+                </li>
+              )}
             </ul>
             <div className="flex-1" />
           </div>

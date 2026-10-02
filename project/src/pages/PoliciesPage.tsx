@@ -10,7 +10,7 @@ const POLICY_TABS = [
 
 const CONTENT: Record<string, { q: string; a: string }[]> = {
   shipping: [
-    { q: 'Processing Time', a: 'Orders are processed within 24–48 hours of confirmation and dispatched from Tiruppur, Tamil Nadu.' },
+    { q: 'Processing Time', a: 'Orders are processed within 24–48 hours of confirmation and dispatched from our facility.' },
     { q: 'Dispatch', a: 'Pan-India delivery takes 3–7 business days depending on your location. Remote areas may take up to 10 days.' },
     { q: 'Shipping Charges', a: 'Shipping is shown at checkout as a flat rate. You will receive a tracking link once your order ships.' },
     { q: 'Order Confirmation', a: 'Every order is personally reviewed by the DSLANG team. We confirm dispatch details on WhatsApp before your order leaves.' },
@@ -37,7 +37,7 @@ export function PoliciesPage() {
 
   return (
     <div className="pt-4 pb-12 md:pt-8 md:pb-20">
-      <div className="mx-auto max-w-[1000px] px-5 md:px-8">
+      <div className="shell shell--reading">
         <h1 className="font-display text-5xl md:text-8xl uppercase tracking-wide-2 text-bone leading-[0.9]">
           Policies
         </h1>

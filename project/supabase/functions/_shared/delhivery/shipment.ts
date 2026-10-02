@@ -26,9 +26,18 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 // --- shared Delhivery adapter (fail-closed; token from env, never stored) ----
 import { delhiveryBase as DELHIVERY_BASE, delhiveryConfigured, type DelhiveryConfig as DelhiveryProviderConfig } from './client.ts';
 import { createDelhiveryOrder, fetchDelhiveryWaybill, type DelhiveryCreateResult } from './orders.ts';
+import { sendOrderEmail } from '../emails.ts';
 
 export const CREATING_SENTINEL = 'creating';
-export const SHIPPABLE_STATUSES = new Set(['pending', 'cod_partial_paid', 'processing']);
+/**
+ * Order states that may be handed to Delhivery.
+ *
+ * A NEW COD order is created at 'pending' with payment_status 'cod_pending' and
+ * is fully confirmed — nothing is owed to us online, the balance is collected at
+ * the door — so it must be shippable exactly like a confirmed order.
+ *
+ */
+export const SHIPPABLE_STATUSES = new Set(['pending', 'processing']);
 
 export type ShipmentSource = 'auto' | 'admin' | 'webhook';
 
@@ -131,16 +140,19 @@ export async function processEligibleShipment(
     };
   }
 
-  // Neutral already-shipped detection (Delhivery rows carry awb_number +
-  // shipping_provider; legacy rows carry shiprocket_order_id — handled above).
-  if (String(order.shipping_provider ?? '') === 'delhivery' && String(order.awb_number ?? '') !== '') {
+  // Neutral already-shipped detection. ANY existing AWB is final, whoever wrote
+  // it: a Delhivery waybill from an earlier run, or a courier + waybill an admin
+  // typed in by hand. Auto-ship is a fallback for orders nobody has shipped yet,
+  // so it steps aside rather than creating a second AWB for a parcel that is
+  // already with a courier.
+  if (String(order.awb_number ?? '') !== '') {
     return {
       ok: true,
       created: false,
       alreadyShipped: true,
       inProgress: false,
       error: null,
-      shippingProvider: 'delhivery',
+      shippingProvider: String(order.shipping_provider ?? '') || 'manual',
       trackingId: String(order.tracking_id ?? '') || String(order.awb_number ?? ''),
       awbNumber: String(order.awb_number ?? ''),
       courierName: String(order.courier_name ?? '') || null,
@@ -165,14 +177,20 @@ export async function processEligibleShipment(
       .select('shiprocket_order_id, awb_number, shipping_provider')
       .eq('id', order.id)
       .maybeSingle();
-    if (recheck.data?.shipping_provider === 'delhivery' && recheck.data.awb_number) {
+    // The CAS above can legitimately lose for two very different reasons. Report
+    // each one truthfully instead of collapsing them into "in progress".
+    if (recheck.data?.awb_number) {
+      // A manual AWB is just as final as a Delhivery one: an admin entered this
+      // courier and waybill by hand, and auto-ship must never overwrite it or
+      // invent a second one. Echo the real provider/courier back.
+      const provider = String(recheck.data.shipping_provider ?? '') || 'manual';
       return {
         ok: true,
         created: false,
         alreadyShipped: true,
         inProgress: false,
         error: null,
-        shippingProvider: 'delhivery',
+        shippingProvider: provider,
         trackingId: String(recheck.data.awb_number),
         awbNumber: String(recheck.data.awb_number),
         courierName: null,
@@ -244,7 +262,7 @@ export async function processEligibleShipment(
   }
 
   // --- Persist the NEUTRAL fields (CAS-cleared, provider stamped) ------------
-  const patch: Record<string, unknown> = {
+  const basePatch: Record<string, unknown> = {
     shipping_provider: 'delhivery',
     awb_number: result.awb,
     tracking_id: result.awb,
@@ -252,6 +270,11 @@ export async function processEligibleShipment(
     courier_name: result.courierName || null,
     label_url: result.labelUrl || null,
     shipped_at: result.shippedAt ?? new Date().toISOString(),
+    // Neutral shipment status at creation ('shipped' = registered/in-transit at
+    // Delhivery). Persisted once so Admin/Track show an immediate status; the
+    // Delhivery webhook refines it (delivered/undelivered/returned) as scans arrive.
+    tracking_current_status: 'shipped',
+    last_tracking_sync_at: new Date().toISOString(),
     ship_attempt_error: null,
     last_ship_attempt_at: new Date().toISOString(),
     ship_source: source,
@@ -259,10 +282,36 @@ export async function processEligibleShipment(
     auto_ship_at: null,
     shiprocket_order_id: null,
   };
-  const { error: updateError } = await supabase
+  const patch: Record<string, unknown> = {
+    ...basePatch,
+    // The same shipping lifecycle the admin UI writes by hand. Without this a
+    // courier-generated shipment would keep the column's `pending` default and a
+    // customer holding a real AWB would be told their parcel is still being
+    // prepared. `order_status` stays 'shipped' in lockstep.
+    shipping_status: 'shipped',
+  };
+  let { error: updateError } = await supabase
     .from('retail_orders')
     .update(patch)
     .eq('id', order.id);
+
+  // `shipping_status` arrives with its migration. Deployed ahead of that
+  // migration, PostgREST rejects the entire write — including the waybill, which
+  // has already been created at Delhivery. Losing the AWB is far worse than
+  // losing the lifecycle enrichment, so retry with the pre-existing columns.
+  if (updateError) {
+    const missingColumn =
+      updateError.code === 'PGRST204' ||
+      updateError.code === '42703' ||
+      /column .* does not exist|schema cache/i.test(String(updateError.message ?? ''));
+    if (missingColumn) {
+      const retry = await supabase
+        .from('retail_orders')
+        .update(basePatch)
+        .eq('id', order.id);
+      updateError = retry.error ?? null;
+    }
+  }
   if (updateError) {
     // Shipment IS live at Delhivery — never lose the waybill. Flag for review.
     const rescue = await supabase
@@ -273,6 +322,23 @@ export async function processEligibleShipment(
       })
       .eq('id', order.id);
     void rescue;
+  }
+
+  // Shipped email — sent once the waybill is live (single-fire via the shared
+  // stamp; the manual Admin ship and the auto sweep share this core, so both
+  // notify the customer the same way). Fail-open: a mail hiccup never undoes
+  // the shipment.
+  try {
+    const emailOrder = {
+      ...order,
+      awb_number: result.awb,
+      tracking_id: result.awb,
+      courier_name: result.courierName,
+      tracking_url: result.trackingUrl,
+    };
+    await sendOrderEmail(supabase, emailOrder, 'shipped');
+  } catch {
+    /* emailing is best-effort — the shipment itself already succeeded */
   }
 
   return {

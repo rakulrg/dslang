@@ -106,7 +106,15 @@ function loadCart(): D2cCartItem[] {
         typeof i.sizeLabel === 'string' &&
         typeof i.quantity === 'number' &&
         Number.isFinite(i.quantity) &&
-        i.quantity > 0
+        i.quantity > 0 &&
+        // The line's price is what the whole cart total is built from. A stored
+        // value that is missing, non-numeric or negative (legacy schema, a
+        // partial write, hand-edited storage) would make every subtotal NaN and
+        // render "\u20b9 NaN" on the checkout amounts and CTA, so the line is
+        // simply not usable as a cart entry.
+        typeof i.unitPrice === 'number' &&
+        Number.isFinite(i.unitPrice) &&
+        i.unitPrice >= 0
     );
   } catch {
     return [];
@@ -131,6 +139,9 @@ export function D2cCartProvider({ children }: { children: ReactNode }) {
   const addItem = useCallback((line: D2cCartLineInput) => {
     const qty = Math.max(1, Math.floor(line.quantity));
     if (qty === 0 || !line.productId || !line.colorId || !line.sizeLabel) return;
+    // Never persist an unusable price: the cart total, the payment cards and the
+    // CTA all derive from it, so a NaN here would surface as "\u20b9 NaN".
+    if (!Number.isFinite(line.unitPrice) || line.unitPrice < 0) return;
     const cap = Math.max(1, line.stock || 99);
     setItems((prev) => {
       const idx = prev.findIndex((i) => sameLine(i, line));
