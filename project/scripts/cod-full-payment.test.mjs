@@ -410,18 +410,27 @@ test('COD 9: no customer-facing screen still advertises a COD advance', () => {
     /footnote=\{`You save \$\{formatPrice\(onlineDiscount\)\} by paying online`\}/,
     'the savings line must be the full-width footnote prop, not part of the price column',
   );
-  // ...and the price column must stay only as wide as the amount + SAVE pill.
+  // ...and the price column must still RESERVE its width up front.
   //
-  // The invariant is that the column is FIXED-WIDTH, not that it is any
-  // particular number of pixels: a fluid or growing column would eat the width
-  // the method label needs, and that is the failure this guards. The literal is
-  // now 88px (up from 76px) because the amount is 26px on mobile and "₹3,847"
-  // was being clipped at its widest — so the width tracks the type scale, and
-  // pinning the number here would only force an edit on every scale change.
+  // The invariant is that the column's width is reserved before the text is
+  // measured, not that it is any particular number of pixels: a column with no
+  // reservation at all would take its width from the method label, and that is
+  // the failure this guards. The literal is 88px (up from 76px) because the
+  // amount is 26px on mobile and "₹3,847" was being clipped at its widest — so
+  // the reservation tracks the type scale, and pinning the number here would only
+  // force an edit on every scale change.
+  //
+  // It is a MINIMUM (`min-w-`), not a hard `w-`, and that is deliberate: the
+  // amount is a single `whitespace-nowrap` value, so a long amount must widen the
+  // column rather than be broken across two lines. A fixed width could only hold
+  // that by clipping or overlapping the label. `min-w` still reserves 88px for
+  // every ordinary amount (COD's is never wider than that), and because the label
+  // is `min-w-0 flex-1` the growth is taken from the label, which wraps — the
+  // label can never be pushed into or overlapped by the price.
   const priceCol = surfaces[CHECKOUT].match(
-    /flex w-\[(\d+)px\][^"]*shrink-0 flex-col items-end/,
+    /flex (?:min-)?w-\[(\d+)px\][^"]*shrink-0 flex-col items-end/,
   );
-  assert.ok(priceCol, 'the price column must be a fixed-width flex column');
+  assert.ok(priceCol, 'the price column must reserve its width up front');
   assert.ok(
     !/w-\[(\d+)px\][^"]*flex-col items-end[^"]*"[^>]*>\s*\{\s*formatPrice\(codDue\)/.test(surfaces[CHECKOUT]),
     'the COD amount must not sit inside a differently-sized column',
@@ -435,6 +444,26 @@ test('COD 9: no customer-facing screen still advertises a COD advance', () => {
     surfaces[CHECKOUT],
     /font-price text-\[26px\][^"]*font-bold leading-none text-bone tabular-nums/,
     'the online amount must be bold, tight-leading and tabular',
+  );
+  // The ₹ and the amount are ONE price value, not two stacked pieces.
+  //
+  // `formatPrice` joins them with U+2009 THIN SPACE, and a space IS a line-break
+  // opportunity: at 26px bold tabular "₹ 2,446" is ~89px, wider than the 88px
+  // reservation, so it broke at that space and left the ₹ alone on the first line
+  // with the amount below it — which reads as the sign being raised too high.
+  // `whitespace-nowrap` makes the pair unbreakable at every amount (₹99 through
+  // ₹12,34,567) without special-casing any one value, and `items-baseline` keeps
+  // the sign and the digits on one baseline. Nothing here is allowed to become a
+  // separately positioned ₹ glyph.
+  assert.match(
+    surfaces[CHECKOUT],
+    /items-baseline justify-end whitespace-nowrap font-price text-\[26px\]/,
+    'the online amount must be one inline, unbreakable price value',
+  );
+  assert.doesNotMatch(
+    surfaces[CHECKOUT],
+    /absolute[^"]*>\s*\{?['"`]?₹/,
+    'the currency symbol must not be positioned separately from the amount',
   );
   // Logos and the savings line share one indent, so they read as one block.
   assert.match(

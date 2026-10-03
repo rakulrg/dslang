@@ -515,8 +515,8 @@ export function HomePage() {
           hero instead of a separate band. */}
       {productsError ? (
         <section className="shell pt-10 md:pt-16 pb-12 md:pb-20 flex flex-col items-center text-center">
-          <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">Couldn't Load Products</p>
-          <p className="mt-2 text-sm text-grey">The collection failed to load. Please try again.</p>
+          <p className="font-label text-3xl uppercase tracking-wide-2 text-crimson">Couldn't Load Products</p>
+          <p className="mt-2 text-sm text-crimson">The collection failed to load. Please try again.</p>
           <button
             onClick={() => setLoadKey((k) => k + 1)}
             className="mt-8 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"

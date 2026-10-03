@@ -54,6 +54,12 @@ const ownerSelect = read('supabase/migrations/20261020000000_dslang_owner_select
 /** SQL comments explain what a migration deliberately does NOT do, so strip
  *  them before asserting on the executable statements. */
 const sql = (src) => src.replace(/--[^\n]*/g, '');
+/** Same idea for TSX. Asserting a string is ABSENT against commented source is
+ *  misleading here: the modal deliberately documents the Confirm Password field
+ *  it no longer has, so the comment would satisfy a `doesNotMatch` for the very
+ *  regression the assertion is meant to catch. */
+const noComments = (src) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 const adminTable = read('supabase/migrations/20260813062206_dslang_admin_users_table.sql.sql');
 const storageLock = read('supabase/migrations/20260816010000_lock_product_image_storage_to_admin.sql');
 const trackLookup = read('supabase/migrations/20261004000000_dslang_delhivery_cutover.sql');
@@ -547,4 +553,108 @@ test('admin: a user cannot promote themselves to admin', () => {
 
 test('admin: admin status is read from the admin_users table, not inferred from an email', () => {
   assert.match(auth, /from\('admin_users'\)[\s\S]*?\.eq\('user_id', userId\)/);
+});
+
+/* ---------------------------------------------------------------------------
+ * Email signup + verification.
+ *
+ * The signup form is three values — name, email, password — and the interesting
+ * failure modes are all about what does NOT happen: the name must become profile
+ * metadata rather than an auth credential, the password must never be stored or
+ * compared client-side, and a signup that turns out to hit an existing address
+ * must not silently become a second account or a dead error.
+ * ------------------------------------------------------------------------ */
+
+test('signup: the full name is sent as profile metadata, never as a credential', () => {
+  // Supabase writes `options.data` into the account's own user metadata, which
+  // is the profile. A custom table or a local copy would be a second source of
+  // truth for the same fact.
+  assert.match(auth, /data:\s*\{\s*full_name: meta\.fullName\.trim\(\)/);
+  assert.match(auth, /full_name: meta\.fullName\.trim\(\),/);
+  // It must not be smuggled into the email or password fields.
+  assert.doesNotMatch(auth, /signUp\(\s*\{\s*email,\s*password,\s*fullName/);
+  // Nor stored anywhere of our own.
+  assert.doesNotMatch(auth, /localStorage[^)]*full_name/i);
+  assert.doesNotMatch(auth, /setItem\([^)]*full_name/i);
+});
+
+test('signup: the password is only ever handed to Supabase', () => {
+  assert.match(auth, /sb\.auth\.signUp\(\{\s*email,\s*password,/);
+  // No manual hashing, and no password kept in component state after submit.
+  assert.doesNotMatch(auth, /createHash|bcrypt|scrypt|pbkdf2|md5|sha256/i);
+  assert.doesNotMatch(loginModal, /localStorage[^)]*password/i);
+  assert.doesNotMatch(loginModal, /setItem\([^)]*password/i);
+  // Nor echoed back into metadata.
+  assert.doesNotMatch(auth, /data:\s*\{[^}]*password/i);
+});
+
+test('signup: no confirm-password field, and no manual password comparison', () => {
+  const code = noComments(loginModal);
+  assert.doesNotMatch(code, /Confirm Password/);
+  assert.doesNotMatch(code, /confirm !== password/);
+  assert.doesNotMatch(code, /Passwords do not match/);
+  // The existing minimum length is still enforced client-side.
+  assert.match(code, /Password must be at least 6 characters/);
+});
+
+test('signup: the name is required, and whitespace is not a name', () => {
+  assert.match(loginModal, /const cleanName = fullName\.trim\(\)/);
+  assert.match(loginModal, /if \(!cleanName\)\s*\{\s*setError\('Please enter your full name\.'\)/);
+  // Trimmed before it is both validated and stored.
+  assert.match(auth, /fullName\.trim\(\)/);
+});
+
+test('signup: a new account is not treated as verified until the link is clicked', () => {
+  // The account-exists-but-no-session result is what email-confirmation projects
+  // return; it must land on the verification screen, not on a signed-in state.
+  assert.match(noComments(loginModal), /if \(signedUp && !session\)[\s\S]{0,160}?setView\('verifyEmail'\)/);
+  // And the verification screen must offer both ways out.
+  assert.match(loginModal, /onClick=\{handleResend\}/);
+  assert.match(loginModal, /setTab\('login'\)/);
+});
+
+test('verification: resend uses Supabase own resend endpoint, not a custom token', () => {
+  assert.match(auth, /sb\.auth\.resend\(\{\s*type: 'signup',\s*email,/);
+  // No home-grown verification token, link or flag may appear.
+  assert.doesNotMatch(auth, /verify_token|verification_token|confirm_token|is_verified/i);
+  assert.doesNotMatch(loginModal, /verify_token|verification_token|confirm_token/i);
+});
+
+test('verification: an unverified account is recognised, never duplicated', () => {
+  // Supabase refuses to make a second account for the address, so the honest
+  // response is to recognise the existing one and offer resend / login.
+  assert.match(loginModal, /already registered\|user_already_exists\|email already/i);
+  assert.doesNotMatch(loginModal, /already registered[^\n]*\n[^\n]*setTab\('login'\)/);
+  // The generic fallbacks must not print Supabase's own message to a customer.
+  assert.doesNotMatch(loginModal, /setError\(signUpError\.message \|\|/);
+  assert.doesNotMatch(loginModal, /setError\(signInError\.message \|\|/);
+});
+
+test('verification: an unverified login gets a resend path, not a dead error', () => {
+  assert.match(loginModal, /email not confirmed\|email_not_confirmed\|unconfirmed/i);
+  assert.doesNotMatch(loginModal, /Please verify your email first — we sent you a confirmation link\./);
+});
+
+test('verification: the screen names the address the account was created under', () => {
+  // Signup lower-cases before sending, so showing the raw input back would tell
+  // the customer their link went somewhere it did not.
+  assert.match(loginModal, /const accountEmail = email\.trim\(\)\.toLowerCase\(\)/);
+  assert.match(loginModal, /verification link to <span className="text-bone">\{accountEmail\}/);
+});
+
+test('the password reset and Google paths are still wired up', () => {
+  assert.match(auth, /sb\.auth\.resetPasswordForEmail\(/);
+  assert.match(loginModal, /resetPassword\(cleanEmail\.toLowerCase\(\)\)/);
+  assert.match(auth, /sb\.auth\.signInWithOAuth\(\{/);
+  assert.match(loginModal, /signInWithGoogle\(\)/);
+  assert.match(loginModal, /Continue with Google/);
+});
+
+test('the measured-height panel still wraps the popup, so tab swaps keep animating', () => {
+  // The height transition depends on a sized wrapper around the absolutely
+  // positioned card; losing either half silently breaks the resize.
+  assert.match(loginModal, /max-h-\[92dvh\] animate-scale-in/);
+  assert.match(loginModal, /style=\{panelStyle\}/);
+  assert.match(loginModal, /absolute inset-0 bg-white rounded-2xl/);
+  assert.match(loginModal, /new ResizeObserver\(/);
 });

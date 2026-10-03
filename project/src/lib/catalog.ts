@@ -253,7 +253,8 @@ export async function fetchHeroSlides(): Promise<HeroSlideRow[]> {
 }
 
 export function formatPrice(n: number): string {
-  return `₹\u2009${n.toLocaleString('en-IN')}`;
+  if (!Number.isFinite(n)) return '₹0';
+  return `₹${n.toLocaleString('en-IN')}`;
 }
 
 /* ---- Retail / D2C helpers ---- */

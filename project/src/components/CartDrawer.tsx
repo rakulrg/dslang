@@ -346,7 +346,7 @@ export function CartDrawer() {
                         {applying ? <Loader2 size={13} strokeWidth={2} className="animate-spin" /> : 'Apply'}
                       </button>
                     </div>
-                    {promoError && <p className="mt-1.5 text-xs text-bone-dim">{promoError}</p>}
+                    {promoError && <p className="mt-1.5 text-xs text-crimson">{promoError}</p>}
                   </>
                 )}
               </div>

@@ -134,7 +134,7 @@ export function SaveDetailsPrompt({
           </button>
         </div>
 
-        {gError && <p role="alert" className="mt-4 text-xs text-bone-dim bg-paper-2 border border-line px-3 py-2.5">{gError}</p>}
+        {gError && <p role="alert" className="mt-4 text-xs text-crimson bg-paper-2 border border-line px-3 py-2.5">{gError}</p>}
       </div>
 
       <LoginModal isOpen={loginOpen} onClose={() => setLoginOpen(false)} onSignedIn={async (u) => { await doSave(u.id); }} />

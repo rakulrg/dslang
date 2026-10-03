@@ -470,9 +470,13 @@ export function AdminDashboard() {
         </div>
       )}
 
-      {/* Desktop sidebar */}
+      {/* Desktop sidebar. The collapse is instant on purpose: `width` is a
+          layout property, so animating it relaid out the whole content column
+          on every frame and read as a shutter every time the rail was
+          toggled. The nav items inside still never move (see the
+          .admin-shell interaction-polish block in index.css). */}
       <aside
-        className={`hidden lg:flex shrink-0 border-r border-white/10 bg-[#0f172a] flex-col h-dvh overflow-hidden transition-[width] duration-200 ${
+        className={`hidden lg:flex shrink-0 border-r border-white/10 bg-[#0f172a] flex-col h-dvh overflow-hidden ${
           sidebarCollapsed ? 'w-16' : 'w-52'
         }`}
       >

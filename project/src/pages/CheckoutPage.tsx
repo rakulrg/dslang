@@ -1199,11 +1199,29 @@ export function CheckoutPage() {
     const codDue = result.amount_due_on_delivery ?? result.total_amount;
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
-        {/* The burst wraps the mark itself, so it reads as the confirmation
-            landing rather than as an effect stuck on the page. */}
-        <span className="relative flex h-14 w-14 items-center justify-center">
-          <CheckCircle2 size={40} strokeWidth={1.4} className="text-bone" />
-          <ConfettiBurst />
+        {/* Fixed-layer celebration, mounted beside the mark rather than inside
+            it: it is anchored to the viewport's bottom corners, not to this
+            card, so nesting it in the 56px span would only misrepresent that.
+            It renders a <div>, which is not valid inside a <span>. */}
+        <ConfettiBurst />
+        <span className="order-placed-badge">
+          {/* The one place in the flow where the check is drawn rather than
+              borrowed from lucide: the mark has to pop and the check has to draw
+              itself in, and an <svg> icon carries no dash to animate. The disc is
+              a sibling so the check stays painted on top of it, and the paths
+              inherit their stroke from CSS (see .order-placed-badge__check). */}
+          <span className="order-placed-badge__disc" />
+          <svg
+            className="order-placed-badge__check"
+            viewBox="0 0 24 24"
+            width="34"
+            height="34"
+            fill="none"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M20 6.5 9.2 17.3 4 12.1" />
+          </svg>
         </span>
         <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">Order Confirmed</p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
@@ -1375,6 +1393,12 @@ export function CheckoutPage() {
     const isChecking = verdict === 'checking';
     const isPending = verdict === 'pending';
     const isFailed = verdict === 'failed';
+    // The result page shows ONE paragraph for three different situations:
+    // progress copy while we are still confirming, the failure reason once we
+    // know it, and a generic "not charged" line as a last resort. Only the last
+    // two are errors, so the colour is derived from the state rather than from
+    // the string - the wording stays byte-for-byte what it was.
+    const noteIsError = Boolean(errorMsg) || isFailed;
     const ref = result?.ref ?? liveOrder?.ref ?? '';
     const orderId = result?.order_id ?? liveOrder?.order_id ?? '';
     const amount = result?.total_amount ?? liveOrder?.amount ?? 0;
@@ -1395,9 +1419,9 @@ export function CheckoutPage() {
             <Loader2 size={32} strokeWidth={1.5} className="animate-spin text-bone" />
           ) : isPending ? (
             <Clock size={30} strokeWidth={1.4} className="text-bone" />
-          ) : (
-            <XCircle size={32} strokeWidth={1.4} className="text-bone" />
-          )}
+) : (
+          <XCircle size={32} strokeWidth={1.4} className="text-crimson" />
+        )}
         </div>
 
         <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">
@@ -1421,7 +1445,7 @@ export function CheckoutPage() {
           )}
         </div>
 
-        <p className="mt-4 text-sm text-grey max-w-md leading-relaxed">
+        <p className={`mt-4 text-sm max-w-md leading-relaxed ${noteIsError ? 'text-crimson' : 'text-grey'}`}>
           {checkingNote || errorMsg ||
             "Your payment could not be completed and you have not been charged. Your items are still safe in your bag — try paying again or contact us."}
         </p>
@@ -1535,7 +1559,7 @@ export function CheckoutPage() {
         className="mt-7 grid grid-cols-1 items-start gap-y-8 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] lg:gap-x-8 xl:gap-x-10"
       >
         {errorMsg && (
-          <p className="mb-6 lg:col-span-2 text-sm text-bone border border-bone/25 bg-bone/5 px-3 py-3 rounded-soft" role="alert">
+          <p className="mb-6 lg:col-span-2 text-sm text-crimson border border-bone/25 bg-bone/5 px-3 py-3 rounded-soft" role="alert">
             {errorMsg}
           </p>
         )}
@@ -1740,7 +1764,7 @@ export function CheckoutPage() {
                   {applying ? <Loader2 size={14} strokeWidth={2} className="animate-spin" /> : 'Apply'}
                 </button>
               </div>
-              {promoError && <p className="mt-1.5 text-xs text-bone-dim">{promoError}</p>}
+              {promoError && <p className="mt-1.5 text-xs text-crimson">{promoError}</p>}
             </div>
           )}
           {promo && (
@@ -1779,7 +1803,7 @@ export function CheckoutPage() {
             className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors hover:bg-bone/[0.04] sm:px-5"
           >
             {/* The collapsed bar IS the product line — thumbnail, name, variant,
-                then the payable total and the chevron — so the shopper sees what
+                then the product price and the chevron — so the shopper sees what
                 they are buying before opening anything, instead of a caption
                 telling them a summary exists.
 
@@ -1787,13 +1811,21 @@ export function CheckoutPage() {
                 full per-item list is already revealed on expand, so a leading
                 product row outside the bar (or a second one inside it) would just
                 duplicate what is one tap away. The existing data, image and `count`
-                are reused as-is; nothing is computed.
+                are reused as-is.
+
+                The amount shown is the PRODUCT price (`subtotal`), matching the
+                expanded item rows rather than the payable total: a number sitting
+                beside the product name is read as that product's price, so a
+                shipping-and-discount-inclusive, payment-method-dependent total did
+                not belong here. The payable total is not hidden by this — the
+                Payment Method cards and the CTA button still carry it. Both facts
+                are pinned in `payment-rules.test.mjs`.
 
                 The left block is `flex-1 min-w-0` so the name and variant
                 `truncate`: a long product name gives way on a narrow screen
-                rather than growing the bar's height or shoving the total past the
-                right edge. The total/chevron span stays `shrink-0`, so the
-                payable amount is never the thing that loses. */}
+                rather than growing the bar's height or shoving the price past the
+                right edge. The price/chevron span stays `shrink-0`, so the amount
+                is never the thing that loses. */}
             <span className="flex min-w-0 flex-1 items-center gap-3">
               {items[0]?.image && (
                 <span className="h-10 w-10 shrink-0 overflow-hidden rounded border border-line-2 bg-bone/[0.06]">
@@ -1811,8 +1843,9 @@ export function CheckoutPage() {
               </span>
             </span>
             <span className="flex shrink-0 items-center gap-2">
+              {/* Product price, not the payable total (see above). */}
               <span className="font-price text-[15px] font-semibold text-bone tabular-nums">
-                {formatPrice(paymentMethod === 'cod' ? codDue : onlineTotal)}
+                {formatPrice(subtotal)}
               </span>
               <ChevronDown
                 size={16}
@@ -1958,8 +1991,21 @@ export function CheckoutPage() {
                       one piece of the card that could still be read at a glance
                       from arm's length. It steps back on desktop only because
                       there the card is beside a price summary and needs to sit
-                      under the summary's own total, not compete with it. */}
-                  <span className="block font-price text-[26px] font-bold leading-none text-bone tabular-nums sm:text-[22px]">
+                      under the summary's own total, not compete with it.
+
+                      ONE inline price value, not a ₹ glyph beside a number.
+                      `formatPrice` joins them with U+2009 THIN SPACE, and a
+                      space is a line-break opportunity: in the 88px right-hand
+                      column "₹ 2,446" is ~89px at 26px bold tabular, so it broke
+                      at that space and left the ₹ stranded on the first line with
+                      the amount pushed below it — the ₹ read as raised simply
+                      because it was on its own line. `whitespace-nowrap` makes the
+                      pair unbreakable at every amount (₹99 through ₹12,34,567)
+                      rather than special-casing one value, and the flex row with
+                      `items-baseline` keeps the sign and the digits sharing one
+                      baseline if the two ever become separate elements.
+                      `justify-end` holds the right alignment the column gave it. */}
+                  <span className="flex items-baseline justify-end whitespace-nowrap font-price text-[26px] font-bold leading-none text-bone tabular-nums sm:text-[22px]">
                     {formatPrice(onlineTotal)}
                   </span>
                   {/* Solid crimson pill, right-hand column under the amount.
@@ -2180,15 +2226,15 @@ function SelectField({
  *  read flat while the Order Confirmed and Track Order screens — which kept
  *  font-display throughout — did not.
  *
- *  The price lives in a FIXED-width right column. That is what keeps the two
- *  options on one grid: the amounts start at the same x, the row height does
- *  not change when the shopper switches methods, and the title can never be
- *  pushed into the price at 320px because the price's width is reserved
- *  before the text is measured. That column is deliberately no wider than the
- *  amount and the SAVE pill need: the extra width used to be spent on the
- *  savings line, which wrapped to three lines and made this card ~148px tall
- *  for ~60px of content. The savings line now spans the full card width on one
- *  line instead, and the card is sized only by what it actually contains.
+ *  The price lives in a right-hand column of RESERVED MINIMUM width. That is
+ *  what keeps the two options on one grid: the amounts end at the same x, the
+ *  row height does not change when the shopper switches methods, and the title
+ *  can never be pushed into the price by its own width, because the column is
+ *  reserved before the text is measured. The reservation is a minimum rather
+ *  than a fixed width so that one unbreakable price value (see the ONLINE
+ *  PAYMENT card) can widen the column instead of being split across two lines;
+ *  the savings line spans the full card width on one line, and the card is
+ *  sized only by what it actually contains.
  *
  *  The whole card is the tap target (it is a <button>), with a 250ms
  *  border/background/shadow transition on a decelerating curve and nothing
@@ -2301,24 +2347,24 @@ function PaymentMethodCard({
           )}
         </span>
 
-        {/* Fixed width => the two amounts share one right-hand alignment, and it
-            is no wider than it has to be: the column only ever holds the amount
-            and the SAVE pill, so every px saved here goes to the method name on
-            the left, which is what lets "CASH ON DELIVERY (COD)" stay on one
-            line at 390px and up.
-
-            88px rather than the old 76px, because the amount is now 26px on
-            mobile and "₹3,847" no longer fits in 76px — it was being clipped
-            at its widest. 88px is measured to hold six digits plus the ₹ sign
-            at 26px bold tabular, and it steps back up to 96px on desktop where
-            the amount drops to 22px and the name has room to spare.
+        {/* Minimum width => the two amounts share one right-hand alignment and
+            the column is still reserved before the text is measured, so the
+            method name is never pushed into a price by a long one. But it is a
+            MINIMUM, not a fixed width: the price is a single `whitespace-nowrap`
+            value (see the ONLINE PAYMENT card), so a long amount can no longer be
+            squeezed into 88px and broken across two lines. The column now grows
+            to fit the amount instead, and every px it takes beyond 88px is taken
+            from the method name, which wraps rather than collides. A short amount
+            — COD's, and ONLINE PAYMENT's at normal order values — still lays out
+            at exactly 88px, so this column is pixel-identical to the fixed width
+            it replaces for every existing value.
 
             A flex column, not a plain block: as a block the amount and the pill
             were inline-level, so the pill sat in an anonymous line box and the
             inherited 24px line-height silently added 8px of empty space under
             it. Blockifying the children hands the column only its own content
             height. `items-end` is what right-aligns them. */}
-        <span className="flex w-[88px] shrink-0 flex-col items-end text-right sm:w-[96px]">{price}</span>
+        <span className="flex min-w-[88px] shrink-0 flex-col items-end text-right sm:min-w-[96px]">{price}</span>
       </span>
 
       {/* Also a flex container, for the same reason: as a block the logo strip

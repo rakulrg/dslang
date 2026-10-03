@@ -348,17 +348,24 @@ test('LAYOUT: the order summary is a collapsible that is closed on first paint',
   );
   // The breakdown is only rendered when open, so it cannot be permanently on.
   assert.match(checkout, /\{summaryOpen && \(/, 'the item rows and breakdown render only while open');
-  // The collapsed header carries the payable amount, so the total is never
-  // hidden behind the chevron. The window is a "how far along the header may the
-  // amount sit" bound, not an exact offset: the header now leads with the
-  // product line (thumbnail + name + variant) before the amount, and those carry
-  // their own explanatory comment. It is deliberately far short of the amount's
-  // position inside the EXPANDED breakdown (~7390 chars), so this still resolves
-  // to the header's own copy and still fails if the header stops showing it.
+  // The collapsed header carries the PRODUCT price (`subtotal`), matching the
+  // expanded item row directly below it, so an amount sitting beside the product
+  // name is never read as that product's price. It deliberately must NOT be the
+  // payment-method-dependent payable total: shipping, the promo discount and the
+  // online-payment discount are itemised in the expanded breakdown and remain
+  // visible on the payment cards and the CTA — they are never folded into this
+  // figure. The payable total is pinned separately, in the breakdown test above.
   assert.match(
     checkout,
-    /aria-expanded=\{summaryOpen\}[\s\S]{0,3000}?formatPrice\(paymentMethod === 'cod' \? codDue : onlineTotal\)/,
-    'the collapsed summary header must show the amount payable',
+    /aria-expanded=\{summaryOpen\}[\s\S]{0,3000}?formatPrice\(subtotal\)/,
+    'the collapsed summary header must show the product price',
+  );
+  // …and specifically NOT the payable total, which would make the bar's figure
+  // change with the selected payment method (₹448 online / ₹498 COD).
+  assert.doesNotMatch(
+    checkout.slice(checkout.indexOf('aria-expanded={summaryOpen}'), checkout.indexOf('{summaryOpen && (')),
+    /formatPrice\(paymentMethod === 'cod' \? codDue : onlineTotal\)/,
+    'the collapsed header must not show the payment-method-dependent total',
   );
   // The chevron mirrors the state.
   assert.match(

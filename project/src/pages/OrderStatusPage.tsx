@@ -754,6 +754,11 @@ export function OrderStatusPage() {
 
   if (verdict === 'failed' || verdict === 'pending') {
     const isFailed = verdict === 'failed';
+    // Same paragraph, two jobs: while we are still confirming the note is
+    // progress copy, and once the payment has failed it is the reason it
+    // failed. Deriving the colour from the verdict keeps "Still confirming"
+    // neutral without touching any of the wording.
+    const noteIsError = isFailed;
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
         <div
@@ -762,7 +767,7 @@ export function OrderStatusPage() {
           aria-live={!isFailed ? 'polite' : undefined}
         >
           {isFailed ? (
-            <XCircle size={32} strokeWidth={1.4} className="text-bone" />
+            <XCircle size={32} strokeWidth={1.4} className="text-crimson" />
           ) : (
             <Clock size={30} strokeWidth={1.4} className="text-bone" />
           )}
@@ -788,7 +793,7 @@ export function OrderStatusPage() {
           )}
         </div>
 
-        <p className="mt-4 text-sm text-grey max-w-md leading-relaxed">{note}</p>
+        <p className={`mt-4 text-sm max-w-md leading-relaxed ${noteIsError ? 'text-crimson' : 'text-grey'}`}>{note}</p>
         {isFailed && !expired && (
           <p className="mt-2 text-xs text-grey/70 max-w-md leading-relaxed">
             Nothing has been charged. The order stays reserved for {ref ? `reference #${ref}` : 'you'} so paying again

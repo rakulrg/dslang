@@ -475,7 +475,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
       )}
 
       {error && !loading && (
-        <div className="mt-5 rounded-card border border-bone/20 bg-white px-4 py-3 text-sm text-bone-dim">{error}</div>
+        <div className="mt-5 rounded-card border border-bone/20 bg-white px-4 py-3 text-sm text-crimson">{error}</div>
       )}
 
       {!order && didLookup && !error && !loading && (

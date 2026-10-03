@@ -149,8 +149,8 @@ export function SubscriberDashboard() {
     return (
       <div className="min-h-dvh bg-paper-2 flex items-center justify-center px-5">
         <div className="text-center">
-          <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">Couldn't Load Your Updates</p>
-          <p className="mt-3 text-sm text-grey">{loadError}</p>
+          <p className="font-label text-3xl uppercase tracking-wide-2 text-crimson">Couldn't Load Your Updates</p>
+          <p className="mt-3 text-sm text-crimson">{loadError}</p>
           <button
             onClick={() => loadAll()}
             className="mt-6 inline-block btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"

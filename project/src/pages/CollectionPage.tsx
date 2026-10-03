@@ -43,9 +43,7 @@ export function CollectionPage() {
       <div className="shell">
         {/* Header */}
         <Reveal className="md:px-0 border-b border-line pb-4 md:pb-8">
-          <p className="font-label text-[9px] uppercase tracking-wide-2 text-grey mb-1.5">
-            DSLANG · Slang Of Design
-          </p>
+
           <h1 className="font-display text-[1.5rem] md:text-[5rem] uppercase tracking-wide-2 text-bone leading-[0.85]">
             Shop The Collection
           </h1>
@@ -75,8 +73,8 @@ export function CollectionPage() {
 
         {error && (
           <div className="min-h-[50vh] flex flex-col items-center justify-center text-center px-5">
-            <p className="font-label text-3xl uppercase tracking-wide-2 text-grey">Something went wrong</p>
-            <p className="mt-2 text-sm text-grey">Could not load the collection. Please try again.</p>
+            <p className="font-label text-3xl uppercase tracking-wide-2 text-crimson">Something went wrong</p>
+            <p className="mt-2 text-sm text-crimson">Could not load the collection. Please try again.</p>
             <button
               onClick={() => setLoadKey((k) => k + 1)}
               className="mt-8 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"

@@ -49,7 +49,7 @@ export function PrintDeliveryPage({ orderId }: { orderId: string }) {
     return (
       <div className="min-h-[50vh] flex items-center justify-center">
         <div className="text-center space-y-4">
-          <p className="text-sm text-grey">{error || 'Could not load this order.'}</p>
+          <p className="text-sm text-crimson">{error || 'Could not load this order.'}</p>
           <a href={linkHref('/admin')} className="inline-block bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-2.5 rounded hover:bg-ink transition-colors">
             Back to admin
           </a>

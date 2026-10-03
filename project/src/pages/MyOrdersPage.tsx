@@ -295,7 +295,7 @@ export function MyOrdersPage() {
       )}
 
       {loadError && (
-        <p className="mt-6 text-xs text-bone-dim bg-white border border-bone/20 px-4 py-3 rounded-card">{loadError}</p>
+        <p className="mt-6 text-xs text-crimson bg-white border border-bone/20 px-4 py-3 rounded-card">{loadError}</p>
       )}
 
       <div className="mt-8 space-y-4">

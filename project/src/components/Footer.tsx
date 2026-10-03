@@ -77,9 +77,7 @@ return (
             <a href={linkHref('/')} className="font-brand text-3xl tracking-[0.03em] text-white leading-none">
               DSLANG
             </a>
-            <p className="mt-2 font-label text-[11px] uppercase tracking-[0.22em] text-white/50">
-              Slang of Design
-            </p>
+
             <p className="mt-4 max-w-xs text-sm text-white/70 leading-relaxed">
               Streetwear designed with intent.
             </p>

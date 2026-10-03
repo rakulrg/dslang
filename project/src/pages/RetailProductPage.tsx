@@ -213,8 +213,8 @@ export function RetailProductPage({ slug }: { slug: string }) {
     if (loadError) {
       return (
         <div className="min-h-[70vh] flex flex-col items-center justify-center text-center px-5">
-          <p className="font-display text-5xl md:text-7xl uppercase tracking-wide-2 text-bone leading-none">!</p>
-          <p className="mt-5 text-sm uppercase tracking-wide-2 text-grey">Failed to load product.</p>
+          <p className="font-display text-5xl md:text-7xl uppercase tracking-wide-2 text-crimson leading-none">!</p>
+          <p className="mt-5 text-sm uppercase tracking-wide-2 text-crimson">Failed to load product.</p>
           <button
             onClick={() => {
               setProduct(undefined);

@@ -8,6 +8,15 @@ import {
   stripOAuthFromUrl,
 } from '@/lib/authOauth';
 
+/** Metadata written to the new account's own user metadata at signup. */
+export interface SignUpMeta {
+  /** Trimmed full name. Stored as `full_name` on the user's profile metadata. */
+  fullName: string;
+  /** Marketing opt-out. Defaults to false; kept as metadata so the existing
+   *  subscriber tooling can still read the signal. */
+  optsOut?: boolean;
+}
+
 interface AuthState {
   session: Session | null;
   user: User | null;
@@ -21,7 +30,11 @@ interface AuthState {
    */
   isAdminLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
-  signUp: (email: string, password: string, optsOut: boolean) => Promise<{ user: User | null; error: AuthError | null; session: Session | null }>;
+  signUp: (email: string, password: string, meta: SignUpMeta) => Promise<{ user: User | null; error: AuthError | null; session: Session | null }>;
+  /** Re-sends the signup confirmation email to an account that exists but has
+   *  not been verified yet. This is Supabase's own resend endpoint — no custom
+   *  token, no second mail path. */
+  resendVerification: (email: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
   /** Google OAuth — full-page redirect to the provider; returns when the
    *  redirect is issued (errors surface immediately for disabled providers). */
@@ -38,6 +51,7 @@ const AuthContext = createContext<AuthState>({
   isAdminLoading: false,
   signIn: async () => ({ error: null }),
   signUp: async () => ({ user: null, error: null, session: null }),
+  resendVerification: async () => ({ error: null }),
   signOut: async () => {},
   signInWithGoogle: async () => ({ error: null }),
   resetPassword: async () => ({ error: null }),
@@ -253,6 +267,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAdminLoading: false,
     signIn: async () => ({ error: null }),
     signUp: async () => ({ user: null, error: null, session: null }),
+    resendVerification: async () => ({ error: null }),
     signOut: async () => {},
     signInWithGoogle: async () => ({ error: null }),
     resetPassword: async () => ({ error: null }),
@@ -392,12 +407,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return res;
   }, [applyCurrentSession]);
 
-  const signUp = useCallback(async (email: string, password: string, optsOut: boolean) => {
+  const signUp = useCallback(async (email: string, password: string, meta: SignUpMeta) => {
     const sb = await getSupabase();
     const { data, error } = await sb.auth.signUp({
       email,
       password,
-      options: { data: { marketing_opt_out: optsOut } },
+      options: {
+        // `options.data` is written by Supabase itself into the account's user
+        // metadata (`auth.users.raw_user_meta_data`) — which IS the customer's
+        // profile. That means the full name lands on the user's own auth record
+        // with no bespoke table, no client-side storage and no chance of the two
+        // drifting apart. `full_name` is the key Supabase's own docs and starter
+        // templates use, so anything else that reads the profile finds it.
+        //
+        // The password is never touched here beyond being handed to Supabase:
+        // it is hashed and stored by GoTrue, never by us.
+        data: {
+          full_name: meta.fullName.trim(),
+          marketing_opt_out: meta.optsOut ?? false,
+        },
+      },
     });
     if (!error && data?.user) await applyCurrentSession();
     // `session` is null when email confirmation is enabled: the account was
@@ -405,6 +434,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // of waiting for a session that won't arrive until the link is clicked.
     return { user: data?.user ?? null, error, session: data?.session ?? null };
   }, [applyCurrentSession]);
+
+  /**
+   * Re-send the signup confirmation email.
+   *
+   * Supabase refuses to hand out a confirmation link twice per address in a
+   * short window, which is what stops an attacker using this as a way to flood
+   * an inbox; that refusal comes back as an ordinary error, so callers must
+   * phrase it for a customer rather than show it raw.
+   *
+   * `emailRedirectTo` is the bare origin, deliberately, for the same reason as
+   * the OAuth redirect above: it is the one URL already in the provider's
+   * allowlist, and it leaves the hash free for the app's own router, so the
+   * customer lands back on the storefront instead of a dead link.
+   */
+  const resendVerification = useCallback(async (email: string) => {
+    const sb = await getSupabase();
+    const { error } = await sb.auth.resend({
+      type: 'signup',
+      email,
+      options: { emailRedirectTo: `${window.location.origin}/` },
+    });
+    return { error: error ?? null };
+  }, []);
 
   /**
    * Google OAuth. Lazy + non-blocking: the caller decides the UX (a modal can
@@ -470,8 +522,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ ...state, signIn, signUp, signOut, signInWithGoogle, resetPassword }),
-    [state, signIn, signUp, signOut, signInWithGoogle, resetPassword]
+    () => ({ ...state, signIn, signUp, resendVerification, signOut, signInWithGoogle, resetPassword }),
+    [state, signIn, signUp, resendVerification, signOut, signInWithGoogle, resetPassword]
   );
 
   useEffect(() => {

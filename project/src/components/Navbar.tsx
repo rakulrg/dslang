@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Menu, X, ShoppingBag, Search } from 'lucide-react';
+import { Menu, X, ShoppingBag, Search, LogIn, LogOut, UserRound, LayoutDashboard } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { linkHref, useRouter } from '@/lib/router';
 import { useD2cCart } from '@/lib/d2cCart';
 import { useCartDrawer } from '@/lib/cartDrawer';
@@ -19,6 +20,36 @@ const NAV_LINKS = [
   { label: 'About', to: '/stock-dslang' },
 ];
 
+/**
+ * One row of the drawer's account section.
+ *
+ * Deliberately the same type treatment as a nav link above it (font-label,
+ * 22px, bold, uppercase) so the section reads as part of the same menu, with
+ * `items-center` keeping the glyph on the text's optical centre rather than its
+ * cap line. `active:opacity-60` is the only tap feedback: no transform, no
+ * scale, nothing that shifts the row.
+ */
+function AccountRow({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-3 py-3 text-left font-label text-[22px] font-bold tracking-[0.04em] uppercase text-bone-dim transition-colors hover:text-bone active:opacity-60"
+    >
+      <Icon size={18} strokeWidth={1.6} className="shrink-0" aria-hidden="true" />
+      <span>{label}</span>
+    </button>
+  );
+}
+
 export function Navbar({
   currentPath,
   onOpenLogin,
@@ -34,7 +65,7 @@ export function Navbar({
 
   const { count: retailCount } = useD2cCart();
   const { openCart } = useCartDrawer();
-  const { user, isAdmin, isAdminLoading } = useAuth();
+  const { user, isAdmin, isAdminLoading, signOut } = useAuth();
   const { navigate } = useRouter();
 
   // The single gate for every ADMIN affordance in the header and the drawer.
@@ -87,6 +118,18 @@ export function Navbar({
   };
 
   const solid = scrolled || currentPath !== '/';
+
+  // Signing out from the drawer goes through the auth context, exactly as the
+  // account dashboard does -- never `supabase.auth.signOut()` directly, which
+  // used to leave `user`/`isAdmin` frozen at their signed-in values and so kept
+  // offering ADMIN PANEL in this very drawer until a hard refresh. Because the
+  // section below renders from `user`, clearing it here repaints the drawer as
+  // signed-out with no reload and no second source of truth.
+  const handleDrawerLogout = async () => {
+    setMenuOpen(false);
+    await signOut();
+    navigate('/');
+  };
 
   // Minimal header (payment return flow): brand only â€” no nav, no hamburger,
   // no search/cart icons. The shopper just landed back from the gateway and
@@ -223,9 +266,7 @@ export function Navbar({
             </button>
           </div>
           <div className="flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
-            <p className="px-5 pt-4 text-[10px] uppercase tracking-[0.2em] text-grey font-semibold">
-              DSLANG Â· Slang Of Design
-            </p>
+
             <ul className="flex flex-col py-2">
               {NAV_LINKS.map((l) => (
                 <li key={l.to}>
@@ -251,44 +292,59 @@ export function Navbar({
                   Contact
                 </a>
               </li>
-              {/* Signed-in: an "Account" group holding MY ACCOUNT â€” the single
-                  customer entry point â€” plus ADMIN PANEL only for a confirmed
-                  admin. Orders and log out live INSIDE My Account, so "My
-                  Orders" is deliberately not a top-level item here. Signed-out:
-                  no group heading and no admin entry at all, so a stale isAdmin
-                  can never surface. */}
-              {user ? (
-                <li className="mt-2">
-                  <div className="px-5 pt-3 pb-1 text-[10px] uppercase tracking-[0.2em] text-grey font-semibold">
-                    Account
-                  </div>
-                  <button
-                    onClick={() => { setMenuOpen(false); navigate('/account'); }}
-                    className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
-                  >
-                    My Account
-                  </button>
-                  {showAdminPanel && (
-                    <button
-                      onClick={() => { setMenuOpen(false); navigate('/admin'); }}
-                      className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
-                    >
-                      Admin Panel
-                    </button>
-                  )}
-                </li>
-              ) : (
-                <li className="mt-2">
-                  <button
-                    onClick={() => { setMenuOpen(false); onOpenLogin('signin'); }}
-                    className="block w-full text-left px-5 py-3 font-label text-[22px] font-bold tracking-[0.04em] uppercase transition-colors text-bone-dim hover:text-bone"
-                  >
-                    LOGIN
-                  </button>
-                </li>
-              )}
             </ul>
-            <div className="flex-1" />
+          </div>
+          {/* Account section. Anchored to the BOTTOM of the drawer as its own
+              hairline-separated block rather than trailing the nav list, so it
+              does not drift down as nav items change and never leaves a tall
+              unexplained gap beneath it. It is a sibling of the scrolling nav
+              area, not a child, so it cannot overlap the Instagram bar below.
+
+              Signed-in vs signed-out comes from `user` in the auth context -- the
+              same value the header and the admin gate read -- so there is no
+              second auth state to fall out of sync, and the section repaints the
+              moment a sign-in or sign-out lands anywhere in the app.
+
+              Signed out, BOTH rows open the ONE existing auth modal: there is no
+              second sign-in surface. "My Account" leads there too, because
+              My Account IS the signed-in view of the same identity -- a shopper
+              who taps it wants to get to their account, and the modal is the
+              only way there without one.
+
+              Orders and log out live INSIDE My Account, so "My Orders" is still
+              not a top-level item here. Track Order stays its own nav link: it
+              is open to anyone, with no account needed. */}
+          <div className="shrink-0 border-t border-line px-5">
+            {user ? (
+              <>
+                <AccountRow
+                  icon={UserRound}
+                  label="My Account"
+                  onClick={() => { setMenuOpen(false); navigate('/account'); }}
+                />
+                {showAdminPanel && (
+                  <AccountRow
+                    icon={LayoutDashboard}
+                    label="Admin Panel"
+                    onClick={() => { setMenuOpen(false); navigate('/admin'); }}
+                  />
+                )}
+                <AccountRow icon={LogOut} label="Logout" onClick={() => { void handleDrawerLogout(); }} />
+              </>
+            ) : (
+              <>
+                <AccountRow
+                  icon={LogIn}
+                  label="Login"
+                  onClick={() => { setMenuOpen(false); onOpenLogin('signin'); }}
+                />
+                <AccountRow
+                  icon={UserRound}
+                  label="My Account"
+                  onClick={() => { setMenuOpen(false); onOpenLogin('signin'); }}
+                />
+              </>
+            )}
           </div>
           <div className="p-5 border-t border-line flex items-center gap-6 shrink-0">
             <a

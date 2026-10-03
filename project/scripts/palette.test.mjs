@@ -8,7 +8,9 @@
  * drifting.
  *
  * The distinction this file protects:
- *   - BRAND colour: crimson only, reserved for sale/discount messaging.
+ *   - BRAND colour: crimson only, reserved for sale/discount messaging and for
+ *     ERROR states. It is not an emphasis colour: red text must always be
+ *     telling the reader something went wrong, never "this part is important".
  *   - NEUTRAL ramp: the black/white/grey tokens, for text hierarchy, hairlines
  *     and surfaces. Greys are not a fourth brand colour, but they must stay
  *     genuinely neutral -- a warm tint is how a "subtle" accent sneaks back in.
@@ -187,7 +189,7 @@ test('NEUTRALS: the grey ramp stays genuinely neutral', () => {
   }
 });
 
-test('CRIMSON: the sole sale/discount signal is intact and unshared', () => {
+test('CRIMSON: the sale/discount and error signals are intact and unshared', () => {
   // The discount badge is the one crimson-filled element.
   assert.match(
     PRODUCT_CARD,
@@ -197,7 +199,6 @@ test('CRIMSON: the sole sale/discount signal is intact and unshared', () => {
   assert.match(PRODUCT_CARD, /font-price text-\[11px\] text-grey line-through/);
   // Crimson is not used for general emphasis anywhere it would dilute the sale.
   for (const [name, src] of [
-    ['CollectionPage.tsx', COLLECTION],
     ['ContactPage.tsx', CONTACT],
     ['Footer.tsx', FOOTER],
     ['Navbar.tsx', NAVBAR],
@@ -207,6 +208,24 @@ test('CRIMSON: the sole sale/discount signal is intact and unshared', () => {
       `${name} uses crimson as a text colour; it is reserved for sale messaging`,
     );
   }
+
+  // CollectionPage is the one exception, and only because a failed load has to
+  // read as an ERROR rather than as another section heading. Crimson on an error
+  // is the same signal it already carries in LoginModal and the admin panel, so
+  // this is not red picking up a third meaning -- but emphasis is still banned,
+  // so every occurrence is required to live inside the error branch. A blanket
+  // `/text-crimson/` ban cannot tell the two apart, which is why the ban is
+  // narrowed here instead of the error state being left grey.
+  const errBranch = COLLECTION.match(/\{error && \([\s\S]*?\n {8}\)\}/);
+  assert.ok(errBranch, 'CollectionPage error branch could not be located');
+  const allCrimson = (COLLECTION.match(/text-crimson/g) ?? []).length;
+  const branchCrimson = (errBranch[0].match(/text-crimson/g) ?? []).length;
+  assert.ok(allCrimson > 0, 'the failed-collection state must be flagged in crimson');
+  assert.equal(
+    allCrimson,
+    branchCrimson,
+    'crimson text in CollectionPage may only appear inside the error state',
+  );
 });
 
 test('HAIRLINES: structural borders never take a brand colour', () => {
