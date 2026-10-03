@@ -141,7 +141,7 @@ export function GuestOrderConfirmCard({
           type="button"
           onClick={() => void run('confirm')}
           disabled={busy !== null || !phoneReady}
-          className="inline-flex items-center gap-1.5 border border-amber-700 bg-amber-700 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide-2 text-white transition-colors hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-45"
+          className="inline-flex items-center gap-1.5 border border-amber-700 bg-amber-700 px-4 py-2.5 text-[14px] font-semibold uppercase tracking-wide-2 text-white transition-colors hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-45"
         >
           <Link size={13} strokeWidth={2.2} />
           {busy === 'confirm' ? 'Linking…' : 'Yes, link it to my account'}
@@ -150,7 +150,7 @@ export function GuestOrderConfirmCard({
           type="button"
           onClick={() => void run('decline')}
           disabled={busy !== null || !phoneReady}
-          className="inline-flex items-center gap-1.5 border border-amber-500 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide-2 text-amber-900 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-45"
+          className="inline-flex items-center gap-1.5 border border-amber-500 px-4 py-2.5 text-[14px] font-semibold uppercase tracking-wide-2 text-amber-900 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-45"
         >
           {busy === 'decline' ? 'Saving…' : "No, not mine"}
         </button>
@@ -158,7 +158,7 @@ export function GuestOrderConfirmCard({
           type="button"
           onClick={onDismiss}
           disabled={busy !== null}
-          className="ml-auto text-[11px] uppercase tracking-wide-2 text-amber-800/80 underline underline-offset-2 transition-colors hover:text-amber-900 disabled:opacity-50"
+          className="ml-auto text-[14px] uppercase tracking-wide-2 text-amber-800/80 underline underline-offset-2 transition-colors hover:text-amber-900 disabled:opacity-50"
         >
           Ask me later
         </button>

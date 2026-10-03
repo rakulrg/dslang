@@ -223,7 +223,7 @@ export function RetailProductPage({ slug }: { slug: string }) {
                 .then((p) => setProduct(p))
                 .catch(() => { setProduct(null); setLoadError(true); });
             }}
-            className="mt-8 btn-dark font-label text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
+            className="mt-8 btn-dark font-label text-[14px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
           >
             Try Again
           </button>
@@ -468,7 +468,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
                       />
                       <button
                         onClick={handleCopyLink}
-                        className="inline-flex items-center gap-1.5 shrink-0 btn-dark text-[10px] uppercase tracking-wide-2 font-semibold px-3 py-2"
+                        className="inline-flex items-center gap-1.5 shrink-0 btn-dark text-[13px] uppercase tracking-wide-2 font-semibold px-3 py-2"
                       >
                         {linkCopied ? <Check size={12} strokeWidth={2.5} /> : <LinkIcon size={12} strokeWidth={2} />}
                         {linkCopied ? 'Copied' : 'Copy Link'}
@@ -495,7 +495,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
                   <button
                     type="button"
                     onClick={() => setSizeChartOpen(true)}
-                    className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-bone underline underline-offset-4 decoration-line hover:text-bone transition-colors"
+                    className="font-label text-[13px] uppercase tracking-wide-2 font-semibold text-bone underline underline-offset-4 decoration-line hover:text-bone transition-colors"
                   >
                     Size Chart
                   </button>
@@ -514,7 +514,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
                       onClick={() => selectSize(label)}
                       title={oos ? 'Out of stock' : undefined}
                       aria-pressed={isSelected}
-                      className={`min-w-10 lg:min-w-9 border px-3 py-2 lg:py-1.5 text-xs lg:text-[11px] uppercase tracking-wide-2 font-medium transition-colors rounded-lg ${
+                      className={`min-w-10 lg:min-w-9 border px-3 py-2 lg:py-1.5 text-[15px] lg:text-[14px] uppercase tracking-wide-2 font-medium transition-colors rounded-lg ${
                         isSelected
                           ? 'border-bone bg-bone text-paper'
                           : oos
@@ -595,7 +595,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
               <button
                 onClick={handleAddToCart}
                 aria-disabled={!stockAvailable}
-                className="btn-soft w-full border border-bone bg-white text-bone text-xs lg:text-[11px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 hover:bg-bone hover:text-paper"
+                className="btn-soft w-full border border-bone bg-white text-bone text-[15px] lg:text-[14px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 hover:bg-bone hover:text-paper"
               >
                 {stockAvailable && addedFeedback ? <CheckCircle2 size={15} strokeWidth={1.8} /> : <ShoppingBag size={15} strokeWidth={1.8} />}
                 {stockAvailable ? (addedFeedback ? 'Added to Bag' : 'Add to Bag') : 'OUT OF STOCK'}
@@ -603,7 +603,7 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
               <button
                 onClick={handleBuyNow}
                 aria-disabled={!stockAvailable}
-                className="w-full btn-dark text-xs lg:text-[11px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 active:scale-[0.98]"
+                className="w-full btn-dark text-[15px] lg:text-[14px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 active:scale-[0.98]"
               >
                 <Zap size={15} strokeWidth={1.8} /> {stockAvailable ? 'Buy Now' : 'OUT OF STOCK'}
               </button>
@@ -853,7 +853,7 @@ function InfoSection({
         onClick={onToggle}
         aria-expanded={open}
         aria-controls={`info-${id}`}
-        className="w-full flex items-center justify-between py-3.5 text-left text-[12px] uppercase tracking-wide-2 font-medium text-bone hover:text-bone transition-colors"
+        className="w-full flex items-center justify-between py-3.5 text-left text-[15px] uppercase tracking-wide-2 font-medium text-bone hover:text-bone transition-colors"
       >
         <span>{title}</span>
         <ChevronDown

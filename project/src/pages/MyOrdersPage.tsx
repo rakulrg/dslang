@@ -200,7 +200,7 @@ export function MyOrdersPage() {
         </p>
         <button
           onClick={() => navigate('/account')}
-          className="mt-8 btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+          className="mt-8 btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4"
         >
           Sign In
         </button>
@@ -255,7 +255,7 @@ export function MyOrdersPage() {
             type="button"
             onClick={() => void lookForGuestOrders()}
             disabled={looking || loading}
-            className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 disabled:opacity-50"
+            className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-5 py-3 disabled:opacity-50"
           >
             {looking ? 'Checking...' : 'Find my order'}
           </button>
@@ -440,7 +440,7 @@ export function MyOrdersPage() {
                   <button
                     type="button"
                     onClick={() => trackOrder(o)}
-                    className="btn-primary inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5"
+                    className="btn-primary inline-flex items-center gap-2 text-[14px] uppercase tracking-wide-2 font-semibold px-4 py-2.5"
                   >
                     <Truck size={13} strokeWidth={1.8} /> Track Order
                   </button>
@@ -449,7 +449,7 @@ export function MyOrdersPage() {
                       href={trackingLinkFor(o) as string}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="btn-soft inline-flex items-center gap-2 border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone hover:text-paper transition-colors"
+                      className="btn-soft inline-flex items-center gap-2 border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone hover:text-paper transition-colors"
                     >
                       <Truck size={13} strokeWidth={1.8} /> Track Shipment
                     </a>

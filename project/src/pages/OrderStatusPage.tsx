@@ -734,14 +734,14 @@ export function OrderStatusPage() {
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <button
             onClick={() => navigate(`/track-order/${encodeURIComponent(snap.ref)}`)}
-            className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+            className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4"
           >
             <Truck size={15} strokeWidth={2} />
             Track Order
           </button>
           <button
             onClick={() => navigate('/collections')}
-            className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+            className="btn-soft border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Continue Shopping
           </button>
@@ -815,7 +815,7 @@ export function OrderStatusPage() {
               }
             }}
             disabled={busy}
-            className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+            className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4"
           >
             {busy ? (
               <>
@@ -834,7 +834,7 @@ export function OrderStatusPage() {
           <button
             type="button"
             onClick={() => navigate('/collections')}
-            className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+            className="btn-soft border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Continue Shopping
           </button>
@@ -848,7 +848,7 @@ export function OrderStatusPage() {
                 clearLive();
                 navigate('/checkout');
               }}
-              className="btn-soft border border-bone text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+              className="btn-soft border border-bone text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
             >
               Start New Order
             </button>
@@ -921,7 +921,7 @@ export function OrderStatusPage() {
           />
           <button
             type="submit"
-            className="mt-3 w-full btn-primary text-[11px] uppercase tracking-wide-2 font-semibold py-3.5"
+            className="mt-3 w-full btn-primary text-[14px] uppercase tracking-wide-2 font-semibold py-3.5"
           >
             Confirm Payment Status
           </button>
@@ -934,14 +934,14 @@ export function OrderStatusPage() {
         <button
           type="button"
           onClick={() => navigate('/track-order')}
-          className="btn-soft btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+          className="btn-soft btn-dark text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4"
         >
           Track Order
         </button>
         <button
           type="button"
           onClick={() => navigate('/collections')}
-          className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+          className="btn-soft border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
         >
           Continue Shopping
         </button>

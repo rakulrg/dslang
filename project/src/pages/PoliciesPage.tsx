@@ -48,7 +48,7 @@ export function PoliciesPage() {
             <button
               key={t.id}
               onClick={() => { setTab(t.id); setOpen(0); }}
-              className={`font-label text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-150 ${
+              className={`font-label text-[14px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border transition-colors duration-150 ${
                 tab === t.id
                   ? 'bg-bone text-paper border-bone'
                   : 'border-line text-bone-dim hover:border-bone-dim hover:text-bone'

@@ -46,7 +46,7 @@ export function useConfirm() {
           <button
             type="button"
             onClick={close}
-            className="inline-flex items-center gap-2 border border-line text-bone-dim hover:border-bone-dim hover:text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded transition-colors"
+            className="inline-flex items-center gap-2 border border-line text-bone-dim hover:border-bone-dim hover:text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded transition-colors"
           >
             {request.cancelLabel ?? 'Cancel'}
           </button>
@@ -56,7 +56,7 @@ export function useConfirm() {
               request.onConfirm();
               close();
             }}
-            className="inline-flex items-center gap-2 bg-bone text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-ink transition-colors"
+            className="inline-flex items-center gap-2 bg-bone text-white text-[14px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-ink transition-colors"
           >
             {request.confirmLabel ?? 'Confirm'}
           </button>

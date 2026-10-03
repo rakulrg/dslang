@@ -138,7 +138,7 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
           </span>
           <button
             onClick={() => { onClose(); window.location.hash = '#/collections'; }}
-            className="font-label text-[10px] uppercase tracking-wide-2 font-semibold text-bone hover:text-bone-dim transition-colors"
+            className="font-label text-[13px] uppercase tracking-wide-2 font-semibold text-bone hover:text-bone-dim transition-colors"
           >
             View Collection →
           </button>

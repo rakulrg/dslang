@@ -519,7 +519,7 @@ export function HomePage() {
           <p className="mt-2 text-sm text-crimson">The collection failed to load. Please try again.</p>
           <button
             onClick={() => setLoadKey((k) => k + 1)}
-            className="mt-8 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
+            className="mt-8 btn-dark text-[14px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
           >
             Try Again
           </button>

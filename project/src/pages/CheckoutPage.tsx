@@ -1184,7 +1184,7 @@ export function CheckoutPage() {
         <p className="mt-3 text-sm text-grey">Your bag is empty.</p>
         <button
           onClick={() => navigate('/collections')}
-          className="mt-8 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+          className="mt-8 btn-dark text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4"
         >
           Shop The Collection
         </button>
@@ -1359,14 +1359,14 @@ export function CheckoutPage() {
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <button
             onClick={() => navigate(`/track-order/${encodeURIComponent(result.ref)}`)}
-            className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+            className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4"
           >
             <Truck size={15} strokeWidth={2} />
             Track Order
           </button>
           <button
             onClick={() => navigate('/collections')}
-            className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+            className="btn-soft border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Continue Shopping
           </button>
@@ -1471,7 +1471,7 @@ export function CheckoutPage() {
                 }
               }}
               disabled={placing}
-              className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4"
+              className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4"
             >
               {placing ? (
                 <>
@@ -1489,7 +1489,7 @@ export function CheckoutPage() {
           <button
             type="button"
             onClick={() => navigate('/collections')}
-            className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+            className="btn-soft border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
           >
             Continue Shopping
           </button>
@@ -1504,7 +1504,7 @@ export function CheckoutPage() {
             <button
               type="button"
               onClick={() => navigate(`/track-order/${encodeURIComponent(ref)}`)}
-              className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+              className="btn-soft border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
             >
               <Truck size={15} strokeWidth={2} />
               Track Order
@@ -1514,7 +1514,7 @@ export function CheckoutPage() {
             <button
               type="button"
               onClick={startNewCheckout}
-              className="btn-soft border border-bone text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
+              className="btn-soft border border-bone text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
             >
               Start New Order
             </button>
@@ -1542,7 +1542,7 @@ export function CheckoutPage() {
       <div className="shell shell--form py-8">
         <button
           onClick={() => { openCart(); navigate('/'); }}
-          className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 text-grey hover:text-bone transition-colors"
+          className="inline-flex items-center gap-2 text-[14px] uppercase tracking-wide-2 text-grey hover:text-bone transition-colors"
         >
           <ArrowLeft size={14} strokeWidth={2} /> Back To Bag
         </button>
@@ -1578,12 +1578,15 @@ export function CheckoutPage() {
         <section>
           {/* One step below the Payment heading, so the delivery block reads as
               context rather than as the page's subject. */}
-          {/* Anton is a single-weight face: it is already the boldest voice available,
-              and a `font-bold` here would only be a SYNTHETIC emboldening that
-              smears the strokes. Size is therefore the honest lever for making
-              this read as a section title rather than a label — one step up,
-              from `lg` to `xl`, with the family, colour, tracking and the
-              `mt-5` below it all untouched. */}
+          {/* Same typography as the TRACK ORDER heading (see TrackOrderPage.tsx): the
+              display face, uppercase, `tracking-wide-2`, and no weight class —
+              Anton is a single-weight face, so `font-bold` would only be a
+              SYNTHETIC emboldening that smears the strokes. Deliberately NOT
+              copied from there are the SIZE and the line-height: this heading
+              keeps its own `text-xl` and its inherited line-height, because a
+              section title at the top of the checkout form must not jump to the
+              page-title scale. Colour, position and the `mt-5` below it are
+              untouched. */}
         <h2 className="font-display text-xl uppercase tracking-wide-2 text-bone">Delivery</h2>
           <div className="mt-5 space-y-3">
             {/* First + Last pair at EVERY width. Both are short single-word
@@ -1759,7 +1762,7 @@ export function CheckoutPage() {
                   type="button"
                   onClick={handleApplyPromo}
                   disabled={applying || !promoInput.trim()}
-                  className="btn-dark shrink-0 text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 disabled:opacity-40"
+                  className="btn-dark shrink-0 text-[14px] uppercase tracking-wide-2 font-semibold px-5 py-3 disabled:opacity-40"
                 >
                   {applying ? <Loader2 size={14} strokeWidth={2} className="animate-spin" /> : 'Apply'}
                 </button>
@@ -1961,10 +1964,11 @@ export function CheckoutPage() {
               one names each half of the single act of buying — and the previous
               `font-label text-[13px] font-bold` treatment made this heading
               read like a form label instead, competing with the ONLINE PAYMENT /
-              COD option names it sits above. Anton is single-weight, so matching
-              DELIVERY's `font-display text-xl` is what makes them match; the
-              `h2`/`h3` tag difference is kept because the document outline has
-              always nested payment under the page-level h1. */}
+              COD option names it sits above. Matching DELIVERY's
+              `font-display text-xl uppercase tracking-wide-2` is what makes them match,
+              which is also the TRACK ORDER heading's typography; the `h2`/`h3` tag
+              difference is kept because the document outline has always nested payment
+              under the page-level h1. */}
           <h3 className="font-display text-xl uppercase tracking-wide-2 text-bone">
             Payment Method
           </h3>
@@ -2070,7 +2074,7 @@ export function CheckoutPage() {
           <button
             type="submit"
             disabled={placing}
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-[10px] bg-crimson px-5 py-4 text-[13px] font-bold uppercase tracking-[0.08em] text-white transition-[background-color,transform] duration-150 ease-out hover:bg-[#bd0929] active:translate-y-px disabled:opacity-60 disabled:hover:bg-crimson sm:py-3.5"
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-[10px] bg-crimson px-5 py-4 text-[16px] font-bold uppercase tracking-[0.08em] text-white transition-[background-color,transform] duration-150 ease-out hover:bg-[#bd0929] active:translate-y-px disabled:opacity-60 disabled:hover:bg-crimson sm:py-3.5"
           >
             {placing ? (
               <>
@@ -2220,10 +2224,16 @@ function SelectField({
  *  the card is the SAVE pill, which is the point of the card.
  *
  *  TYPE. The method name is set in the site's label voice (--font-label, i.e.
- *  Open Sans, uppercase + wide tracking) and the section headings above are set
- *  in the display voice (--font-display, i.e. Anton). f336558 replaced both
- *  with sentence-case Open Sans bold + tracking-tight, which is why the form
- *  read flat while the Order Confirmed and Track Order screens — which kept
+ *  Open Sans) at `font-bold` and NORMAL tracking, deliberately NOT the display
+ *  face the section headings above use. The name labels a control the customer
+ *  taps, so it has to read as an option rather than as a title: setting it in the
+ *  condensed display face at wide tracking turned ONLINE PAYMENT and CASH ON
+ *  DELIVERY (COD) into spaced-out display text and set them competing with the
+ *  DELIVERY / PAYMENT METHOD headings directly above. 13px (up from 12px) and
+ *  `leading-[1.3]` keep it the card's own line; colour, position, the radio, the
+ *  price column and the logos are all untouched. f336558 replaced the name and the
+ *  headings with sentence-case Open Sans bold + tracking-tight, which is why the
+ *  form read flat while the Order Confirmed and Track Order screens — which kept
  *  font-display throughout — did not.
  *
  *  The price lives in a right-hand column of RESERVED MINIMUM width. That is
@@ -2338,7 +2348,7 @@ function PaymentMethodCard({
               card reads name > explanation > qualifier rather than three lines
               at one weight. Only the name changed: `sub` and `note` keep their
               lighter bone-soft treatment, which is what keeps them supporting. */}
-          <span className="block font-label text-[12px] font-bold uppercase leading-[1.3] tracking-wide-2 text-bone">{name}</span>
+          <span className="block font-label text-[13px] font-bold uppercase leading-[1.3] tracking-normal text-bone">{name}</span>
           {sub && <span className="mt-0.5 block text-[11.5px] font-normal leading-[1.35] text-bone-soft">{sub}</span>}
           {note && (
             <span className="mt-1 block text-[9.5px] font-medium uppercase leading-[1.4] tracking-[0.03em] text-bone-soft">

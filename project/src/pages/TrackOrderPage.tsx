@@ -459,7 +459,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
             <button
               type="submit"
               disabled={loading}
-              className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-[13px] disabled:opacity-60"
+              className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-6 py-[13px] disabled:opacity-60"
             >
               {loading ? <Loader2 size={15} strokeWidth={2} className="animate-spin" /> : <Search size={15} strokeWidth={2} />}
               <span>{loading ? 'Checking…' : 'Track'}</span>
@@ -616,7 +616,7 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
                   href={trackingLinkFor(order) as string}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3 mt-3"
+                  className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-5 py-3 mt-3"
                 >
                   <Truck size={14} strokeWidth={1.8} /> Track Shipment
                   <ExternalLink size={12} strokeWidth={1.8} />
@@ -728,13 +728,13 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
           <div className="mt-6 flex flex-wrap gap-3 border-t border-line pt-5">
             <button
               onClick={() => navigate('/contact')}
-              className="btn-soft btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3"
+              className="btn-soft btn-dark text-[14px] uppercase tracking-wide-2 font-semibold px-6 py-3"
             >
               Need Help?
             </button>
             <button
               onClick={() => navigate('/collections')}
-              className="inline-flex items-center gap-2 border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3 hover:bg-bone hover:text-paper transition-colors"
+              className="inline-flex items-center gap-2 border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-6 py-3 hover:bg-bone hover:text-paper transition-colors"
             >
               Continue Shopping
             </button>

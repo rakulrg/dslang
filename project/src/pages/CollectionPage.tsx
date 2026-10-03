@@ -55,7 +55,7 @@ export function CollectionPage() {
             <button
               key={f.value}
               onClick={() => setFilter(f.value)}
-              className={`shrink-0 font-label text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border rounded-full transition-all duration-200 ${
+              className={`shrink-0 font-label text-[14px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 border rounded-full transition-all duration-200 ${
                 filter === f.value
                   ? 'bg-bone text-white border-bone'
                   : 'border-line text-bone-dim hover:border-bone-dim hover:text-bone'
@@ -77,7 +77,7 @@ export function CollectionPage() {
             <p className="mt-2 text-sm text-crimson">Could not load the collection. Please try again.</p>
             <button
               onClick={() => setLoadKey((k) => k + 1)}
-              className="mt-8 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
+              className="mt-8 btn-dark text-[14px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
             >
               Try Again
             </button>

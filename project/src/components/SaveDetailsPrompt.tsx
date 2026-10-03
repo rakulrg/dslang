@@ -109,7 +109,7 @@ export function SaveDetailsPrompt({
         <div className="mt-5 flex flex-col gap-2.5">
           <button
             onClick={() => setLoginOpen(true)}
-            className="flex w-full items-center justify-center gap-2.5 rounded-[4px] border border-line-2 bg-white px-4 py-3 text-[13px] font-medium leading-5 text-bone transition-colors hover:bg-paper-2 hover:border-bone/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bone"
+            className="flex w-full items-center justify-center gap-2.5 rounded-[4px] border border-line-2 bg-white px-4 py-3 text-[16px] font-medium leading-5 text-bone transition-colors hover:bg-paper-2 hover:border-bone/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bone"
           >
             <Mail size={15} strokeWidth={1.8} className="shrink-0 text-bone-soft" aria-hidden="true" />
             Continue with Email
@@ -117,7 +117,7 @@ export function SaveDetailsPrompt({
           <button
             onClick={handleGoogle}
             disabled={gBusy}
-            className="flex w-full items-center justify-center gap-2.5 rounded-[4px] border border-line-2 bg-white px-4 py-3 text-[13px] font-medium leading-5 text-bone transition-colors hover:bg-paper-2 hover:border-bone/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bone disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex w-full items-center justify-center gap-2.5 rounded-[4px] border border-line-2 bg-white px-4 py-3 text-[16px] font-medium leading-5 text-bone transition-colors hover:bg-paper-2 hover:border-bone/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bone disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <GoogleG className="h-[15px] w-[15px] shrink-0" />
             {gBusy ? 'Opening Google…' : 'Continue with Google'}

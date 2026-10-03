@@ -62,7 +62,7 @@ function SignInUpTabs({ tab, onTab }: { tab: 'login' | 'signup'; onTab: (t: 'log
           role="tab"
           aria-selected={tab === t}
           onClick={() => onTab(t)}
-          className={`flex-1 rounded-full py-2.5 text-[13px] transition-colors ${
+          className={`flex-1 rounded-full py-2.5 text-[16px] transition-colors ${
             tab === t ? 'bg-bone font-semibold text-paper' : 'font-medium text-bone-dim hover:text-bone'
           }`}
         >
@@ -651,7 +651,7 @@ export function LoginModal({
                 type="button"
                 onClick={handleGoogle}
                 disabled={googleBusy || busy}
-                className="mt-4 flex w-full items-center justify-center gap-3 rounded-lg border border-line bg-white py-3 text-sm font-medium text-bone transition-colors hover:bg-[#fafafa] hover:border-bone/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bone disabled:opacity-50 disabled:cursor-not-allowed"
+                className="mt-4 flex w-full items-center justify-center gap-3 rounded-lg border border-line bg-white py-3 text-[17px] font-medium text-bone transition-colors hover:bg-[#fafafa] hover:border-bone/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bone disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <GoogleLogo />
                 {googleBusy ? 'Opening Google…' : 'Continue with Google'}

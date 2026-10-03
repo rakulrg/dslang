@@ -202,7 +202,7 @@ export function Navbar({
               {!user && (
                 <button
                   onClick={() => onOpenLogin('signin')}
-                  className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-bone transition-colors"
+                  className="hidden md:inline-flex text-[14px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-bone transition-colors"
                 >
                   Sign In
                 </button>
@@ -210,7 +210,7 @@ export function Navbar({
               {user && (
                 <button
                   onClick={() => navigate(showAdminPanel ? '/admin' : '/account')}
-                  className="hidden md:inline-flex text-[11px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-bone transition-colors"
+                  className="hidden md:inline-flex text-[14px] uppercase tracking-[0.16em] font-semibold text-bone-dim hover:text-bone transition-colors"
                 >
                   {showAdminPanel ? 'Admin' : 'Account'}
                 </button>
@@ -305,11 +305,13 @@ export function Navbar({
               second auth state to fall out of sync, and the section repaints the
               moment a sign-in or sign-out lands anywhere in the app.
 
-              Signed out, BOTH rows open the ONE existing auth modal: there is no
-              second sign-in surface. "My Account" leads there too, because
-              My Account IS the signed-in view of the same identity -- a shopper
-              who taps it wants to get to their account, and the modal is the
-              only way there without one.
+              Signed out, the single LOGIN row opens the ONE existing auth modal:
+              there is no second sign-in surface. "My Account" is NOT offered
+              signed out, because My Account is the signed-in view of the same
+              identity -- a shopper without a session has no account screen to go
+              to, and offering the label anyway made it claim a state that did not
+              exist. It appears only once `user` is set, and a shopper who taps it
+              then reaches the real account page directly.
 
               Orders and log out live INSIDE My Account, so "My Orders" is still
               not a top-level item here. Track Order stays its own nav link: it
@@ -332,18 +334,11 @@ export function Navbar({
                 <AccountRow icon={LogOut} label="Logout" onClick={() => { void handleDrawerLogout(); }} />
               </>
             ) : (
-              <>
-                <AccountRow
-                  icon={LogIn}
-                  label="Login"
-                  onClick={() => { setMenuOpen(false); onOpenLogin('signin'); }}
-                />
-                <AccountRow
-                  icon={UserRound}
-                  label="My Account"
-                  onClick={() => { setMenuOpen(false); onOpenLogin('signin'); }}
-                />
-              </>
+              <AccountRow
+                icon={LogIn}
+                label="Login"
+                onClick={() => { setMenuOpen(false); onOpenLogin('signin'); }}
+              />
             )}
           </div>
           <div className="p-5 border-t border-line flex items-center gap-6 shrink-0">

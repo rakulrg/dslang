@@ -397,14 +397,14 @@ export function PaymentReturnPage() {
               navigate(`/track-order/${encodeURIComponent(snap.ref)}`);
             }
           }}
-          className="btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-8 py-4"
+          className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-8 py-4"
         >
           <Truck size={16} strokeWidth={2} />
           Track Order
         </button>
         <button
           onClick={() => navigate('/collections')}
-          className="btn-soft border border-bone-dim text-bone text-[11px] uppercase tracking-wide-2 font-semibold px-8 py-4 hover:bg-bone hover:text-paper transition-colors"
+          className="btn-soft border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-8 py-4 hover:bg-bone hover:text-paper transition-colors"
         >
           Continue Shopping
         </button>

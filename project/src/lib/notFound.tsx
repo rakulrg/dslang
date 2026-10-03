@@ -11,7 +11,7 @@ export function notFound(): import('react').ReactElement {
       </p>
       <a
         href={linkHref('/collections')}
-        className="mt-8 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-4"
+        className="mt-8 btn-dark text-[14px] uppercase tracking-wide-2 font-semibold px-6 py-4"
       >
         Shop The Collection
       </a>

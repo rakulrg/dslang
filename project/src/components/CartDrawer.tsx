@@ -183,7 +183,7 @@ export function CartDrawer() {
             <p className="mt-4 font-display text-2xl uppercase tracking-wide-2 text-bone">Your Bag Is Empty</p>
             <button
               onClick={goToCollection}
-              className="mt-6 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
+              className="mt-6 btn-dark text-[14px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
             >
               Explore Collection <ArrowRight size={14} strokeWidth={2} />
             </button>
@@ -341,7 +341,7 @@ export function CartDrawer() {
                       <button
                         onClick={handleApplyPromo}
                         disabled={applying || !promoInput.trim()}
-                        className="btn-soft inline-flex items-center gap-1.5 shrink-0 bg-bone text-white text-[10px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
+                        className="btn-soft inline-flex items-center gap-1.5 shrink-0 bg-bone text-white text-[13px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 hover:bg-bone-dim transition-colors disabled:opacity-40"
                       >
                         {applying ? <Loader2 size={13} strokeWidth={2} className="animate-spin" /> : 'Apply'}
                       </button>
@@ -355,13 +355,13 @@ export function CartDrawer() {
               <div className="px-5 pt-4 pb-3 space-y-2">
                 <button
                   onClick={goToCheckout}
-                  className="w-full btn-primary text-[11px] uppercase tracking-wide-2 font-semibold py-4 px-5"
+                  className="w-full btn-primary text-[14px] uppercase tracking-wide-2 font-semibold py-4 px-5"
                 >
                   Checkout <ArrowRight size={15} strokeWidth={2} />
                 </button>
                 <button
                   onClick={closeCart}
-                  className="w-full font-label text-[11px] uppercase tracking-wide-2 text-bone-dim hover:text-bone transition-colors py-2.5"
+                  className="w-full font-label text-[14px] uppercase tracking-wide-2 text-bone-dim hover:text-bone transition-colors py-2.5"
                 >
                   Continue Shopping
                 </button>

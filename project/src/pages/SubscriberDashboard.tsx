@@ -136,7 +136,7 @@ export function SubscriberDashboard() {
           </p>
           <a
             href={linkHref('/')}
-            className="mt-6 inline-block btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
+            className="mt-6 inline-block btn-dark text-[14px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
           >
             Back To Store
           </a>
@@ -153,7 +153,7 @@ export function SubscriberDashboard() {
           <p className="mt-3 text-sm text-crimson">{loadError}</p>
           <button
             onClick={() => loadAll()}
-            className="mt-6 inline-block btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
+            className="mt-6 inline-block btn-dark text-[14px] uppercase tracking-wide-2 font-semibold px-6 py-3.5"
           >
             Try Again
           </button>
@@ -243,14 +243,14 @@ export function SubscriberDashboard() {
             <div className="mt-5 flex flex-wrap gap-3">
               <a
                 href={linkHref('/account/orders')}
-                className="inline-flex items-center gap-2 btn-primary text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3"
+                className="inline-flex items-center gap-2 btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-5 py-3"
               >
                 <ShoppingBag size={14} strokeWidth={1.8} />
                 Orders
               </a>
               <button
                 onClick={handleLogout}
-                className="inline-flex items-center gap-2 btn-dark text-[11px] uppercase tracking-wide-2 font-semibold px-5 py-3"
+                className="inline-flex items-center gap-2 btn-dark text-[14px] uppercase tracking-wide-2 font-semibold px-5 py-3"
               >
                 <LogOut size={14} strokeWidth={1.8} />
                 Log Out
@@ -264,7 +264,7 @@ export function SubscriberDashboard() {
           <div className="mb-8 bg-white border border-line rounded p-6 animate-slide-down">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-xl tracking-wide-2 text-bone uppercase">Notification Settings</h2>
-              <button onClick={() => setPrefsOpen(false)} className="text-grey hover:text-bone text-sm">Close</button>
+              <button onClick={() => setPrefsOpen(false)} className="text-grey hover:text-bone text-[17px]">Close</button>
             </div>
             <div className="space-y-3">
               <PrefToggle
@@ -303,7 +303,7 @@ export function SubscriberDashboard() {
         {unreadCount > 0 && (
           <button
             onClick={markAllRead}
-            className="mb-4 inline-flex items-center gap-2 text-[11px] uppercase tracking-wide-2 font-semibold text-bone hover:text-bone-dim transition-colors"
+            className="mb-4 inline-flex items-center gap-2 text-[14px] uppercase tracking-wide-2 font-semibold text-bone hover:text-bone-dim transition-colors"
           >
             <Check size={14} strokeWidth={2} /> Mark all as read
           </button>
