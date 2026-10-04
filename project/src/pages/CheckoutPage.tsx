@@ -2348,7 +2348,7 @@ function PaymentMethodCard({
               card reads name > explanation > qualifier rather than three lines
               at one weight. Only the name changed: `sub` and `note` keep their
               lighter bone-soft treatment, which is what keeps them supporting. */}
-          <span className="block font-label text-[13px] font-bold uppercase leading-[1.3] tracking-normal text-bone">{name}</span>
+          <span className="block font-display text-[13px] font-bold uppercase leading-[1.3] tracking-normal text-bone">{name}</span>
           {sub && <span className="mt-0.5 block text-[11.5px] font-normal leading-[1.35] text-bone-soft">{sub}</span>}
           {note && (
             <span className="mt-1 block text-[9.5px] font-medium uppercase leading-[1.4] tracking-[0.03em] text-bone-soft">
