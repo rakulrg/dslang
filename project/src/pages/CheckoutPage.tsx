@@ -2229,7 +2229,7 @@ function SelectField({
  *  taps, so it has to read as an option rather than as a title: setting it in the
  *  condensed display face at wide tracking turned ONLINE PAYMENT and CASH ON
  *  DELIVERY (COD) into spaced-out display text and set them competing with the
- *  DELIVERY / PAYMENT METHOD headings directly above. 13px (up from 12px) and
+ *  DELIVERY / PAYMENT METHOD headings directly above. 15px (up from 13px) and
  *  `leading-[1.3]` keep it the card's own line; colour, position, the radio, the
  *  price column and the logos are all untouched. f336558 replaced the name and the
  *  headings with sentence-case Open Sans bold + tracking-tight, which is why the
@@ -2348,7 +2348,7 @@ function PaymentMethodCard({
               card reads name > explanation > qualifier rather than three lines
               at one weight. Only the name changed: `sub` and `note` keep their
               lighter bone-soft treatment, which is what keeps them supporting. */}
-          <span className="block font-display text-[13px] font-bold uppercase leading-[1.3] tracking-normal text-bone">{name}</span>
+          <span className="block font-label text-[15px] font-bold uppercase leading-[1.3] tracking-normal text-bone">{name}</span>
           {sub && <span className="mt-0.5 block text-[11.5px] font-normal leading-[1.35] text-bone-soft">{sub}</span>}
           {note && (
             <span className="mt-1 block text-[9.5px] font-medium uppercase leading-[1.4] tracking-[0.03em] text-bone-soft">
