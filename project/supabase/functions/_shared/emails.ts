@@ -94,7 +94,7 @@ function shell(body: string): string {
           </tr>
           <tr>
             <td align="center" style="padding:16px 0 0;font-size:11px;line-height:1.6;color:#6b6b6b;">
-              <p style="margin:0;">DSLANG · Made in Tiruppur, India</p>
+              <p style="margin:0;">DSLANG · Made in India</p>
               <p style="margin:4px 0 0;">Questions? hello.dslang@gmail.com · <a href="https://wa.me/919944676178" style="color:#6b6b6b;">WhatsApp support</a></p>
             </td>
           </tr>
@@ -225,7 +225,7 @@ function renderConfirmed(order: Record<string, unknown>): string {
   const paidLine = order.is_cod
     ? `Your order is confirmed as Cash on Delivery. Please keep ${inr(order.amount_due_on_delivery ?? order.total_amount)} ready for the delivery agent.`
     : Number(order.payment_discount) > 0
-      ? `Your online payment (${inr(order.payment_discount)} discount applied) has been received.`
+      ? `Your online payment of ${inr(order.amount_paid_upfront ?? order.total_amount)} has been received.`
       : 'Your payment has been received.';
   return `<p style="margin:0 0 12px;">Hi ${esc(c.name) || 'there'},</p>
   <p style="margin:0 0 12px;">Thanks for your DSLANG order <strong>${esc(order.ref)}</strong>. Here's what you ordered:</p>

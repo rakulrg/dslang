@@ -161,11 +161,18 @@ test('COD 3b: checkout short-circuits COD without opening a session or preloadin
     false,
     'a COD order must not create a payment session',
   );
-  // The retry path must also refuse to hand a COD order to the gateway.
+  // The payment attempt must also refuse to hand a COD order to the gateway.
+  // There is now a single online payment entry point (Pay Now, which is also
+  // the retry), so the guard lives on the reuse condition itself.
   assert.match(
     checkout,
-    /const codGuard = \(h: LiveOrder \| null\)[\s\S]{0,200}is_cod \|\| paymentMethod === 'cod'/,
-    'the payment-retry handle must exclude COD orders',
+    /if \(reuseOrder && liveOrder && liveOrder\.itemsKey === itemsKeyOf\(items\) && !liveOrder\.is_cod\) \{/,
+    'the online payment path must exclude COD orders',
+  );
+  assert.match(
+    checkout,
+    /if \(paymentMethod === 'cod'\) \{[\s\S]{0,200}convertRetailOrderToCod/,
+    'a COD payment method must convert the existing order instead of paying it',
   );
 });
 

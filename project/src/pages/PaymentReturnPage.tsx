@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Truck } from 'lucide-react';
 import { useD2cCart } from '@/lib/d2cCart';
-import { useRouter } from '@/lib/router';
+import { replaceRoute } from '@/lib/router';
 import { formatPrice } from '@/lib/catalog';
 import { rpc } from '@/lib/rest';
 import { setTrackHint } from '@/lib/trackHint';
@@ -14,20 +14,27 @@ const PENDING_PAYMENT_KEY = 'dslang_pending_order_v1';
 const LIVE_ORDER_KEY = 'dslang_live_order_v1';
 const CHECKOUT_FORM_KEY = 'dslang_checkout_form_v1';
 const RESULT_KEY = 'dslang_order_result_v1';
+const PLACED_LEFT_KEY = 'dslang_order_placed_left_v1';
 
 export type PaymentReturnState = 'checking' | 'success';
 
-// Exactly two outcomes, decided by ONE authoritative read of the order's
-// database `payment_status` (read-only RPC — never a URL param, never a
-// client-side verdict):
-//   * payment_status is 'success' -> a single "Order Placed" page (order ref,
-//     items, total, Continue Shopping). The bag is cleared ONLY on this path.
-//   * anything else (failed, pending, timeout, unknown, or the status read
-//     itself erroring) -> back to the EXISTING checkout, which is kept fully
-//     populated (cart, delivery form, live order) so the shopper just taps Pay
-//     again on the SAME order — no duplicate creation.
-// Intentionally: NO intermediate/spinner/confirming/failure screen, NO polling,
-// NO retry loop, NO pages in between.
+// This page is the SUCCESS page and nothing else. It exists for exactly one
+// outcome: the order's `payment_status` reads 'success' in the database, which
+// only the signature-verified Cashfree webhook can write. It renders the single
+// "Order Placed" screen for that case and the bag is cleared ONLY there.
+//
+// EVERY other outcome — cancelled at Cashfree, failed, still pending, unknown,
+// or the status read itself failing — means the payment did NOT complete. Those
+// go STRAIGHT back to /#/checkout, with the existing checkout restored (bag,
+// quantities, promo, delivery form) so the customer can simply tap Pay Now
+// again on the SAME reserved order, or switch to COD.
+//
+// There is deliberately NO intermediate screen: no polling loop, no retry loop,
+// no waiting state, no spinner. A cancelled payment used to sit behind a
+// multi-second "confirming" gate that the customer then had to click past, and
+// the checkout could re-open that same confirmation state afterwards. Neither
+// can happen now: this page decides in ONE read and hands a non-success return
+// straight to CheckoutPage.
 
 interface PendingPayload {
   ref: string;
@@ -189,6 +196,52 @@ function persistResult(snap: OrderSnapshot, phone: string): void {
   }
 }
 
+/* ------------------------------------------------------------------------- *
+ * "Order Placed" is a ONE-TIME state, and this is what makes that true for
+ * EVERY departure — not just the two buttons on the screen.
+ *
+ * The gateway created the history entry this screen is rendered at
+ * (`/#/payment/return?ref=…`). The screen's own CTAs consume that entry with
+ * `replaceRoute`, but a customer can also leave through the navbar, the footer,
+ * the bag icon, or a bookmark — all of which PUSH, and leave the confirmation
+ * sitting in history. One Back press then put "Order Placed" back in front of
+ * someone who had already completed and deliberately left it.
+ *
+ * So the leaving itself is recorded: when this page unmounts while the document
+ * stays alive — i.e. the customer navigated away inside the app — that ref is
+ * marked consumed for this session. Arriving back at `/payment/return` for a
+ * consumed ref can only ever be Back, Forward, or a stale link — never a fresh
+ * payment — so the entry is replaced away instead of re-confirming.
+ *
+ * A reload is deliberately NOT counted as leaving: `pagehide` tells the two
+ * apart, so refreshing the receipt the customer is looking at still shows it,
+ * while Back/Forward can never bring it back.
+ * ---------------------------------------------------------------------- */
+function readPlacedLeft(): string {
+  try {
+    return window.sessionStorage.getItem(PLACED_LEFT_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function clearPlacedLeft(): void {
+  try {
+    window.sessionStorage.removeItem(PLACED_LEFT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function markPlacedLeft(ref: string): void {
+  if (!ref) return;
+  try {
+    window.sessionStorage.setItem(PLACED_LEFT_KEY, ref);
+  } catch {
+    // ignore
+  }
+}
+
 function fullItemsKey(items: { productId: string; colorId: string; sizeLabel: string; quantity: number }[]): string {
   return items.map((i) => `${i.productId}|${i.colorId}|${i.sizeLabel}|${i.quantity}`).join(',');
 }
@@ -224,7 +277,6 @@ function normalizeSnapshot(order: Record<string, unknown>): OrderSnapshot {
 
 export function PaymentReturnPage() {
   const { items, clear, removeAppliedPromo } = useD2cCart();
-  const { navigate } = useRouter();
   // Order lines carry no image URL; resolved from the public catalogue by
   // product id + colour, same source as the Product Details page.
   const imageIndex = useOrderImages();
@@ -274,47 +326,66 @@ export function PaymentReturnPage() {
   // Placed" — that value is set solely server-side by the signature-verified
   // Cashfree webhook.
   //
-  // The webhook can land a few seconds AFTER the shopper returns from the hosted
-  // checkout, so a single immediate read is not enough. We re-read for a short
-  // grace window first. Only once that window closes do we clear the pending
-  // handle and send the shopper back to /checkout — where they re-tap Pay Now on
-  // the SAME order, so the stock reservation is never duplicated.
+  // ONE read, no polling. A cancelled payment is not a slow success, so waiting
+  // for it buys nothing: anything that is not an already-confirmed success goes
+  // back to /#/checkout immediately. The pending-payment record is deliberately
+  // LEFT IN PLACE for that handoff — CheckoutPage re-verifies it quietly in the
+  // background (against `cashfree-status`, which re-checks Cashfree itself), so
+  // a payment whose webhook is still in flight is still confirmed, and a
+  // genuinely cancelled one is only cleared once the server has said so.
   useEffect(() => {
     if (!ref) {
-      navigate('/checkout');
+      // REPLACE, not push: there is no ref, so nothing is worth keeping in
+      // history, and a push here would leave `/payment/return` as a Back
+      // destination that can only re-run this same redirect.
+      replaceRoute('/checkout');
+      return;
+    }
+    // This ref's confirmation has already been shown AND left in this session,
+    // so arriving here again is a Back, a Forward or a stale link — never a new
+    // payment. Consume the entry (replace, never push) and put the customer on
+    // a normal page. Without this the one-time "Order Placed" screen came back
+    // the moment they pressed Back after leaving it any other way.
+    if (readPlacedLeft() === ref) {
+      replaceRoute('/collections');
       return;
     }
     let cancelled = false;
-    const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
-    // ~9s of grace, then give up and let checkout resume on the same order.
-    const DEADLINE_MS = 9000;
     (async () => {
-      const startedAt = Date.now();
-      for (let attemptNo = 0; attemptNo < 6; attemptNo++) {
-        try {
-          const data = await rpc<TrackedLookup>('track_lookup_order', { p_ref: ref, p_phone: phone });
-          if (cancelled) return;
-          if (data?.ok) {
-            const o = data.order as unknown as Record<string, unknown> | undefined;
-            // A full-COD order is confirmed at creation with payment_status
-            // 'cod_pending' and is never routed through Cashfree. If such a ref
-            // ever lands here (e.g. a stale gateway redirect), confirm it rather
-            // than bouncing the shopper back to checkout.
-            if (o && (o.payment_status === 'success' || (o.is_cod && o.payment_status === 'cod_pending'))) {
-              settleSuccess(o);
-              return;
-            }
+      let confirmed: Record<string, unknown> | null = null;
+      try {
+        const data = await rpc<TrackedLookup>('track_lookup_order', { p_ref: ref, p_phone: phone });
+        if (cancelled) return;
+        if (data?.ok) {
+          const o = data.order as unknown as Record<string, unknown> | undefined;
+          // A full-COD order is confirmed at creation with payment_status
+          // 'cod_pending' and is never routed through Cashfree. If such a ref
+          // ever lands here (e.g. a stale gateway redirect), confirm it rather
+          // than bouncing the shopper back to checkout.
+          if (o && (o.payment_status === 'success' || (o.is_cod && o.payment_status === 'cod_pending'))) {
+            confirmed = o;
           }
-        } catch {
-          // lookup errored — treated exactly like "anything else" below
         }
-        if (cancelled) return;
-        if (Date.now() - startedAt >= DEADLINE_MS) break;
-        await sleep(1500);
-        if (cancelled) return;
+      } catch {
+        // lookup errored — treated exactly like "anything else" below
       }
-      clearPending();
-      navigate('/checkout');
+      if (cancelled) return;
+      if (confirmed) {
+        settleSuccess(confirmed);
+        return;
+      }
+      // Not confirmed: the payment did NOT complete. Hand the customer straight
+      // back to the checkout they came from. `clearPending()` is deliberately
+      // NOT called here — CheckoutPage owns that decision, from a verified read.
+      //
+      // REPLACED, not pushed. This route is a transient hop between Cashfree and
+      // checkout, and the entry Cashfree created for it must not survive: pushed,
+      // Back would land on `/payment/return` again, which re-runs this redirect
+      // and pushes `/checkout` again — an endless Back loop between two pages the
+      // customer never meant to revisit. Replacing consumes the return entry, so
+      // Back goes to whatever legitimately preceded the payment attempt (the
+      // checkout, or the page before it).
+      replaceRoute('/checkout');
     })();
     return () => {
       cancelled = true;
@@ -322,10 +393,37 @@ export function PaymentReturnPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref, phone]);
 
-  if (state !== 'success' || !snap) {
-    // The single fast lookup is in flight; render nothing while it resolves.
-    return null;
-  }
+  // Record the moment the customer leaves this one-time screen.
+  //
+  // The write happens on unmount, and `pagehide` is what tells the two apart:
+  // it fires only when the whole document is going away, so a refresh of the
+  // receipt the customer is currently looking at does NOT count as leaving it.
+  // An in-app navigation (navbar, footer, bag, either CTA) unmounts this page
+  // with no `pagehide` in between, and that is the moment the ref is marked
+  // consumed.
+  //
+  // It has to be the unmount rather than a `hashchange` listener: the router's
+  // own `hashchange` handler is registered first, so it re-renders (and unmounts
+  // this page) before any listener added later on the same event gets its turn.
+  useEffect(() => {
+    if (state !== 'success' || !snap?.ref) return;
+    const shownRef = snap.ref;
+    clearPlacedLeft();
+    let unloading = false;
+    const onPageHide = () => {
+      unloading = true;
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      if (!unloading) markPlacedLeft(shownRef);
+    };
+  }, [state, snap]);
+
+  // Not a confirmed order. Nothing is rendered here and nothing is ever waited
+  // on — the redirect above is already in flight, and there is no spinner,
+  // loader or 'confirming' state left in this flow to be seen.
+  if (state !== 'success' || !snap) return null;
 
   return (
     <div className="min-h-[70vh] flex flex-col items-center justify-center text-center px-5 py-10">
@@ -389,12 +487,17 @@ export function PaymentReturnPage() {
             // ONE-SHOT session value (consumed and removed on the next page).
             // The phone never goes into the URL. Without a valid 10-digit phone
             // (rare), fall back to the plain ref-in-URL prefill as today.
+            //
+            // REPLACED, not pushed: "Order Placed" is a ONE-TIME terminal screen
+            // for this order. Leaving it must consume its history entry, or Back
+            // from Track Order would come straight back here and re-run the
+            // lookup to show the completed order a second time.
             const digits = phone.replace(/\D/g, '').slice(0, 10);
             if (digits.length === 10) {
               setTrackHint(snap.ref, digits);
-              navigate('/track-order');
+              replaceRoute('/track-order');
             } else {
-              navigate(`/track-order/${encodeURIComponent(snap.ref)}`);
+              replaceRoute(`/track-order/${encodeURIComponent(snap.ref)}`);
             }
           }}
           className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-8 py-4"
@@ -403,7 +506,7 @@ export function PaymentReturnPage() {
           Track Order
         </button>
         <button
-          onClick={() => navigate('/collections')}
+          onClick={() => replaceRoute('/collections')}
           className="btn-soft border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-8 py-4 hover:bg-bone hover:text-paper transition-colors"
         >
           Continue Shopping

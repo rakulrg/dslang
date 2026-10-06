@@ -28,6 +28,7 @@ const HTML = read('index.html');
 const CSS = read('src/index.css');
 const SEARCH = read('src/components/SearchDialog.tsx');
 const CHECKOUT = read('src/pages/CheckoutPage.tsx');
+const STATUS = read('src/pages/OrderStatusPage.tsx');
 const TRACK = read('src/pages/TrackOrderPage.tsx');
 // The variant-image resolver is app-wide, not Track Order's: every surface that
 // renders an order line (Track Order, My Orders, Order Status, the confirmation
@@ -579,15 +580,16 @@ test('VIEWPORT: full-height shells use dvh, not the oversized 100vh', () => {
  * Post-checkout Track Order
  * ================================================================== */
 test('TRACK CTA: every post-checkout state with a live order can reach tracking', () => {
-  // The success screen already had it; the pending / failed screens did not.
+  // A confirmed order offers tracking straight from its own screen.
   assert.match(CHECKOUT, /navigate\(`\/track-order\/\$\{encodeURIComponent\(result\.ref\)\}`\)/);
-  assert.match(
-    CHECKOUT,
-    /\{ref && !expired && \(isPending \|\| isFailed\) && \([\s\S]{0,200}encodeURIComponent\(ref\)/,
-    'a pending or failed payment must still offer Track Order',
-  );
+  // An unpaid payment no longer sits on a result screen of its own — there is no
+  // pending/failed checkout state to carry a CTA. The customer is back on the
+  // checkout form, and their order stays reachable from the order-status page.
+  assert.equal((CHECKOUT.match(/navigate\(`\/track-order\//g) || []).length, 1);
+  assert.match(STATUS, /navigate\(`\/track-order\/\$\{encodeURIComponent\(snap\.ref\)\}`\)/);
   // Never for an expired (swept + restocked) order - there is nothing to track.
-  assert.match(CHECKOUT, /\{ref && !expired/);
+  assert.match(STATUS, /stock_restored_at/);
+  assert.match(STATUS, /Start New Order/);
 });
 
 test('TRACK CTA: the phone stays out of the URL', () => {

@@ -20,6 +20,27 @@ const HEADERS: Record<string, string> = {
   'Content-Type': 'application/json',
 };
 
+/**
+ * Did this request fail in a way that leaves the OUTCOME UNKNOWN?
+ *
+ * Two shapes, both from the transport rather than the server:
+ *   * `RestError` with `status === 0` — our own abort fired, so we stopped
+ *     listening. The server may well have committed whatever we asked for.
+ *   * a bare `TypeError` (`Failed to fetch`) — the connection dropped before a
+ *     response arrived.
+ *
+ * This is deliberately distinct from a real error response (400 "only N left",
+ * 401, 409, ...), which means the server answered and definitively refused.
+ * Callers that create something MUST distinguish the two: a definite refusal is
+ * safe to retry, an unknown outcome is not — retrying blindly would create a
+ * second of whatever the first attempt already created.
+ */
+export function isUnknownOutcome(err: unknown): boolean {
+  if (err instanceof RestError) return err.status === 0;
+  // fetch() rejects with TypeError on a transport failure, undici-style.
+  return err instanceof TypeError;
+}
+
 export class RestError extends Error {
   status: number;
 
@@ -86,12 +107,12 @@ export async function get<Row>(
 }
 
 /** POST a SECURITY DEFINER RPC function (anon role, granted via GRANT EXECUTE). */
-export async function rpc<Result>(fn: string, body: unknown): Promise<Result> {
+export async function rpc<Result>(fn: string, body: unknown, timeoutMs?: number): Promise<Result> {
   const res = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: 'POST',
     headers: HEADERS,
     body: JSON.stringify(body ?? {}),
-  });
+  }, timeoutMs);
   if (!res.ok) {
     throw new RestError(res.status, `Supabase RPC ${fn} failed (${res.status})`);
   }

@@ -874,10 +874,11 @@ test('NO DUPLICATE INITIATION: nothing in src/ calls the decommissioned Edge Fun
 
 test('NO DUPLICATE INITIATION: the single call site is the checkout page', () => {
   assert.match(read(PAYMENT_LIB), /apiUrl\('\/cashfree-order'\)/);
-  // Both entry points in checkout (first payment + retry) go through the one
-  // client helper; no page hand-rolls a fetch to the endpoint.
+  // There is exactly ONE entry point into an online payment: Pay Now, which is
+  // also the retry (it reuses the reserved order rather than opening a second
+  // confirmation page). No page hand-rolls a fetch to the endpoint.
   const checkout = read(CHECKOUT);
-  assert.equal((checkout.match(/createPaymentSession\(/g) ?? []).length, 2, 'first attempt + retry');
+  assert.equal((checkout.match(/createPaymentSession\(/g) ?? []).length, 1, 'the one payment entry point');
   assert.equal(/\/api\/cashfree-order|api\/cashfree-order/.test(checkout), false, 'no direct fetch to the endpoint');
 });
 
@@ -1002,7 +1003,24 @@ test('AUTHORIZATION: paid, restocked and terminal orders are all refused', () =>
     /PAYABLE_ORDER_STATUSES = new Set\(\[[^\]]*cod_partial_paid/,
     'cod_partial_paid is legacy-only and must never be a pay-able state',
   );
-  assert.match(apiSrc, /if \(!PAYABLE_ORDER_STATUSES\.has\(orderStatus\)\)/);
+  assert.match(
+    apiSrc,
+    /if \(!abandonedAttempt && !PAYABLE_ORDER_STATUSES\.has\(orderStatus\)\)/,
+    'the order-status guard now exempts the one abandoned-attempt case',
+  );
+  // That exemption is deliberately narrow: a cancelled ORDER whose payment
+  // FAILED, and nothing else. A paid one is already refused as ALREADY_PAID and
+  // a restocked one as ORDER_EXPIRED, both checked above this gate.
+  assert.match(
+    apiSrc,
+    /const abandonedAttempt =\s*orderStatus === 'cancelled' && String\(typed\.payment_status \?\? ''\) === 'failed';/,
+    'only a failed payment on a cancelled order may be retried',
+  );
+  assert.doesNotMatch(
+    apiSrc,
+    /abandonedAttempt\s*=\s*\n?\s*orderStatus === 'cancelled' && (?!String\(typed\.payment_status)/,
+    'the exemption must never be granted on order_status alone',
+  );
   // A foreign gateway on the row is refused too, so the guard set is complete.
   assert.match(apiSrc, /storedProvider !== 'cashfree'[\s\S]{0,400}ORDER_NOT_PAYABLE/);
 });

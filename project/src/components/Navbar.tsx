@@ -141,7 +141,7 @@ export function Navbar({
           <div className="flex h-12 md:h-14 items-center justify-center">
             <a
               href={linkHref('/')}
-              className="font-brand text-2xl md:text-3xl tracking-[0.18em] leading-none select-none text-bone"
+              className="font-brand text-2xl md:text-3xl tracking-[0.18em] leading-none select-none text-bone mr-[-0.18em]"
               aria-label="DSLANG home"
             >
               DSLANG
@@ -175,7 +175,7 @@ export function Navbar({
             {/* Logo */}
             <a
               href={linkHref('/')}
-              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-brand text-2xl md:text-3xl tracking-[0.18em] leading-none select-none text-bone lg:static lg:translate-x-0 lg:translate-y-0"
+              className="absolute left-1/2 top-1/2 -translate-x-[calc(50%-0.09em)] -translate-y-1/2 font-brand text-2xl md:text-3xl tracking-[0.18em] leading-none select-none text-bone lg:static lg:translate-x-0 lg:translate-y-0"
               aria-label="DSLANG home"
             >
               DSLANG

@@ -91,28 +91,39 @@ test('ERROR TEXT: the sites that were rendering errors in black or grey are crim
 });
 
 test('PAYMENT ERRORS: a failed payment reads as an error, a pending one does not', () => {
-  // Both result pages render ONE paragraph for three jobs: progress copy while
-  // confirming, the failure reason once known, and a generic "not charged"
-  // fallback. The colour is therefore derived from the verdict, because painting
-  // the paragraph unconditionally would paint "Still confirming" red too.
+  // OrderStatusPage renders ONE paragraph for two jobs: the reason a payment
+  // failed, and (via the plain status screen) the neutral "not confirmed yet"
+  // case. Now that the dedicated "Confirming Payment" / "Still Confirming"
+  // screens are gone, the failure paragraph is unconditionally crimson — there
+  // is no pending half left for a derived colour to protect.
+  //
+  // CheckoutPage has no such paragraph at all: a cancelled or unverified
+  // payment is reported on the checkout form itself, as its inline alert.
   const checkout = read('src/pages/CheckoutPage.tsx');
   const status = read('src/pages/OrderStatusPage.tsx');
 
-  assert.match(checkout, /const noteIsError = Boolean\(errorMsg\) \|\| isFailed/);
   assert.match(
     checkout,
-    /\$\{noteIsError \? 'text-crimson' : 'text-grey'\}[\s\S]*?checkingNote \|\| errorMsg/,
+    /\{errorMsg && \([\s\S]{0,400}?text-crimson[\s\S]{0,400}?role="alert"/,
+    'the checkout form must render its payment error in crimson',
+  );
+  assert.doesNotMatch(
+    checkout,
+    /noteIsError|checkingNote/,
+    'checkout must have no payment-confirmation screen to colour',
   );
 
-  assert.match(status, /const noteIsError = isFailed/);
-  assert.match(
-    status,
-    /const noteIsError = isFailed;[\s\S]*?\$\{noteIsError \? 'text-crimson' : 'text-grey'\}`}>\{note\}/,
+  assert.doesNotMatch(status, /noteIsError/, 'the derived colour is gone with the pending half');
+  assert.match(status, /className="mt-4 text-sm text-crimson max-w-md leading-relaxed">\{note\}/);
+  // Asserted on the executable source: the comments name the removed screens on
+  // purpose, to record that they were removed.
+  assert.doesNotMatch(
+    status.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''),
+    /Confirming Payment|Still Confirming|Payment Pending/,
   );
 
   // The failure icon travels with the failure.
-  assert.match(status, /isFailed \? \(\s*<XCircle[^>]*text-crimson/);
-  assert.match(checkout, /\)\s*:\s*\(\s*<XCircle[^>]*text-crimson/);
+  assert.match(status, /<XCircle[^>]*text-crimson/);
 });
 
 test('NOT COLOURS: success, pending and warning copy stay neutral', () => {
@@ -126,9 +137,9 @@ test('NOT COLOURS: success, pending and warning copy stay neutral', () => {
     // apart, so this pair is the clearest proof the fix is not a blanket sweep.
     ['components/CartDrawer.tsx', /text-green-800[^>]*>\s*<Check[^>]*\/> \{promo\.code\} APPLIED/],
     // "Nothing has been charged" reassurance under a failed payment stays
-    // neutral -- only the failure reason above it turns red.
+    // neutral -- only the failure reason above it turns red. (Checkout no
+    // longer owns that paragraph: an unpaid payment is reported on the form.)
     ['pages/OrderStatusPage.tsx', /text-xs text-grey\/70[^>]*>\s*Nothing has been charged/],
-    ['pages/CheckoutPage.tsx', /text-xs text-grey\/70[^>]*>\s*Nothing has been charged/],
   ];
   for (const [file, re] of cases) {
     assert.match(read(`src/${file}`), re, `${file} must keep its non-error copy unchanged`);

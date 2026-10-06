@@ -15,7 +15,19 @@ const LIVE_ORDER_KEY = 'dslang_live_order_v1';
 const CHECKOUT_FORM_KEY = 'dslang_checkout_form_v1';
 const RESULT_KEY = 'dslang_order_result_v1';
 
-type Verdict = 'checking' | 'paid' | 'failed' | 'pending' | 'unknown';
+/**
+ * The page has THREE customer-facing states, and only three:
+ *   'paid'    - the order is confirmed (paid, or COD confirmed on placement).
+ *   'failed'  - the payment definitively did NOT complete.
+ *   'unknown' - the ordinary order-status state: "Confirm Your Order" /
+ *               "We Couldn't Find Your Order" with the phone lookup form.
+ *
+ * There is deliberately no 'checking'/'pending' verdict and no dedicated
+ * "Confirming Payment" screen any more. An order that is not confirmed yet is
+ * simply NOT CONFIRMED, and the normal order-status state already says so and
+ * already offers the re-check. Nothing here waits behind a spinner.
+ */
+type Verdict = 'paid' | 'failed' | 'unknown';
 
 interface PendingPayload {
   ref: string;
@@ -314,16 +326,15 @@ export function OrderStatusPage() {
   const [ref] = useState(initialRef);
   const [phone, setPhone] = useState(initialPhone);
   const [draftPhone, setDraftPhone] = useState(initialPhone);
-  const [verdict, setVerdict] = useState<Verdict>(initialRef && initialPhone ? 'checking' : 'unknown');
+  const [verdict, setVerdict] = useState<Verdict>('unknown');
   const [note, setNote] = useState('');
   const [snap, setSnap] = useState<OrderSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [verifyTick, setVerifyTick] = useState(0);
   const [expired, setExpired] = useState(false);
-  // Escape hatch: a stuck (pending/failed) order must never be a dead end.
-  // After 2-3 manual re-checks or a ~45s window without a resolution, surface
-  // "Start New Order" so the customer can always begin a fresh checkout.
-  const [recheckCount, setRecheckCount] = useState(0);
+  // Escape hatch: a failed order must never be a dead end. After a ~45s window
+  // without the customer resolving it, surface "Start New Order" so they can
+  // always begin a fresh checkout.
   const [showNewOrder, setShowNewOrder] = useState(false);
 
   const settlePaid = (order: Record<string, unknown>) => {
@@ -374,8 +385,10 @@ export function OrderStatusPage() {
   useEffect(() => {
     if (!ref || !phone) return;
     let cancelled = false;
-    setVerdict('checking');
-    setNote('Confirming your payment…');
+    // No "checking" state: the page stays on the ordinary order-status screen
+    // while this runs, so an unconfirmed order is never dressed up as a
+    // confirmation in progress.
+    setNote('');
 
     const attempt = async (): Promise<'idle' | 'pending'> => {
       try {
@@ -456,9 +469,12 @@ export function OrderStatusPage() {
         if (cancelled) return;
       }
       if (cancelled) return;
-      setVerdict('pending');
+      // Still unresolved. The order is not confirmed, so it stays on the normal
+      // order-status state and simply says so — there is no "Still Confirming"
+      // screen to fall back to.
+      setVerdict('unknown');
       setNote(
-        'Your payment is still being confirmed. If you have been charged, your order is safe — re-check below or contact us.'
+        'We could not confirm this payment yet. If you have been charged, your order is safe — please check again shortly or contact us.'
       );
     };
     confirm();
@@ -468,11 +484,11 @@ export function OrderStatusPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref, phone, verifyTick]);
 
-  // Time-window escape hatch: if confirmation never comes to a head (stuck
-  // "Still Confirming" / "Payment Not Completed"), offer "Start New Order"
-  // after a short wait so the customer is never trapped on a stale screen.
+  // Time-window escape hatch: if a failed payment is never resolved, offer
+  // "Start New Order" after a short wait so the customer is never trapped on a
+  // stale screen.
   useEffect(() => {
-    if (verdict !== 'pending' && verdict !== 'failed') return;
+    if (verdict !== 'failed') return;
     if (expired) return;
     const t = window.setTimeout(() => setShowNewOrder(true), 45000);
     return () => window.clearTimeout(t);
@@ -566,6 +582,9 @@ export function OrderStatusPage() {
     }
     setNote('');
     setPhone(digits);
+    // Re-run the lookup even when the number is unchanged, so this button stays
+    // the way an unresolved order is re-checked.
+    setVerifyTick((n) => n + 1);
   };
 
   if (verdict === 'paid' && snap) {
@@ -752,32 +771,18 @@ export function OrderStatusPage() {
     );
   }
 
-  if (verdict === 'failed' || verdict === 'pending') {
-    const isFailed = verdict === 'failed';
-    // Same paragraph, two jobs: while we are still confirming the note is
-    // progress copy, and once the payment has failed it is the reason it
-    // failed. Deriving the colour from the verdict keeps "Still confirming"
-    // neutral without touching any of the wording.
-    const noteIsError = isFailed;
+  if (verdict === 'failed') {
+    // A payment that definitively did NOT complete. The note is the reason it
+    // failed, and it is an error.
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
-        <div
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-blush"
-          role={!isFailed ? 'status' : undefined}
-          aria-live={!isFailed ? 'polite' : undefined}
-        >
-          {isFailed ? (
-            <XCircle size={32} strokeWidth={1.4} className="text-crimson" />
-          ) : (
-            <Clock size={30} strokeWidth={1.4} className="text-bone" />
-          )}
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blush">
+          <XCircle size={32} strokeWidth={1.4} className="text-crimson" />
         </div>
 
-        <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">
-          {isFailed ? 'Order' : 'Payment Pending'}
-        </p>
+        <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">Order</p>
         <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
-          {isFailed ? 'Payment Not Completed' : 'Still Confirming'}
+          Payment Not Completed
         </h1>
 
         <div className="mt-4 space-y-1 text-sm text-grey">
@@ -793,8 +798,8 @@ export function OrderStatusPage() {
           )}
         </div>
 
-        <p className={`mt-4 text-sm max-w-md leading-relaxed ${noteIsError ? 'text-crimson' : 'text-grey'}`}>{note}</p>
-        {isFailed && !expired && (
+        <p className="mt-4 text-sm text-crimson max-w-md leading-relaxed">{note}</p>
+        {!expired && (
           <p className="mt-2 text-xs text-grey/70 max-w-md leading-relaxed">
             Nothing has been charged. The order stays reserved for {ref ? `reference #${ref}` : 'you'} so paying again
             is quick and safe.
@@ -805,14 +810,8 @@ export function OrderStatusPage() {
           <button
             type="button"
             onClick={() => {
-              if (isFailed) {
-                if (expired) navigate('/checkout');
-                else void handleTryAgain();
-              } else {
-                setRecheckCount((n) => n + 1);
-                if (recheckCount + 1 >= 2) setShowNewOrder(true);
-                setVerifyTick((n) => n + 1);
-              }
+              if (expired) navigate('/checkout');
+              else void handleTryAgain();
             }}
             disabled={busy}
             className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4"
@@ -821,14 +820,10 @@ export function OrderStatusPage() {
               <>
                 <Loader2 size={15} strokeWidth={2} className="animate-spin" /> Paying Again…
               </>
-            ) : isFailed ? (
-              expired ? (
-                'Start New Checkout'
-              ) : (
-                'Try Again'
-              )
+            ) : expired ? (
+              'Start New Checkout'
             ) : (
-              'Re-check Status'
+              'Try Again'
             )}
           </button>
           <button
@@ -870,26 +865,10 @@ export function OrderStatusPage() {
     );
   }
 
-  if (verdict === 'checking') {
-    return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blush" role="status" aria-live="polite">
-          <Loader2 size={32} strokeWidth={1.5} className="animate-spin text-bone" />
-        </div>
-        <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">Payment</p>
-        <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
-          Confirming Payment
-        </h1>
-        {ref && (
-          <p className="mt-4 text-sm text-grey">
-            Order <span className="font-semibold text-bone">#{ref}</span>
-          </p>
-        )}
-        <p className="mt-4 text-sm text-grey max-w-md leading-relaxed">{note}</p>
-      </div>
-    );
-  }
-
+  // The normal order-status state: "Confirm Your Order" / "We Couldn't Find
+  // Your Order" with the phone lookup form. An order that is not confirmed yet
+  // lands here too — the obsolete dedicated "Confirming Payment" spinner screen
+  // has been DELETED, not hidden.
   return (
     <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
       <Clock size={32} strokeWidth={1.4} className="text-bone" />

@@ -72,7 +72,9 @@ interface ServerConfig {
 /**
  * Order states that can never take a new payment.
  *
- * 'pending' and 'processing' are the only pay-able states.
+ * 'pending' and 'processing' are the only pay-able states — plus the one
+ * ABANDONED-attempt case handled inline at the eligibility check (a failed
+ * payment whose reservation was never released).
  */
 const PAYABLE_ORDER_STATUSES = new Set(['pending', 'processing']);
 
@@ -333,7 +335,24 @@ export default async function handler(req: any, res: any) {
     });
   }
   const orderStatus = String(typed.order_status ?? 'pending');
-  if (!PAYABLE_ORDER_STATUSES.has(orderStatus)) {
+  // An ABANDONED payment attempt is not a dead end: the customer may come back
+  // and pay for that very same order.
+  //
+  // Cashfree's cancel/failure path records an abandoned attempt as
+  // payment_status 'failed' + order_status 'cancelled' and deliberately keeps the
+  // reservation so the retry can happen without double-booking stock (see
+  // cashfree-webhook / cashfree-status, and the fresh-id mint further down).
+  // Without this allowance that intent is unreachable: every cancelled payment
+  // would be permanently unpayable, the customer would be stranded on checkout
+  // with a reserved order, and the retry would have to create a second order.
+  //
+  // This is deliberately narrow. A PAID order that was cancelled before ship
+  // was already refused above (ALREADY_PAID), and a swept or admin-restocked
+  // order was already refused above (ORDER_EXPIRED). What remains here is an
+  // unpaid, un-restocked attempt, which is exactly the one worth retrying.
+  const abandonedAttempt =
+    orderStatus === 'cancelled' && String(typed.payment_status ?? '') === 'failed';
+  if (!abandonedAttempt && !PAYABLE_ORDER_STATUSES.has(orderStatus)) {
     return res.status(409).json({
       success: false,
       code: 'ORDER_NOT_PAYABLE',

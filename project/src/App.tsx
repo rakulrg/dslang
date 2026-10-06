@@ -119,12 +119,18 @@ function App() {
   }, []);
 
   // Legacy /cart links open the bag drawer instead of a separate page.
+  //
+  // REPLACED, not pushed. `/cart` is a transient alias with no page of its own:
+  // if it pushed, the `#/cart` entry would stay in history, and every Back that
+  // reached it would immediately push `/` again — history grew on each press and
+  // the visitor could never leave with Back at all. Replacing it means the alias
+  // is consumed on arrival, exactly like the canonicalization redirect below.
   useEffect(() => {
     if (segments[0] === 'cart') {
       openCart();
-      navigate('/');
+      replaceRoute('/');
     }
-  }, [segments, openCart, navigate]);
+  }, [segments, openCart]);
 
   // Canonicalize the legacy shop URLs onto /collections. The replacement is
   // done with `replaceRoute`, so an old bookmark / shared link / indexed URL
@@ -141,16 +147,22 @@ function App() {
   }, [segments]);
 
   // Handle redirects for protected routes - MUST BE IN useEffect, NOT in renderPage
+  //
+  // Every branch here is a redirect the visitor was NOT meant to stay on (a guest
+  // has no account, a non-admin has no console, an admin has no account page), so
+  // each one REPLACES its entry instead of pushing. Pushing left the original
+  // route in history, and Back then walked straight back into it, bounced to `/`
+  // again, and the visitor could not get out with Back at all.
   useEffect(() => {
     if (loading) return; // Wait for auth state to load
 
     if (segments[0] === 'account') {
       if (!user) {
         setLoginOpen(true);
-        navigate('/');
+        replaceRoute('/');
       } else if (isAdmin) {
         // Admin accessing /account - send to /admin
-        navigate('/admin');
+        replaceRoute('/admin');
       }
     } else if (segments[0] === 'admin') {
       // Wait for the admin_users check to settle before deciding. Judging on a
@@ -159,13 +171,13 @@ function App() {
       if (isAdminLoading) return;
       if (!user) {
         setLoginOpen(true);
-        navigate('/');
+        replaceRoute('/');
       } else if (!isAdmin) {
         // Non-admin accessing /admin - send to /account
-        navigate('/account');
+        replaceRoute('/account');
       }
     }
-  }, [segments, user, loading, isAdmin, isAdminLoading, navigate]);
+  }, [segments, user, loading, isAdmin, isAdminLoading]);
 
   // Restore the route a shopper started a Google login from. `redirectTo`
   // normally carries the hash back, so this only fires when the OAuth return

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Check, CheckCircle2, ChevronDown, Clock, HelpCircle, Loader2, Search, ShieldCheck, Tag, Truck, XCircle } from 'lucide-react';
+import { ArrowLeft, Check, CheckCircle2, ChevronDown, HelpCircle, Loader2, Search, ShieldCheck, Tag, Truck } from 'lucide-react';
 import { useD2cCart } from '@/lib/d2cCart';
 import { useCartDrawer } from '@/lib/cartDrawer';
 import { useRouter } from '@/lib/router';
 import { formatPrice } from '@/lib/catalog';
 import { computeShipping } from '@/lib/settings';
-import { createRetailOrder, convertRetailOrderToCod, type RetailOrderResult, type RetailCustomer, type RetailOrderLineSnapshot, type RetailPaymentMethod } from '@/lib/orders';
-import { invokeFunction } from '@/lib/rest';
+import { createRetailOrder, convertRetailOrderToCod, OrderCreateUnresolvedError, type RetailOrderResult, type RetailCustomer, type RetailOrderLineSnapshot, type RetailPaymentMethod } from '@/lib/orders';
+import { invokeFunction, isUnknownOutcome } from '@/lib/rest';
 import { validatePromo, computeDiscount, promoApplies } from '@/lib/promo';
 import { isIndianPincode } from '@/lib/pincodes';
 import {
@@ -15,10 +15,9 @@ import {
   createPaymentSession,
   verifyPayment,
   PaymentSessionError,
-  ORDER_EXPIRED_MESSAGE,
 } from '@/lib/payment';
 import { openCashfreeCheckout, preloadCashfreeSdk } from '@/lib/cashfreeSdk';
-import { fetchLiveVariantStock, reconcileCartWithLive, describeStockChanges } from '@/lib/cartStock';
+import { fetchLiveVariantStock, reconcileCartWithLive, describeStockChanges, itemsKeyOf, heldStockFromOrderLines } from '@/lib/cartStock';
 import { NO_AWB_NOTICE, shippingStatusMessage } from '@/lib/shipping';
 import { PaymentMethodsRow } from '@/components/PaymentMethodIcons';
 import { ConfettiBurst } from '@/components/ConfettiBurst';
@@ -42,7 +41,6 @@ import { customerToProfile, saveProfile, loadSavedProfile, attachOrderToUser } f
  */
 
 type Stage = 'form' | 'result';
-type ResultVerdict = 'checking' | 'success' | 'failed' | 'pending';
 
 const PENDING_PAYMENT_KEY = 'dslang_pending_order_v1';
 const LIVE_ORDER_KEY = 'dslang_live_order_v1';
@@ -71,6 +69,13 @@ interface LiveOrder {
   /** COD orders never reach the Cashfree
    *  session or retry paths. */
   is_cod?: boolean;
+  /** Per-variant units this order reserved, taken from the lines
+   *  create_retail_order actually decremented stock for. Stock is held by being
+   *  REMOVED from product_sizes, so these units are missing from the shelf
+   *  count while the order waits for payment. Cart reconciliation adds them
+   *  back for this shopper — see lib/cartStock.ownHeldStock. Absent for a COD
+   *  order and for handles persisted before this field existed. */
+  held?: Record<string, number>;
 }
 
 interface PendingPayload extends LiveOrder {
@@ -134,6 +139,10 @@ function readPendingPayload(): PendingPayload | null {
       itemsKey: typeof v.itemsKey === 'string' ? v.itemsKey : '',
       at: Number(v.at ?? 0),
       phone: typeof v.phone === 'string' ? v.phone : undefined,
+      // Carried through untouched: the pending record is re-persisted as the
+      // live order below, so dropping the reserved units here would silently
+      // make a cancelled Cashfree session look like it held no stock.
+      held: v.held && typeof v.held === 'object' ? (v.held as Record<string, number>) : undefined,
     };
   });
 }
@@ -155,16 +164,6 @@ function waitForHandoff(timeoutMs: number): Promise<'unloaded' | 'stalled'> {
     window.addEventListener('pagehide', onPageHide);
     const timer = window.setTimeout(() => finish('stalled'), timeoutMs);
   });
-}
-
-/** Stable fingerprint of a cart's variants + quantities. Used to verify a
- *  live order still matches the customer's bag before it is reused. */
-function itemsKeyOf(
-  items: { productId: string; colorId: string; sizeLabel: string; quantity: number }[]
-): string {
-  return items
-    .map((i) => `${i.productId}|${i.colorId}|${i.sizeLabel}|${i.quantity}`)
-    .join(',');
 }
 
 interface CheckoutForm {
@@ -311,6 +310,20 @@ export function CheckoutPage() {
   // changed since that order was placed (e.g. an old failed order A from a
   // previous cart), the pending/live/result handles are stale: drop them so a
   // brand-new checkout is created instead of resurrecting the old order ref.
+  // Landing back from the gateway always opens the CHECKOUT FORM, never a
+  // payment-confirmation screen. A cancelled Cashfree attempt must drop the
+  // customer straight back onto the bag, delivery form and payment choice they
+  // left — not behind a "Confirming Payment" page. The old behaviour (open the
+  // result stage whenever a pending order matched the bag) is what made a
+  // cancelled payment re-present itself as a confirmation state, so it is gone.
+  //
+  // The result stage is reached from ONE place only: `setStage('result')` after
+  // the server has positively confirmed a payment (or confirmed a COD order).
+  //
+  // What this still does is drop STALE handles: if the pending order belongs to
+  // an older bag (e.g. a failed order from a previous cart), the pending/live/
+  // result records are cleared so a brand-new order is created instead of
+  // resurrecting the old ref.
   const [stage, setStage] = useState<Stage>(() => {
     const pending = readPendingPayload();
     if (!pending) return 'form';
@@ -320,13 +333,10 @@ export function CheckoutPage() {
       clearPendingKey();
       clearLiveOrderKey();
       clearResultKey();
-      return 'form';
     }
-    return 'result';
+    return 'form';
   });
-  const [verdict, setVerdict] = useState<ResultVerdict>('checking');
   const [placing, setPlacing] = useState(false);
-  const [checkingNote, setCheckingNote] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [result, setResult] = useState<RetailOrderResult | null>(null);
   const [errors, setErrors] = useState<Partial<Record<ValidatedField, string>>>({});
@@ -344,6 +354,10 @@ export function CheckoutPage() {
           amount: parsed.amount,
           itemsKey: typeof parsed.itemsKey === 'string' ? parsed.itemsKey : '',
           is_cod: parsed.is_cod === true,
+          // The reserved units must survive the sessionStorage round-trip: this
+          // handle is what tells cart reconciliation which units are already
+          // held by the shopper's own unpaid order.
+          held: parsed.held && typeof parsed.held === 'object' ? (parsed.held as Record<string, number>) : undefined,
         };
       }
       return null;
@@ -357,14 +371,6 @@ export function CheckoutPage() {
     }
     return v;
   });
-  const [verifyAttempt, setVerifyAttempt] = useState(0);
-  const [retrying, setRetrying] = useState(false);
-  const [expired, setExpired] = useState(false);
-  // Escape hatch: a stuck (pending/failed) order must never be a dead end.
-  // After 2-3 manual re-checks or a ~45s window without a resolution, surface
-  // "Start New Order" so the customer can always begin a fresh checkout.
-  const [recheckCount, setRecheckCount] = useState(0);
-  const [showNewOrder, setShowNewOrder] = useState(false);
   // New Shopify-style checkout UI state (layout only — no order data impact).
   const [saveNext, setSaveNext] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
@@ -494,9 +500,6 @@ export function CheckoutPage() {
     setPaymentMethod(next);
     clearPendingKey();
     setErrorMsg('');
-    setExpired(false);
-    setVerdict('checking');
-    setCheckingNote('');
   };
 
   // Persist the partially-filled delivery form so it survives Cart <-> Checkout
@@ -646,12 +649,20 @@ export function CheckoutPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // After a gateway redirect back to #/checkout, ask the secure backend for the
-  // verified payment state — never trust the browser's success redirect/params.
-  // Runs quietly on the already-shown result page: it opens in "checking", does
-  // a short quiet poll (never a separate loading screen), then settles on one
-  // clean result. On success it clears the bag; on definitive failure the order
-  // stays reusable so retry never creates a duplicate.
+  // Returning from the gateway asks the secure backend for the verified payment
+  // state — never the browser's success redirect/params. It runs QUIETLY on the
+  // checkout form the customer is already looking at, and there is no
+  // confirmation/loading screen anywhere in this path any more:
+  //
+  //   confirmed success -> the ONE legitimate result page (setStage('result')),
+  //                        bag cleared, exactly as before.
+  //   cancelled / failed -> the checkout form stays exactly as it was, with an
+  //                        honest inline note. Nothing is charged, nothing is
+  //                        marked paid, and the order stays reserved so the next
+  //                        Pay Now reuses it (or COD converts it) instead of
+  //                        creating a second order.
+  //   still pending      -> the form stays usable with an honest inline note; a
+  //                        genuinely late webhook is still picked up later.
   useEffect(() => {
     if (!paymentCfg.configured) {
       clearPendingKey();
@@ -681,6 +692,7 @@ export function CheckoutPage() {
             order_id: pending.order_id,
             amount: pending.amount,
             itemsKey: typeof pending.itemsKey === 'string' ? pending.itemsKey : '',
+            held: pending.held,
           }
         : null;
     if (pendingLive) {
@@ -714,16 +726,16 @@ export function CheckoutPage() {
         customer: (order.customer as RetailCustomer) ?? undefined,
       });
       addCheckoutHistory(String(order.ref), form.phone);
-      setVerdict('success');
+      setStage('result');
     };
 
+    // A payment that did NOT complete. The checkout form is left intact and
+    // fully usable; only the message changes.
     const settleFailed = (msg?: string) => {
       clearPendingKey();
-      setCheckingNote('');
-      setVerdict('failed');
       setErrorMsg(
         msg ??
-          "Your payment could not be completed and you have not been charged. Your items are still safe in your bag — try paying again or contact us."
+          "Your payment was not completed and you have not been charged. Your items are still safe in your bag — try paying again or choose Cash on Delivery."
       );
     };
 
@@ -734,29 +746,39 @@ export function CheckoutPage() {
         settleSuccess(v.order);
         return 'idle';
       }
+
+      // The reservation is GONE — the expiry sweep or an admin restocked this
+      // order, so it can never be paid for and must never be reused. Drop the
+      // stale handles silently: the customer's form, bag, quantities and promo
+      // are untouched, and the very next Pay Now places a fresh, server-validated
+      // order that reserves stock normally. Nothing is released from here — the
+      // server-side sweep is the only thing that ever returns stock.
+      //
+      // This is read off the ORDER ROW, not off the status label, because
+      // `cashfree-status` reports an abandoned payment as 'pending' (a cancelled
+      // Cashfree order is neither PAID nor ACTIVE, so it returns early) while
+      // still handing back the full row. Checking only `status === 'failed'`
+      // therefore never fired here, and the swept order stayed attached to the
+      // checkout until the customer pressed Pay Now and was refused with
+      // ORDER_EXPIRED — the "This order has expired" dead end.
+      const orderRow = v?.order as Record<string, unknown> | null;
+      if (orderRow?.stock_restored_at) {
+        clearLiveOrderKey();
+        setLiveOrder(null);
+        settleFailed();
+        return 'idle';
+      }
+
       if (v?.status === 'failed') {
-        const o = v.order as Record<string, unknown> | null;
-        if (o?.stock_restored_at) {
-          // The sweep (or an admin) reclaimed this order's stock while payment
-          // was still being confirmed — the reservation is gone, so retrying
-          // could over-sell. Surface the clear message and direct to a new
-          // checkout instead of offering "Try Again".
-          clearLiveOrderKey();
-          setLiveOrder(null);
-          setExpired(true);
-          settleFailed(ORDER_EXPIRED_MESSAGE);
-        } else {
-          settleFailed();
-        }
+        settleFailed();
         return 'idle';
       }
       if (v?.status === 'success') {
         // Gateway reports paid but we couldn't positively verify (e.g. the
-        // caller didn't pass the possession gate). Never loop — the customer
-        // needs an honest, re-checkable state, not a spinner.
-        setVerdict('pending');
-        setCheckingNote(
-          "Your payment appears to have been received. We're still verifying it — re-check below or contact us if it doesn't confirm shortly."
+        // caller didn't pass the possession gate). Never loop, and never claim
+        // it is paid — say so plainly on the checkout form.
+        setErrorMsg(
+          "Your payment appears to have been received. We're still verifying it — if you have been charged your order is safe, and please contact us if this doesn't clear shortly."
         );
         return 'idle';
       }
@@ -764,37 +786,26 @@ export function CheckoutPage() {
     };
 
     const confirm = async () => {
-      setStage('result');
-      setVerdict('checking');
-      setCheckingNote('Confirming your payment…');
       for (let i = 0; i < 3; i++) {
         const done = await attempt();
         if (done === 'idle') return;
         if (cancelled) return;
-        // Short, quiet backoff — the result page is already visible; this is
-        // just a non-blocking re-check on the SAME screen.
+        // Short, quiet backoff. The checkout form is fully usable throughout —
+        // this only improves the odds of catching a slow webhook before the
+        // customer does anything.
         await new Promise((r) => window.setTimeout(r, i === 0 ? 700 : 1200));
         if (cancelled) return;
       }
-      setVerdict('pending');
-      setCheckingNote(
-        "Your payment is still being confirmed. If you have been charged, your order is safe — re-check below or contact us."
+      // Still unresolved. Say so honestly on the form; do NOT open a confirming
+      // screen, do NOT mark the order paid, and leave the bag untouched.
+      setErrorMsg(
+        "Your payment is still being confirmed. If you have been charged, your order is safe — you can pay again or contact us."
       );
     };
     confirm();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paymentCfg.configured, verifyAttempt, clear, removeAppliedPromo]);
-
-  // Time-window escape hatch: if payment never resolves (stuck "Still
-  // Confirming" / "Payment Not Completed"), offer "Start New Order" after a
-  // short wait so the customer is never trapped on a stale result screen.
-  useEffect(() => {
-    if (stage !== 'result' || verdict === 'success') return;
-    if (verdict !== 'pending' && verdict !== 'failed' && verdict !== 'checking') return;
-    const t = window.setTimeout(() => setShowNewOrder(true), 45000);
-    return () => window.clearTimeout(t);
-  }, [stage, verdict]);
+  }, [paymentCfg.configured, clear, removeAppliedPromo]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -831,7 +842,7 @@ export function CheckoutPage() {
 
     const t0 = performance.now();
     try {
-      let order: Pick<RetailOrderResult, 'ref' | 'order_id' | 'total_amount' | 'amount_paid_upfront' | 'is_cod'>;
+      let order: Pick<RetailOrderResult, 'ref' | 'order_id' | 'total_amount' | 'amount_paid_upfront' | 'is_cod' | 'items'>;
 
       if (reuseOrder && liveOrder && liveOrder.itemsKey === itemsKeyOf(items) && !liveOrder.is_cod) {
         // An order already exists and its stock is reserved. Two cases:
@@ -903,6 +914,11 @@ export function CheckoutPage() {
           amount: res.amount_paid_upfront ?? res.total_amount,
           itemsKey: itemsKeyOf(items),
           is_cod: Boolean(res.is_cod),
+          // Exactly the units the server just took off the shelf for this order,
+          // recorded so a return from an abandoned Cashfree session can tell
+          // them apart from stock held by other customers. It is a record of the
+          // existing reservation, never a second one.
+          held: res.is_cod ? undefined : heldStockFromOrderLines(res.items),
         };
         setLiveOrder(liveOrderHandle);
         persistLiveOrder(liveOrderHandle);
@@ -929,9 +945,34 @@ export function CheckoutPage() {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[checkout] Order placement failed:', err);
-      // Keep liveOrder if the order was already created — the next Pay Now
-      // reuses it (no duplicate), so the inline failure is always retryable.
-      setErrorMsg(err instanceof Error ? err.message : "We couldn't place your order. Nothing has been charged — please try again or contact us.");
+      if (err instanceof PaymentSessionError && (err.code === 'ORDER_EXPIRED' || err.code === 'ORDER_NOT_FOUND')) {
+        // The reservation this checkout was reusing is gone (the expiry sweep or
+        // an admin restocked it), so it must never be paid for. Drop the handles
+        // and let the very next Pay Now place a fresh, server-validated order.
+        clearPendingKey();
+        clearLiveOrderKey();
+        setLiveOrder(null);
+      }
+      // Keep liveOrder if the order already exists and is reserved, so
+      // the next Pay Now reuses it (no duplicate) and the failure is retryable.
+      //
+      // An UNKNOWN outcome — the connection dropped or we stopped listening, so
+      // the server may already have committed this order and its reservation —
+      // must never be presented as "nothing was created", and must never invite
+      // an immediate second order. The raw transport text ("Request timed out
+      // after 20000ms") tells the customer nothing actionable, so say what is
+      // actually true instead. createRetailOrder also refuses to create again
+      // while an earlier attempt is unresolved, so pressing Pay Now again cannot
+      // duplicate the order or the reservation.
+      setErrorMsg(
+        err instanceof OrderCreateUnresolvedError
+          ? "Your previous attempt is still being sorted out, so we can't safely start a new order yet — and nothing has been charged. If you were charged, your order is safe; otherwise please contact us and we'll confirm your bag straight away."
+          : isUnknownOutcome(err)
+            ? "We're still confirming whether your order was created. Nothing has been charged and your bag is safe — please try again in a moment, or contact us if you were charged."
+            : err instanceof Error
+              ? err.message
+              : "We couldn't place your order. Nothing has been charged — please try again or contact us."
+      );
       if (stage === 'form') {
         setStage('form');
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -943,7 +984,7 @@ export function CheckoutPage() {
   };
 
   const proceedToPayment = async (
-    order: Pick<RetailOrderResult, 'ref' | 'order_id' | 'total_amount' | 'amount_paid_upfront' | 'is_cod'>
+    order: Pick<RetailOrderResult, 'ref' | 'order_id' | 'total_amount' | 'amount_paid_upfront' | 'is_cod' | 'items'>
   ): Promise<boolean> => {
     /* ------------------------------------------------------------------ *
      * COD short-circuit. The order is already created, confirmed and
@@ -960,7 +1001,6 @@ export function CheckoutPage() {
       window.sessionStorage.removeItem(CHECKOUT_FORM_KEY);
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
       addCheckoutHistory(order.ref, form.phone);
-      setVerdict('success');
       setStage('result');
       return true;
     }
@@ -972,7 +1012,6 @@ export function CheckoutPage() {
       window.sessionStorage.removeItem(CHECKOUT_FORM_KEY);
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
       addCheckoutHistory(order.ref, form.phone);
-      setVerdict('success');
       setStage('result');
       return true;
     }
@@ -1006,6 +1045,14 @@ export function CheckoutPage() {
       amount: order.amount_paid_upfront ?? order.total_amount,
       itemsKey: itemsKeyOf(items),
       phone: String(form.phone ?? '').replace(/\D/g, '').slice(-10),
+      // Units this order reserved. A freshly created order carries the server's
+      // own lines; a retry of an earlier order carries the handle's copy. Either
+      // way it describes the ONE reservation that already exists.
+      held: order.is_cod
+        ? undefined
+        : order.items
+          ? heldStockFromOrderLines(order.items)
+          : liveOrder?.held,
     });
 
     // The moment the session is ready, hand straight to Cashfree — no pause,
@@ -1033,105 +1080,6 @@ export function CheckoutPage() {
       throw new Error("The secure payment page didn't open. Your order has not been charged — please try again.");
     }
     return true;
-  };
-
-  /** Resolves the existing order for a retry — NEVER creates a new one. The
-   *  reservation (and promo/cart state) belongs to the original order, so a
-   *  retry reuses its ref/id/amount. The order is ONLY retried while it still
-   *  matches the current bag (itemsKey) — if the cart has changed since the
-   *  order was placed, it must not be resurrected and paid for a new cart. */
-  const retryHandle = (): LiveOrder | null => {
-    const bagEmpty = items.length === 0;
-    const matchesBag = (key: string) => bagEmpty || key === itemsKeyOf(items);
-    // A COD order has amount_paid_upfront = 0 and never had a payment session,
-    // so it can never be "retried" — there is nothing to retry. Refusing it here
-    // keeps a COD order from ever being handed to the Cashfree retry path.
-    const codGuard = (h: LiveOrder | null): LiveOrder | null =>
-      h && (h.is_cod || paymentMethod === 'cod') ? null : h;
-    if (liveOrder?.order_id && matchesBag(liveOrder.itemsKey)) return codGuard(liveOrder);
-    if (result?.order_id && result?.ref && (result?.total_amount ?? 0) > 0) {
-      return codGuard({ ref: result.ref, order_id: result.order_id, amount: result.amount_paid_upfront ?? result.total_amount, itemsKey: itemsKeyOf(items), is_cod: Boolean(result.is_cod) });
-    }
-    const pending = readPendingPayload();
-    if (pending?.order_id && pending.amount > 0 && matchesBag(pending.itemsKey)) {
-      return codGuard({ ref: pending.ref, order_id: pending.order_id, amount: pending.amount, itemsKey: pending.itemsKey });
-    }
-    return null;
-  };
-
-  const startNewCheckout = () => {
-    clearPendingKey();
-    clearLiveOrderKey();
-    clearResultKey();
-    setLiveOrder(null);
-    setResult(null);
-    setExpired(false);
-    setVerdict('checking');
-    setCheckingNote('');
-    setErrorMsg('');
-    setStage('form');
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
-  };
-
-  /** Retry for a failed payment: ONLY the session-creation step for the SAME
-   *  order, then an immediate redirect — no create_retail_order, no promo/cart
-   *  logic, no shared "confirming" loading screen (the SDK is already warm). */
-  const handleRetryPayment = async () => {
-    if (placingRef.current) return;
-    const handle = retryHandle();
-    if (!handle) {
-      setErrorMsg("We couldn't find the payment session for this order. Please place the order again.");
-      return;
-    }
-    placingRef.current = true;
-    setPlacing(true);
-    setRetrying(true);
-    setErrorMsg('');
-    try {
-      // The SDK download is already cached (preloaded at checkout load + first
-      // Pay Now), so the handoff below is instant once the session returns.
-      preloadCashfreeSdk();
-      const session = await createPaymentSession({
-        orderRef: handle.ref,
-        orderId: handle.order_id,
-        amount: handle.amount,
-        customer: { name: toCustomer(form).name || 'DSLANG Customer', phone: form.phone, email: form.email || undefined },
-      });
-      if (session.status !== 'pending' || !session.paymentSessionId) {
-        throw new Error('The online payment could not be started. Your order has not been charged.');
-      }
-      persistPendingKey({
-        ref: handle.ref,
-        order_id: handle.order_id,
-        amount: handle.amount,
-        itemsKey: itemsKeyOf(items),
-        phone: asDigits(form.phone, 10),
-      });
-      const redirected = await openCashfreeCheckout({
-        paymentSessionId: session.paymentSessionId,
-        environment: session.environment ?? 'TEST',
-        redirectTarget: '_self',
-      });
-      if (!redirected) {
-        throw new Error('The payment window could not be opened. Your order has not been charged.');
-      }
-      await waitForHandoff(4000);
-    } catch (err) {
-      if (err instanceof PaymentSessionError && (err.code === 'ORDER_EXPIRED' || err.code === 'ORDER_NOT_FOUND')) {
-        // The reservation is gone (swept/admin-restocked): drop the retry
-        // handles so a refresh doesn't re-offer a dead order, and let the
-        // "Start New Checkout" CTA take over.
-        clearPendingKey();
-        clearLiveOrderKey();
-        setLiveOrder(null);
-        setExpired(true);
-      }
-      setErrorMsg(err instanceof Error ? err.message : 'The payment could not be started. Your order has not been charged.');
-    } finally {
-      placingRef.current = false;
-      setPlacing(false);
-      setRetrying(false);
-    }
   };
 
   // COD order-confirmation email.
@@ -1192,8 +1140,14 @@ export function CheckoutPage() {
     );
   }
 
-  /* ---- Single result page (returning from Cashfree) ---- */
-  if (stage === 'result' && verdict === 'success' && result) {
+  /* ---- The ONE result page: a CONFIRMED order only. ----
+     Reached exclusively from `setStage('result')`, which now only ever happens
+     after the server positively confirmed a payment (or confirmed a COD order).
+     The obsolete second result screen — "Confirming Payment" / "Still
+     Confirming" / "Payment Not Completed" — has been DELETED, not hidden: a
+     cancelled or unverified payment no longer has a page of its own to sit on,
+     it goes back to the checkout form above. */
+  if (stage === 'result' && result) {
     /* Cash on Delivery is one amount, collected on arrival. Read straight from
        the order row; never recomputed. */
     const codDue = result.amount_due_on_delivery ?? result.total_amount;
@@ -1387,159 +1341,9 @@ export function CheckoutPage() {
     );
   }
 
-  if (stage === 'result') {
-    // Success / pending / still-checking / failed — ONE clean result page.
-    const isSuccess = verdict === 'success';
-    const isChecking = verdict === 'checking';
-    const isPending = verdict === 'pending';
-    const isFailed = verdict === 'failed';
-    // The result page shows ONE paragraph for three different situations:
-    // progress copy while we are still confirming, the failure reason once we
-    // know it, and a generic "not charged" line as a last resort. Only the last
-    // two are errors, so the colour is derived from the state rather than from
-    // the string - the wording stays byte-for-byte what it was.
-    const noteIsError = Boolean(errorMsg) || isFailed;
-    const ref = result?.ref ?? liveOrder?.ref ?? '';
-    const orderId = result?.order_id ?? liveOrder?.order_id ?? '';
-    const amount = result?.total_amount ?? liveOrder?.amount ?? 0;
-
-    return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-5 py-10">
-        <div
-          className="relative flex h-14 w-14 items-center justify-center rounded-full bg-blush"
-          role={isChecking ? 'status' : undefined}
-          aria-live={isChecking ? 'polite' : undefined}
-        >
-          {isSuccess ? (
-            <>
-              <CheckCircle2 size={36} strokeWidth={1.5} className="text-bone animate-scale-in" />
-              <span className="absolute inset-0 rounded-full border border-bone/25 animate-fade-in" aria-hidden />
-            </>
-          ) : isChecking ? (
-            <Loader2 size={32} strokeWidth={1.5} className="animate-spin text-bone" />
-          ) : isPending ? (
-            <Clock size={30} strokeWidth={1.4} className="text-bone" />
-) : (
-          <XCircle size={32} strokeWidth={1.4} className="text-crimson" />
-        )}
-        </div>
-
-        <p className="mt-5 font-label text-[10px] uppercase tracking-ultra text-grey">
-          {isSuccess ? 'Order Confirmed' : isChecking ? 'Payment' : isPending ? 'Payment Pending' : 'Order'}
-        </p>
-        <h1 className="font-display text-4xl md:text-6xl uppercase tracking-wide-2 text-bone leading-none mt-2">
-          {isSuccess ? 'Order Complete' : isChecking ? 'Confirming Payment' : isPending ? 'Still Confirming' : 'Payment Not Completed'}
-        </h1>
-
-        <div className="mt-4 space-y-1 text-sm text-grey">
-          {ref && (
-            <p>
-              Order <span className="font-semibold text-bone">#{ref}</span>
-            </p>
-          )}
-          {amount > 0 && (
-            <p className="font-price text-lg font-bold text-bone tabular-nums">{formatPrice(amount)}</p>
-          )}
-          {orderId && isPending && (
-            <p className="text-[11px] text-grey/70">{orderId}</p>
-          )}
-        </div>
-
-        <p className={`mt-4 text-sm max-w-md leading-relaxed ${noteIsError ? 'text-crimson' : 'text-grey'}`}>
-          {checkingNote || errorMsg ||
-            "Your payment could not be completed and you have not been charged. Your items are still safe in your bag — try paying again or contact us."}
-        </p>
-        {isFailed && !expired && (
-          <p className="mt-2 text-xs text-grey/70 max-w-md leading-relaxed">
-            Nothing has been charged. The order stays reserved for {ref ? `reference #${ref}` : 'you'} so paying again is quick and safe.
-          </p>
-        )}
-
-        <div className="mt-8 flex flex-wrap justify-center gap-3">
-          {!isChecking && (
-            <button
-              type="button"
-              onClick={() => {
-                if (isPending) {
-                  setRecheckCount((n) => n + 1);
-                  if (recheckCount + 1 >= 2) setShowNewOrder(true);
-                  setVerifyAttempt((n) => n + 1);
-                } else if (expired) {
-                  startNewCheckout();
-                } else {
-                  void handleRetryPayment();
-                }
-              }}
-              disabled={placing}
-              className="btn-primary text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4"
-            >
-              {placing ? (
-                <>
-                  <Loader2 size={15} strokeWidth={2} className="animate-spin" /> {retrying ? 'Paying Again…' : 'Placing Order…'}
-                </>
-              ) : isPending ? (
-                'Re-check Status'
-              ) : expired ? (
-                'Start New Checkout'
-              ) : (
-                'Try Again'
-              )}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => navigate('/collections')}
-            className="btn-soft border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
-          >
-            Continue Shopping
-          </button>
-          {/* Track Order is offered from EVERY post-checkout state that still
-              has a live order, not just the success page: a pending payment and
-              a failed payment both leave a real, reserved order behind, and
-              those are exactly the visits where a customer wants to see it.
-              Gated on `!expired` because a swept / restocked order no longer
-              exists to track. TrackOrderPage picks the phone back up from this
-              browser's own checkout history, so nothing is added to the URL. */}
-          {ref && !expired && (isPending || isFailed) && (
-            <button
-              type="button"
-              onClick={() => navigate(`/track-order/${encodeURIComponent(ref)}`)}
-              className="btn-soft border border-bone-dim text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
-            >
-              <Truck size={15} strokeWidth={2} />
-              Track Order
-            </button>
-          )}
-          {showNewOrder && !expired && (isPending || isFailed) && (
-            <button
-              type="button"
-              onClick={startNewCheckout}
-              className="btn-soft border border-bone text-bone text-[14px] uppercase tracking-wide-2 font-semibold px-7 py-4 hover:bg-bone hover:text-paper transition-colors"
-            >
-              Start New Order
-            </button>
-          )}
-        </div>
-        {showNewOrder && !expired && (isPending || isFailed) && (
-          <p className="mt-4 text-[11px] text-grey max-w-md leading-relaxed">
-            Still stuck? Start a fresh order instead — your current bag is untouched and a new reference will be created.
-          </p>
-        )}
-
-        {isFailed && (
-          <p className="mt-6 text-[11px] text-grey">
-            Need help?{' '}
-            <a href="#/contact" className="text-bone underline hover:text-bone transition-colors">Contact us</a>
-            {' '}or{' '}
-            <a href="#/refund-and-cancellation" className="text-bone underline hover:text-bone transition-colors">refund & cancellation policy</a>.
-          </p>
-        )}
-      </div>
-    );
-  }
-
-    return (
-      <div className="shell shell--form py-8">
+  /* ---- Checkout form: also where a CANCELLED payment lands. ---- */
+  return (
+    <div className="shell shell--form py-8">
         <button
           onClick={() => { openCart(); navigate('/'); }}
           className="inline-flex items-center gap-2 text-[14px] uppercase tracking-wide-2 text-grey hover:text-bone transition-colors"
@@ -2070,7 +1874,23 @@ export function CheckoutPage() {
               margins — which the summary block above already used, so the
               button read as belonging to the summary's group instead. Nesting
               it makes the method and the button one unit in the DOM as well as
-              on screen. mt-5 leaves clear air so it never looks welded on. */}
+              on screen. mt-5 leaves clear air so it never looks welded on.
+
+              ALL PROCESSING LIVES INSIDE THIS BUTTON. The moment it is tapped,
+              the label swaps to the existing "Placing Order…" state with the
+              existing Loader2 spinner, for BOTH payment methods — COD, which
+              confirms on this page, and ONLINE, which is creating/reusing the
+              order, opening the Cashfree session and handing the tab over. The
+              button keeps its own box (w-full, same padding, same flex row), the
+              form stays fully visible and usable underneath it, and there is no
+              page-level spinner, overlay, dim or blur anywhere else: the whole
+              wait is reported by this one control.
+
+              `disabled={placing}` plus `placingRef` stop a duplicate Pay Now
+              while the request is in flight. If the order or the session fails
+              before Cashfree opens, `setPlacing(false)` restores this button and
+              the existing inline error is shown; if Cashfree opens, the tab
+              simply leaves with the button still in this state. */}
           <button
             type="submit"
             disabled={placing}
