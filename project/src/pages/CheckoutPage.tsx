@@ -1184,8 +1184,10 @@ export function CheckoutPage() {
         <p className="mt-4 text-sm text-grey max-w-md leading-relaxed">
           Your order <span className="font-semibold text-bone">#{result.ref}</span> is confirmed and recorded.
           {result.is_cod
-            ? ` Pay ${formatPrice(codDue)} to the delivery agent on arrival.`
-            : ' We are processing it and will confirm delivery details soon.'}
+            ? ` Your order total of ${formatPrice(codDue)} is due on delivery.`
+            : result.payment_status === 'success'
+              ? ` Your online payment of ${formatPrice(result.amount_paid_upfront ?? result.total_amount)} has been received.`
+              : ' We are processing it and will confirm delivery details soon.'}
         </p>
 
         <div className="mt-8 w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-5 lg:gap-6 text-left">
@@ -1293,9 +1295,9 @@ export function CheckoutPage() {
               }
             >
               {result.is_cod
-                ? `Order ${result.ref} is confirmed. Pay ${formatPrice(codDue)} to the delivery agent when your order arrives.`
+                ? `Your order total of ${formatPrice(codDue)} is due on delivery.`
                 : result.payment_status === 'success'
-                  ? 'Your payment has been verified and received. We are preparing your order for dispatch.'
+                  ? `Your online payment of ${formatPrice(result.amount_paid_upfront ?? result.total_amount)} has been received. We are preparing your order for dispatch.`
                   : paymentStatusMessage()}
             </div>
 

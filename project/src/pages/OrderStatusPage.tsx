@@ -733,8 +733,8 @@ export function OrderStatusPage() {
 
             <div className="w-full border border-lime-300 bg-lime-50 px-4 py-3 text-xs text-green-800 leading-relaxed">
               {snap.is_cod
-                ? `Order ${snap.ref} is confirmed. Pay ${formatPrice(codDue)} to the delivery agent on arrival.`
-                : 'Your payment has been verified and received. We are preparing your order for dispatch.'}
+                ? `Your order total of ${formatPrice(codDue)} is due on delivery.`
+                : `Your online payment of ${formatPrice(snap.amount_paid_upfront ?? snap.total_amount)} has been received. We are preparing your order for dispatch.`}
             </div>
 
             <div className="panel p-5">
@@ -743,7 +743,7 @@ export function OrderStatusPage() {
               </p>
               <p className="text-xs text-grey leading-relaxed">
                 {snap.is_cod
-                  ? 'This is a Cash on Delivery order. Nothing was charged online — the full amount is collected by the delivery agent on arrival.'
+                  ? 'This is a Cash on Delivery order. Nothing was charged online.'
                   : 'Payment was processed securely and verified server-side against the order total before this confirmation. You will not be charged twice.'}
               </p>
             </div>

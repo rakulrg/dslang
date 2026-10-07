@@ -218,15 +218,23 @@ function addressBlock(customer: Record<string, unknown>): string {
 
 function renderConfirmed(order: Record<string, unknown>): string {
   const c = (order.customer as Record<string, unknown> | null) ?? {};
-  // COD is one sentence, always the same: nothing was collected now and the
-  // full stored remainder is owed on arrival. The retired partial-payment split
-  // — where an order that had already been partly charged got different
-  // wording from one that had not — is removed with the rest of that model.
+  // The one sentence that states the money position, in the same words the
+  // customer's Order Placed screen uses.
+  //
+  // ONLINE: the amount named is `amount_paid_upfront` — the figure the verified
+  // Cashfree webhook actually charged — never the online discount. The previous
+  // copy quoted the DISCOUNT value where the customer expected the amount they
+  // had just paid, and the sentence was additionally gated on a discount
+  // existing at all, so an online order placed without one fell back to a vaguer
+  // line. One sentence, the authoritative amount, every online order.
+  //
+  // COD: nothing has been charged, so this must never say payment was received.
+  // `amount_due_on_delivery` is the stored authoritative remainder, read
+  // verbatim and never recomputed here. The retired partial-payment split is
+  // gone with the rest of that model.
   const paidLine = order.is_cod
-    ? `Your order is confirmed as Cash on Delivery. Please keep ${inr(order.amount_due_on_delivery ?? order.total_amount)} ready for the delivery agent.`
-    : Number(order.payment_discount) > 0
-      ? `Your online payment of ${inr(order.amount_paid_upfront ?? order.total_amount)} has been received.`
-      : 'Your payment has been received.';
+    ? `Your order total of ${inr(order.amount_due_on_delivery ?? order.total_amount)} is due on delivery.`
+    : `Your online payment of ${inr(order.amount_paid_upfront ?? order.total_amount)} has been received.`;
   return `<p style="margin:0 0 12px;">Hi ${esc(c.name) || 'there'},</p>
   <p style="margin:0 0 12px;">Thanks for your DSLANG order <strong>${esc(order.ref)}</strong>. Here's what you ordered:</p>
   ${itemsList(order.items as Array<Record<string, unknown>>)}

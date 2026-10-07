@@ -374,7 +374,7 @@ test('COD 9: no customer-facing screen still advertises a COD advance', () => {
   const status = surfaces[STATUS_PAGE];
   assert.match(status, /Amount due on delivery/);
   // The required copy, on the page a customer lands on after checkout...
-  assert.match(status, /to the delivery agent on arrival/);
+  assert.match(status, /Your order total of \$\{formatPrice\(codDue\)\} is due on delivery\./);
   // ...on the tracker (which leads with the amount due, not a payment history)...
   assert.match(surfaces[TRACK_PAGE], /Cash on Delivery — \$\{formatPrice\(/);
   assert.match(surfaces[TRACK_PAGE], /ready for your delivery partner/);
@@ -495,7 +495,7 @@ test('COD 9: no customer-facing screen still advertises a COD advance', () => {
   );
   // The confirmation email must match.
   assert.match(surfaces[EMAILS], /Pay on delivery/);
-  assert.match(surfaces[EMAILS], /ready for the delivery agent/);
+  assert.match(surfaces[EMAILS], /is due on delivery\./);
 });
 
 test('COD 9b: the COD advance model is gone from every customer-facing surface', () => {
@@ -872,7 +872,7 @@ test('COD 11d: a COD email shows the due amount and never the online discount', 
   assert.match(totals, /if \(isCod\) \{[\s\S]*?\} else \{[\s\S]*?Online payment discount/,
     'payment_discount must only be rendered in the non-COD branch');
   assert.match(totals, /Pay on delivery/);
-  assert.match(em, /Your order is confirmed as Cash on Delivery/);
+  assert.match(em, /Your order total of \$\{inr\(order\.amount_due_on_delivery \?\? order\.total_amount\)\} is due on delivery\./);
 });
 
 /** Returns the body of the `if (isCod) { ... }` branch, brace-matched. */

@@ -471,10 +471,13 @@ export function PaymentReturnPage() {
             <span className="font-label text-[10px] uppercase tracking-wide-2 text-grey font-semibold">Total</span>
             <span className="font-price text-lg font-bold text-bone tabular-nums">{formatPrice(snap.total_amount)}</span>
           </div>
-          {snap.is_cod && (
+          {snap.is_cod ? (
             <p className="mt-2 text-xs text-grey leading-relaxed">
-              This is a Cash on Delivery order. Nothing was charged online — the full
-              amount is collected by the delivery agent on arrival.
+              Your order total of {formatPrice(snap.amount_due_on_delivery ?? snap.total_amount)} is due on delivery.
+            </p>
+          ) : (
+            <p className="mt-2 text-xs leading-relaxed text-green-800">
+              Your online payment of {formatPrice(snap.amount_paid_upfront ?? snap.total_amount)} has been received.
             </p>
           )}
         </div>
