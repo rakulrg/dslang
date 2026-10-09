@@ -203,10 +203,27 @@ Deno.serve(async (req) => {
       // was already put back on the shelf. Inventory is reclaimed later by the
       // expire-stale-orders sweep (expires failed/pending orders older than the
       // window and restocks them exactly once via restock_retail_order_items).
-      await supabase
+      // CAS: a late failure must never clobber a payment that already succeeded.
+      // Cashfree can deliver a terminal FAILED/USER_DROPPED *after* a SUCCESS for
+      // the same order (retry, replayed delivery, out-of-order events). This
+      // handler read the gateway a moment before a concurrent webhook/status poll
+      // flipped the row to `success`, so an unguarded write by id alone would
+      // knock a PAID order back to failed/cancelled. The filters make that write
+      // match zero rows instead — the same CAS principle as the success branch
+      // above. A lost race is a silent no-op here on purpose: the delivery is
+      // still acknowledged 200 so Cashfree does not retry a stale event forever.
+      const failureFlip = await supabase
         .from('retail_orders')
         .update({ payment_status: 'failed', order_status: 'cancelled' })
-        .eq('id', order.id);
+        .eq('id', order.id)
+        .neq('payment_status', 'success')
+        // Same independent COD guard as the success branch: a full-COD order must
+        // never be settled through the gateway at all, in either direction.
+        .neq('payment_status', 'cod_pending')
+        .select('id');
+      if (failureFlip.error) {
+        return new Response('{"ok":false,"error":"Order update failed."}', { status: 502, headers: { 'Content-Type': 'application/json' } });
+      }
     }
   }
 

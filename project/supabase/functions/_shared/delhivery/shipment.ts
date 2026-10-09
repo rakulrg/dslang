@@ -242,11 +242,24 @@ export async function processEligibleShipment(
     return failOn({ ok: false, error: 'This order is not in a shippable state.' });
   }
 
-  // --- Provider ready? Fail-closed (never guess creds / never fake a result). --
-  if (!config.configured) {
-    const msg =
-      'Delhivery is not configured. Add DELHIVERY_API_TOKEN + DELHIVERY_ENV ' +
-      '(staging|production) secrets and redeploy.';
+  // --- Provider ready for a REAL parcel? Fail-closed (never guess creds /
+  //     never fake a result, and never ship to the wrong Delhivery environment).
+  //     `config.production` is `env === 'production' && token.length > 0`, so a
+  //     merely non-empty token is NOT enough: DELHIVERY_ENV unset, misspelt or
+  //     explicitly `staging` resolves to staging and is refused here. Previously
+  //     this gated on `config.configured` (token non-empty) alone, so staging
+  //     would have created a real staging waybill, stamped `awb_number` and
+  //     `order_status = 'shipped'` on it — an order the admin and the customer
+  //     both believe is shipped while the courier will never touch the parcel.
+  //     Matches the intent documented in delhivery-order/index.ts and the
+  //     staging-first contract in _shared/delhivery/client.ts.
+  if (!config.production) {
+    const msg = config.configured
+      ? 'Delhivery is configured for STAGING (DELHIVERY_ENV is not "production"). ' +
+        'Shipment creation is refused so no test waybill can be mistaken for a real ' +
+        'shipment. Set DELHIVERY_ENV=production (and redeploy) to enable shipping.'
+      : 'Delhivery is not configured for production. Set DELHIVERY_ENV=production and ' +
+        'DELHIVERY_API_TOKEN as Edge Function secrets, then redeploy.';
     await recordFailure(supabase, order.id, msg, 'delhivery');
     return failOn({ ok: false, error: msg });
   }

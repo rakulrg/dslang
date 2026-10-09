@@ -215,11 +215,60 @@ Deno.serve(async (req) => {
     // double-selling a unit that was already put back on the shelf. Inventory
     // is reclaimed later by the expire-stale-orders sweep, which expires any
     // failed/pending order older than the window and restocks it exactly once.
-    await supabase
+    // CAS: a late failure must never clobber a payment that already succeeded.
+    // Cashfree can deliver a terminal FAILED/USER_DROPPED *after* a SUCCESS for
+    // the same order (retry, duplicate/replayed delivery, out-of-order gateway
+    // events). This handler read the gateway a moment before a concurrent
+    // webhook flipped the row to `success`, so an unguarded write by id alone
+    // would knock a PAID order back to failed/cancelled — losing the money fact
+    // and stranding a reservation. The filters make that write match zero rows
+    // instead. Same principle as the success branch's `.neq('cod_pending')` CAS
+    // above: whoever arrives second cannot overwrite the other.
+    const { data: failedRows, error: failureError } = await supabase
       .from('retail_orders')
       .update({ payment_status: 'failed', order_status: 'cancelled' })
-      .eq('id', order.id);
-    return json({ verified: false, status: 'failed', order });
+      .eq('id', order.id)
+      .neq('payment_status', 'success')
+      // Same independent COD guard as the success branch: a full-COD order must
+      // never be settled through the gateway at all, in either direction.
+      .neq('payment_status', 'cod_pending')
+      .select('id');
+
+    // Distinguish "the write failed" from "the write matched zero rows". Without
+    // this a database error (network, RLS, transient) would look identical to a
+    // lost CAS, and the fall-through below would report `status: 'failed'` for a
+    // failure that was never actually recorded — telling a customer their payment
+    // did not go through when the row may well still be unpaid, or may already
+    // have been paid concurrently. 502 + 'pending' is this file's existing
+    // convention for a transport-level failure, and it never claims a verdict.
+    if (failureError) {
+      return json({ verified: false, status: 'pending', order }, 502);
+    }
+
+    if ((failedRows?.length ?? 0) > 0) {
+      const { data: failedOrder } = await supabase
+        .from('retail_orders')
+        .select('*')
+        .eq('id', order.id)
+        .maybeSingle();
+      return json({ verified: false, status: 'failed', order: failedOrder ?? order });
+    }
+
+    // Zero rows = we lost the race. Re-read and report the row's REAL state, so
+    // a customer whose payment actually succeeded is never shown "failed".
+    const { data: raced } = await supabase
+      .from('retail_orders')
+      .select('*')
+      .eq('id', order.id)
+      .maybeSingle();
+    const racedPayment = String(raced?.payment_status ?? '');
+    if (racedPayment === 'success') {
+      return json({ verified: true, status: 'paid', order: raced ?? order });
+    }
+    if (racedPayment === 'cod_pending') {
+      return json({ verified: false, status: 'pending', order: raced ?? order });
+    }
+    return json({ verified: false, status: 'failed', order: raced ?? order });
   }
 
   return json({ verified: false, status: 'pending', order });
