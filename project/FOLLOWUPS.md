@@ -103,3 +103,65 @@ No production code, no database, no migrations, no frontend changes. Test
 scaffolding only. Note that `scripts/guest-claim-flow.test.mjs` already pins the
 **frontend** contract against migration 19; this work covers the **database**
 fixtures, which is the gap it leaves.
+
+---
+
+## Reconcile 6 orphaned units from the 2026-10-10 test-order deletions
+
+**Status:** open, blocked on a finance/gateway decision. Nothing applied.
+
+Full record: **`db-snapshots/RECON-20261010-orphaned-test-order-stock.md`**
+
+### What is wrong
+
+Five orders that had reached `payment_status='success'` were deleted from the
+admin panel. `delete_retail_order` restocks before deleting, but
+`restock_retail_order_items` declines paid orders by design, so the delete
+removed the row while `product_sizes.stock` stayed withdrawn. 6 units across 4
+variants are now orphaned, and invisible: `variant_inventory_v` derives
+`committed` from live open orders, so once the rows are gone the units appear in
+neither `available` nor `committed`.
+
+| Product code | Colour | Size | Units |
+|---|---|---|---|
+| DS-ORG-0-3 | Black | M | 2 |
+| DS-ORG-0-3 | Black | L | 1 |
+| DS-WF-0-3 | Maroon | M | 1 |
+| DS-FF-0-3 | Green | M | 2 |
+
+### Why it is still open
+
+Restoring stock asserts the goods were never sold. For a captured payment that is
+a financial claim, and it is not yet established whether these were sandbox
+captures or real money:
+
+- `CASHFREE_ENV` could not be confirmed from non-secret evidence (it is a
+  secret; `supabase secrets list` exposes names/digests only). Every Edge
+  Function path defaults to `TEST`/sandbox when unset, which is consistent with
+  sandbox but does not prove it.
+- No refund was issued or recorded. If the payments were real, refund must come
+  first and stock second.
+
+### What "done" means
+
+1. Cashfree environment confirmed as test/sandbox for those orders.
+2. Finance confirms no refund is owed (or a refund has been completed with a
+   reference).
+3. `adjust_variant_stock` called once per variant above, with a note linking to
+   the reconciliation doc. Do NOT use `restock_retail_order_items`: it
+   correctly refuses paid orders, and that refusal is the safety property this
+   whole incident turns on.
+
+### Related (fix is merged, migration NOT applied)
+
+`supabase/migrations/20261022000000_dslang_block_paid_order_deletion.sql`
+prevents recurrence: `delete_retail_order` refuses captured payments and refuses
+to strand a reservation; `delete_paid_retail_order` is the separately
+authorized, audited path for confirmed test orders. Covered by
+`scripts/paid-order-deletion.test.mjs`. **Not applied to production**; the
+migration must be pushed with `supabase db push --linked` as a separate,
+explicitly approved step.
+
+### Out of scope
+
+No refunds, no payment-status changes, no manual restocking, no deletes.

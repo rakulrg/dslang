@@ -481,6 +481,19 @@ export async function adminCountRetailOrders(options?: RetailOrderQuery): Promis
  * `delete_retail_order` RPC. The RPC authorizes against admin_users and
  * reverses any promo-code usage the order consumed. Throws if the order does
  * not exist (so the UI never pretends a delete happened).
+ *
+ * The RPC REFUSES (raises, and nothing is deleted) when deleting would either
+ * destroy payment evidence or strand reserved stock:
+ *   - the order has a captured payment (`paid_at` set, or `payment_status` is
+ *     `success` / `paid` / `cod_partial_paid`) — refund or cancel it instead; a
+ *     confirmed *test* order can go through `delete_paid_retail_order`, which is
+ *     separately authorized and fully audited;
+ *   - the order still holds stock (`stock_restored_at` is null) and is
+ *     `shipped` / `delivered` / `refunded` / `rto`, where stock is never
+ *     returned.
+ *
+ * The refusal message is surfaced verbatim to the caller, so the UI can show
+ * exactly why an order could not be removed.
  */
 export async function adminDeleteRetailOrder(orderId: string): Promise<void> {
   const { data, error } = await supabase.rpc('delete_retail_order', {
