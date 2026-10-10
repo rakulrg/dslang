@@ -143,12 +143,113 @@ physically on the shelf all along and only their *record* was lost.
 
 ## 5. Prevention
 
-Deployed fix (pending approval): `delete_retail_order` now refuses to delete an
-order with a captured payment, and refuses to strand a reservation on a
-terminal-status order. A separately authorized `delete_paid_retail_order`
-exists for confirmed test orders: admin-only, requires a reason and a
-payment-settlement attestation, snapshots the full payment and inventory record
-to `admin_activity` before deleting, and **never restocks**.
+Deployed fix (applied to production on 2026-10-10): `delete_retail_order` now
+refuses to delete an order with a captured payment, and refuses to strand a
+reservation on a terminal-status order. A separately authorized
+`delete_paid_retail_order` exists for confirmed test orders: admin-only,
+requires a reason and a payment-settlement attestation, snapshots the full
+payment and inventory record to `admin_activity` before deleting, and **never
+restocks**.
 
 This report is the reconciliation half of that split: deletion is auditable,
 inventory returns only as a separate, deliberate, audited act.
+
+---
+
+## Reconciliation Completed — 2026-10-10
+
+**Reference:** `RECON-20261010`
+**Reason:** Test order deleted without refund - no customer impact.
+**Actor:** `0c7509bc-9852-47ab-b395-50373ec2b258` (the single registered
+administrator, confirmed present in `admin_users`)
+
+### Root cause
+
+Five paid test orders were deleted through the admin panel. `delete_retail_order`
+restocked before deleting, but `restock_retail_order_items` declines paid orders
+by design, so the delete removed the order row while its reserved stock stayed
+withdrawn from `product_sizes.stock`. Six units across four variants were left
+missing from inventory, and — because `variant_inventory_v` derives `committed`
+from live open orders — invisible to the ops dashboard once the rows were gone.
+
+Deleted test orders:
+
+- `DSL-R-1DF91C4F`
+- `DSL-R-31F1F07D`
+- `DSL-R-30C46B0E`
+- `DSL-R-8B3E63BE`
+- `DSL-R-1A5A627D`
+
+### Payment environment confirmed
+
+**All five transactions were confirmed in the Cashfree Test Environment.** Two
+were located first (`DSL-R-1DF91C4F` Rs 597, `DSL-R-31F1F07D` Rs 348); the
+remaining three were then located after deriving the expected charge as
+`total_amount - 50` (a rule verified deterministically against all 15 surviving
+online orders). The two located transactions independently establish that the
+deployed application creates payment orders against the Cashfree **sandbox**,
+so **no real money was captured and no refund is owed**.
+
+### Adjustments completed
+
+All four were performed through the authenticated admin interface.
+
+| # | Variant | Stock before | Stock after | Units | Recorded at (UTC) |
+|---|---|---|---|---|---|
+| 1 | DS-ORG-0-3 / Black / M | 4 | 6 | +2 | `2026-10-10T14:41:15.755550+00:00` |
+| 2 | DS-ORG-0-3 / Black / L | 9 | 10 | +1 | `2026-10-10T14:41:15.874617+00:00` |
+| 3 | DS-WF-0-3 / Maroon / M | 2 | 3 | +1 | `2026-10-10T14:41:51.775954+00:00` |
+| 4 | DS-FF-0-3 / Green / M | 8 | 10 | +2 | `2026-10-10T14:42:16.088686+00:00` |
+
+Timestamps are the exact `stock_movements.created_at` values recorded by the
+database at the time of each adjustment; they were not estimated.
+
+### Verification results (read-only, post-adjustment)
+
+| Check | Result |
+|---|---|
+| Total stock | 478 -> 484 (+6) |
+| Inventory variants | 100 (unchanged) |
+| Negative-stock variants | 0 |
+| Stock movements created | 4, no duplicates |
+| Legitimate open orders / reserved units | 4 orders, 4 units, all intact |
+| Orders total | 19 (unchanged) |
+| `DSL100` used_count | 5 (unchanged) |
+| Shipments / AWBs / tracking IDs / refunds / payment-status changes | none |
+| Scheduler settings | unchanged |
+
+The four open orders and their reservations were confirmed untouched, including
+`DSL-R-8BE198F4`'s DS-ORG-0-3 / Black / M reservation, which was deliberately
+excluded from this correction.
+
+### Audit trail limitation
+
+The four stock movements were generated through the **product variant stock
+editor** (`set_product_size_stock`) rather than through `adjust_variant_stock`.
+Consequently:
+
+- The movements carry the trigger's generic text
+  `Stock released (order failed / cancelled / restocked)` and
+  `movement_type = 'RELEASE'`, not an adjustment-specific type.
+- The movements **do not carry the `RECON-20261010` reference** or the intended
+  explanatory note; `note` is empty on all four.
+- `source_type` is `order` rather than the `manual` that `adjust_variant_stock`
+  writes.
+- **No `adjust_stock` entries exist in `admin_activity`** for these corrections.
+  The only related rows are three product-level `UPDATE` entries carrying no
+  variant, quantity or reason.
+- The `actor` on all four movements is correct and is the registered
+  administrator, so authorization was respected throughout.
+
+The stock correction is complete and correct. The *narrative* trail is not:
+the database contains no record linking this reconciliation to `RECON-20261010`
+or to the five deleted test orders. **This Markdown section documents the
+reconciliation; it does not repair or replace the missing database audit
+trail.**
+
+A one-off `admin_activity` note cannot be added through any existing supported
+mechanism. `admin_activity` has no INSERT/UPDATE/DELETE policy, and
+`record_admin_activity` is `REVOKE … FROM public` with no grant to
+`authenticated` or `service_role` — deliberately, so that audit entries cannot be
+forged by any client. Closing that gap would require a schema change, which was
+deliberately not made.
