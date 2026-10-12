@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { Minus, Plus, ShoppingBag, CheckCircle2, Zap, Share2, Check, Link as LinkIcon, X, ChevronDown } from 'lucide-react';
 import { ProductCard, PRODUCT_IMAGE_FALLBACK } from '@/components/ProductCard';
+import { PaymentMethodsRow } from '@/components/PaymentMethodIcons';
 import { Reveal } from '@/components/Reveal';
 import {
   fetchProducts,
@@ -605,7 +606,22 @@ const colorInStock = colorSizes.some((s) => Number(s.stock ?? 0) >= 1);
                 aria-disabled={!stockAvailable}
                 className="w-full btn-dark text-[15px] lg:text-[14px] uppercase tracking-wide-2 font-semibold py-4 lg:py-3.5 px-5 active:scale-[0.98]"
               >
-                <Zap size={15} strokeWidth={1.8} /> {stockAvailable ? 'Buy Now' : 'OUT OF STOCK'}
+                <Zap size={15} strokeWidth={1.8} />
+                {/* The label stays a text node inside its own nowrap span so the
+                    logo group beside it can never push the wordmark onto a second
+                    line. `btn-dark` already sets `white-space: nowrap` on the
+                    button; the span just guarantees it for the label alone. */}
+                <span className="whitespace-nowrap">{stockAvailable ? 'Buy Now' : 'OUT OF STOCK'}</span>
+                {/* G Pay / PhonePe / Paytm, inline right of the label — the same
+                    compact group the checkout CTA uses, so the promise is made
+                    here and honoured on the page it leads to.
+
+                    Shown ONLY while the button can actually take money: OUT OF
+                    STOCK no-ops (performAdd is a no-op), so advertising payment
+                    apps on a dead button would be a claim the button cannot keep.
+                    `shrink-0` keeps the marks at full size and lets the label
+                    give way first if a narrow viewport ever forces the issue. */}
+                {stockAvailable && <PaymentMethodsRow variant="button" />}
               </button>
             </div>
 

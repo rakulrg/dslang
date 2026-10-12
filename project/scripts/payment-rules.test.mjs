@@ -593,9 +593,41 @@ test('PAYMENT UI: online reads as primary, COD stays a clear secondary', () => {
   const icons = read('src/components/PaymentMethodIcons.tsx');
   assert.match(icons, /const MARK_H = 26;/, 'the payment marks must be visible ink at 26px');
   assert.match(icons, /const MARK_GAP = 11;/);
-  // …but the marks stay unboxed: real brand colour is what makes the row
-  // trustworthy, and chips would fight the crimson SAVE badge.
+  // …but the marks on the CARD stay unboxed: real brand colour is what makes
+  // the row trustworthy, and chips would fight the crimson SAVE badge.
+  //
+  // Comments stripped by the same convention as `apiCode` — the inline notes
+  // here are long, and their length must not decide whether the assertion
+  // reaches the code it is about.
+  const iconCode = icons.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   assert.doesNotMatch(icons, /border[^"']*rounded[^"']*>\s*\{MARKS\.map/, 'the logo marks must stay unboxed');
+  assert.match(iconCode, /\{MARKS\.map/, 'the card row still renders the full accepted set');
+  // The BUTTON is the single place a disc IS used, and deliberately so. On
+  // --color-bone (#1a1a1a) and --color-crimson (#d20a2e) the raw marks measure
+  // 1.39:1 (Paytm) to 2.49:1 — under the 3:1 AA threshold for non-text content
+  // — so each mark gets a white circle behind it. This is a container, never a
+  // redraw: the artwork keeps its true brand colour, and the card row above is
+  // untouched by it.
+  //
+  // `rounded-[50%]` is asserted literally rather than via `rounded-full`,
+  // because a perfect circle is the stated design and the two happen to render
+  // the same today. `object-contain` is asserted too: G Pay is 1.17:1 and
+  // PhonePe/Paytm are square, so any fixed width or height would distort one
+  // of the three.
+  assert.match(
+    iconCode,
+    /if \(variant === 'button'\)[\s\S]{0,400}?\{ONLINE_MARKS\.map[\s\S]{0,400}?rounded-\[50%\] bg-white/,
+    'the in-button marks must sit in white circles for contrast',
+  );
+  assert.match(iconCode, /object-contain/, 'the in-button marks must not be distorted');
+  // The circles stay in the 14-16px band the design specifies, and the mark
+  // inside keeps a constant 2px inset from the rim at both breakpoints.
+  assert.match(iconCode, /h-\[15px\] w-\[15px\][^"]*sm:h-\[16px\] sm:w-\[16px\]/, 'circle diameter must be 15px, 16px from sm');
+  assert.match(iconCode, /h-\[11px\] w-\[11px\][^"]*sm:h-\[12px\] sm:w-\[12px\]/, 'mark must be 11px, 12px from sm');
+  // The button group is the three APP marks only — no card lockup on a control
+  // sized for three, and no mark on the OUT OF STOCK / COD / placing states.
+  assert.match(iconCode, /const ONLINE_MARKS = \[/, 'the button group must be its own list');
+  assert.doesNotMatch(iconCode, /ONLINE_MARKS = \[[\s\S]*?CARD_LOCKUP\.src/, 'no card lockup in the button group');
 });
 
 test('PAYMENT UI: the pay button is bound to the method it submits', () => {
@@ -620,6 +652,21 @@ test('PAYMENT UI: the pay button is bound to the method it submits', () => {
     ctaCode,
     /paymentCfg\.configured\s*\?\s*\(\s*`Pay Now\s.\s\$\{formatPrice\(onlineTotal\)\}`/,
     'the CTA must reflect the selected method (online branch)',
+  );
+  // The CTA is label and amount ONLY. The ONLINE PAYMENT card immediately above
+  // it already carries the full accepted set, so marks on the button too would
+  // state the same thing twice inside one payment block. This also keeps the
+  // button a single centred line, which is what `justify-center` was already
+  // for — a bare template literal, with no sibling element beside it.
+  assert.doesNotMatch(
+    ctaCode,
+    /PaymentMethodsRow/,
+    'the pay CTA must not repeat the payment logos already on the ONLINE card',
+  );
+  assert.match(
+    checkout,
+    /extra=\{<PaymentMethodsRow \/>\}/,
+    'the ONLINE PAYMENT card keeps the full accepted set',
   );
   // Breathing room between the options and the button, so the two read as
   // separate actions rather than one fused block.

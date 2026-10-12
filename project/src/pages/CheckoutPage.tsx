@@ -1893,6 +1893,22 @@ export function CheckoutPage() {
               before Cashfree opens, `setPlacing(false)` restores this button and
               the existing inline error is shown; if Cashfree opens, the tab
               simply leaves with the button still in this state. */}
+          {/* Label and amount ONLY — no payment marks on this control.
+              The ONLINE PAYMENT card directly above this button already
+              carries the full accepted set (G Pay, PhonePe, Paytm, Visa,
+              Mastercard), so repeating three of them here stated the same
+              thing twice inside the same payment block, at a moment the
+              shopper is reading an amount rather than choosing a method.
+
+              That card is the single place the marks belong: it sits beside
+              the choice it qualifies, and unlike this button it does not
+              change when COD is selected. Rendered bare, the CTA is one
+              centred line again — `flex ... justify-center` was already
+              doing that, so centring costs nothing and the crimson box,
+              padding, type and the amount itself are untouched.
+
+              COD is unaffected: its branch is tested before the online one
+              and falls through to a label with no marks either. */}
           <button
             type="submit"
             disabled={placing}

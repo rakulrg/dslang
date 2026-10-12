@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Minus, Plus, Trash2, ArrowRight, Check, Loader2, ShoppingBag, Tag } from 'lucide-react';
 import { useD2cCart } from '@/lib/d2cCart';
+import { PaymentMethodsRow } from '@/components/PaymentMethodIcons';
 import { useCartDrawer } from '@/lib/cartDrawer';
 import { useRouter } from '@/lib/router';
 import { formatPrice } from '@/lib/catalog';
@@ -357,7 +358,15 @@ export function CartDrawer() {
                   onClick={goToCheckout}
                   className="w-full btn-primary text-[14px] uppercase tracking-wide-2 font-semibold py-4 px-5"
                 >
-                  Checkout <ArrowRight size={15} strokeWidth={2} />
+                  {/* Order inside the button is: label, payment logos, arrow.
+                      The arrow stays LAST and keeps its own `shrink-0`, so it
+                      cannot be squeezed or displaced by the logo group — it is
+                      the control's affordance and has to stay at the far right
+                      edge. The logos go between label and arrow rather than
+                      after it for the same reason. */}
+                  <span className="whitespace-nowrap">Checkout</span>
+                  <PaymentMethodsRow variant="button" />
+                  <ArrowRight size={15} strokeWidth={2} className="shrink-0" />
                 </button>
                 <button
                   onClick={closeCart}
