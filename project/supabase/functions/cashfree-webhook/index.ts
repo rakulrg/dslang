@@ -177,6 +177,13 @@ Deno.serve(async (req) => {
         // reached with a stale event for a COD row, the CAS matches zero rows
         // and nothing changes.
         .neq('payment_status', 'cod_pending')
+        // A late confirmation must never REVIVE an order that is no longer
+        // awaiting fulfilment. An admin-approved cancellation flips order_status
+        // to 'cancelled' while an unpaid order's payment_status stays 'pending',
+        // and a gateway success arriving after that would otherwise match the
+        // predicates above and drag the cancelled order back to 'processing'.
+        // Only a still-pending/processing order may be settled here.
+        .in('order_status', ['pending', 'processing'])
         .select('id');
       if (flip.error) {
         return new Response('{"ok":false,"error":"Order update failed."}', { status: 502, headers: { 'Content-Type': 'application/json' } });

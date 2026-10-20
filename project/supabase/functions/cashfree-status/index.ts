@@ -182,6 +182,13 @@ Deno.serve(async (req) => {
       // must never be settled through the gateway, so the CAS matches zero rows
       // for one even if this handler were reached with a stale event.
       .neq('payment_status', 'cod_pending')
+      // A late confirmation must never REVIVE an order that is no longer
+      // awaiting fulfilment. An admin-approved cancellation flips order_status
+      // to 'cancelled' while an unpaid order's payment_status stays 'pending',
+      // and a gateway success arriving after that would otherwise match the
+      // predicates above and drag the cancelled order back to 'processing'.
+      // Only a still-pending/processing order may be settled here.
+      .in('order_status', ['pending', 'processing'])
       // Idempotency with the webhook: whichever confirmation runs FIRST stamps
       // the grace window; a redundant poll (or late duplicate webhook) matches
       // zero rows here via `.is('auto_ship_at', null)` and never extends it.

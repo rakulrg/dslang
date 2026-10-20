@@ -93,6 +93,15 @@ export interface MyOrder {
   created_at: string;
   total_amount: number;
   amount_due_on_delivery?: number;
+  /**
+   * What was actually charged online for this order (20260930000000).
+   *
+   * NOT the same as `total_amount`: an online order carries a payment discount,
+   * so `amount_paid_upfront = total_amount - payment_discount`. It is the honest
+   * answer to "how much have I paid?", which the cancellation dialog must give.
+   * Zero for a COD order. Optional so a row predating the column still reads.
+   */
+  amount_paid_upfront?: number;
   order_status: string;
   payment_status: string;
   total_qty: number;
@@ -130,6 +139,28 @@ export interface MyOrder {
    * Nullable/optional so a frontend deployed ahead of migration 19 still reads.
    */
   claim_declined_at?: string | null;
+  /**
+   * Cancellation REQUEST state for this order, when one exists (or existed).
+   *
+   * A request is NOT a cancellation: `order_status` stays whatever it was while
+   * a request is pending, and only an administrator's approval cancels the
+   * order. These fields are a read-only view of the customer's own request row
+   * (RLS: `user_id = auth.uid()`), joined by the caller in My Orders.
+   *
+   * Optional so an order with no request — or a frontend deployed ahead of the
+   * cancellation migration — still reads.
+   */
+  cancellation?: {
+    id: string;
+    request_status: 'pending' | 'approved' | 'rejected' | 'withdrawn' | string;
+    reason?: string | null;
+    requested_at: string;
+    decided_at?: string | null;
+    decision_note?: string | null;
+    refund_status?: string | null;
+    refund_amount?: number | null;
+    refund_completed_at?: string | null;
+  } | null;
   items: {
     name: string;
     /** Immutable product code recorded on the order. The key lib/orderImages.ts
@@ -185,7 +216,7 @@ export async function fetchMyOrders(proofPhone?: string): Promise<MyOrder[]> {
     // Degrading the shipping detail is a far better failure than degrading a
     // decision the customer gave.
     const SELECT_BASE =
-      'id, ref, created_at, total_amount, amount_due_on_delivery, order_status, payment_status, total_qty, is_cod, user_id, items, customer';
+      'id, ref, created_at, total_amount, amount_due_on_delivery, amount_paid_upfront, order_status, payment_status, total_qty, is_cod, user_id, items, customer';
     const SELECT_SHIPPING =
       'shipping_status, courier_name, awb_number, tracking_id, tracking_url, shipped_at, delivered_at';
 
@@ -225,12 +256,15 @@ export async function fetchMyOrders(proofPhone?: string): Promise<MyOrder[]> {
     }
     if (error || !Array.isArray(data)) return [];
 
-    const owned = (data as Record<string, any>[]).map((row) => ({
+    // Annotated as `MyOrder` so the optional `cancellation` field added below is
+    // a legal property of the mapped object, not just of the interface.
+    const owned: MyOrder[] = (data as Record<string, any>[]).map((row): MyOrder => ({
       id: String(row.id ?? ''),
       ref: String(row.ref ?? ''),
       created_at: String(row.created_at ?? ''),
       total_amount: Number(row.total_amount ?? 0),
       amount_due_on_delivery: Number(row.amount_due_on_delivery ?? 0),
+      amount_paid_upfront: Number(row.amount_paid_upfront ?? 0),
       order_status: String(row.order_status ?? 'pending'),
       payment_status: String(row.payment_status ?? ''),
       total_qty: Number(row.total_qty ?? 0),
@@ -262,6 +296,22 @@ export async function fetchMyOrders(proofPhone?: string): Promise<MyOrder[]> {
 : [],
     }));
 
+    // Cancellation REQUESTS for the caller's own orders. Read under RLS
+    // (`user_id = auth.uid()`), so only this account's requests come back. A
+    // missing migration or any error yields no requests — the order list must
+    // still render — so this is a separate, best-effort query.
+    const requests = await fetchMyCancellationRequests(sb);
+
+    // Attach the newest request per order. A request is display-only state: it
+    // never changes `order_status`, and an approved one is reflected by the
+    // order status that the approval itself wrote.
+    if (requests.size > 0) {
+      for (const o of owned) {
+        const req = requests.get(o.ref);
+        if (req) o.cancellation = req;
+      }
+    }
+
     // Unclaimed guest candidates, when the shopper supplied a proof number.
     // Absent on failure - a missing migration or a wrong phone must not take
     // the owned orders down with it.
@@ -274,6 +324,49 @@ export async function fetchMyOrders(proofPhone?: string): Promise<MyOrder[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * The caller's own cancellation requests, keyed by order ref.
+ *
+ * Reads `order_cancellation_requests` under RLS (`user_id = auth.uid()`), so no
+ * other account's request is ever returned. Newest request per order wins when
+ * an order has history (e.g. a rejected request followed by a new one).
+ *
+ * Best-effort by design: any error (including the table not existing yet on a
+ * frontend deployed ahead of the migration) returns an empty map, and the order
+ * list is unaffected.
+ */
+async function fetchMyCancellationRequests(
+  sb: Awaited<ReturnType<typeof getSupabase>>,
+): Promise<Map<string, NonNullable<MyOrder['cancellation']>>> {
+  const out = new Map<string, NonNullable<MyOrder['cancellation']>>();
+  try {
+    const { data, error } = await sb
+      .from('order_cancellation_requests')
+      .select('id, order_ref, request_status, reason, requested_at, decided_at, decision_note, refund_status, refund_amount, refund_completed_at')
+      .order('requested_at', { ascending: false })
+      .limit(100);
+    if (error || !Array.isArray(data)) return out;
+    for (const row of data as Record<string, any>[]) {
+      const ref = String(row.order_ref ?? '');
+      if (!ref || out.has(ref)) continue; // newest-first: keep the first seen
+      out.set(ref, {
+        id: String(row.id ?? ''),
+        request_status: String(row.request_status ?? 'pending'),
+        reason: row.reason ?? null,
+        requested_at: String(row.requested_at ?? ''),
+        decided_at: row.decided_at ?? null,
+        decision_note: row.decision_note ?? null,
+        refund_status: row.refund_status ?? null,
+        refund_amount: row.refund_amount == null ? null : Number(row.refund_amount),
+        refund_completed_at: row.refund_completed_at ?? null,
+      });
+    }
+  } catch {
+    // ignore — a missing table must never blank the order list
+  }
+  return out;
 }
 
 /**
@@ -474,5 +567,52 @@ export function clearSavePromptDismissal(): void {
     window.localStorage.removeItem(DISMISS_KEY);
   } catch {
     // ignore
+  }
+}
+
+/**
+ * Ask for an order to be cancelled — a REQUEST, never a cancellation.
+ *
+ * Submitting changes nothing about the order: the RPC writes only a row into
+ * `order_cancellation_requests`. No order status, payment status, refund state
+ * or stock is touched, and no inventory is released. An administrator then
+ * approves or rejects it; only approval cancels the order and returns the stock.
+ *
+ * Ownership and eligibility are enforced server-side (`request_order_cancellation`
+ * requires `user_id = auth.uid()` and refuses shipped/terminal orders), so the
+ * UI's hidden button is a convenience, not the authority.
+ *
+ * Returns `ok: false` with a `reason` for the ordinary outcomes (not the owner,
+ * already shipped, no such order) rather than throwing, matching the guest-claim
+ * helpers above: these are user-facing flows where a refusal is a normal answer.
+ */
+export interface CancellationRequestOutcome {
+  ok: boolean;
+  reason: string;
+  request_id?: string;
+}
+
+export async function requestOrderCancellation(
+  ref: string,
+  reason?: string,
+): Promise<CancellationRequestOutcome> {
+  const trimmed = String(reason ?? '').trim();
+  try {
+    const sb = await getSupabase();
+    const { data, error } = await sb.rpc('request_order_cancellation', {
+      p_ref: ref,
+      p_reason: trimmed || null,
+    });
+    if (error) {
+      return { ok: false, reason: String(error.message || 'Could not submit the request. Please try again.') };
+    }
+    const res = (data ?? {}) as Record<string, unknown>;
+    return {
+      ok: res.ok === true,
+      reason: String(res.reason ?? ''),
+      request_id: typeof res.request_id === 'string' ? res.request_id : undefined,
+    };
+  } catch {
+    return { ok: false, reason: 'Could not reach the server. Please try again.' };
   }
 }

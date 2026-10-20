@@ -477,6 +477,123 @@ export async function adminCountRetailOrders(options?: RetailOrderQuery): Promis
 }
 
 /**
+ * A cancellation REQUEST awaiting (or already decided by) an administrator.
+ *
+ * Deliberately a SEPARATE record from the order: `request_status` here is not
+ * `order_status`, and `refund_status` here is not `payment_status`. The order
+ * only changes when an admin approves — see `adminDecideCancellation`.
+ */
+export interface CancellationRequestRow {
+  id: string;
+  order_id: string;
+  order_ref: string;
+  user_id: string;
+  reason: string | null;
+  request_status: 'pending' | 'approved' | 'rejected' | 'withdrawn' | string;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  stock_released_at: string | null;
+  refund_status: 'none' | 'not_applicable' | 'refund_pending' | 'refund_completed' | string;
+  refund_amount: number | null;
+  refund_completed_at: string | null;
+}
+
+/** The cancellation queue, newest first. RLS returns all rows to an admin. */
+export async function adminListCancellationRequests(
+  options?: { statuses?: string[] },
+): Promise<CancellationRequestRow[]> {
+  let q = supabase.from('order_cancellation_requests').select('*');
+  if (options?.statuses && options.statuses.length > 0) {
+    q = q.in('request_status', [...options.statuses]);
+  }
+  const { data, error } = await q.order('requested_at', { ascending: false }).limit(200);
+  if (error) throw new Error(describeSupabaseError(error, 'Could not load cancellation requests.'));
+  return (data as CancellationRequestRow[]) ?? [];
+}
+
+/**
+ * The orders behind a set of ids, keyed by id.
+ *
+ * The cancellation queue shows facts that live on the ORDER (customer, how it
+ * was paid, how much has been collected, whether a parcel exists) alongside the
+ * request's own reason and timestamps. Rather than denormalise all of that onto
+ * the request row, the panel joins here — one extra read, under the admin RLS,
+ * for exactly the orders it is about to display.
+ */
+export async function adminFetchRetailOrdersByIds(ids: string[]): Promise<Record<string, RetailOrder>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length === 0) return {};
+  const { data, error } = await supabase.from('retail_orders').select('*').in('id', unique);
+  if (error) throw new Error(describeSupabaseError(error, 'Could not load the orders for these requests.'));
+  const out: Record<string, RetailOrder> = {};
+  for (const row of (data as RetailOrder[]) ?? []) out[row.id] = row;
+  return out;
+}
+
+/**
+ * Approve or reject a cancellation request via the admin-only
+ * `decide_order_cancellation` RPC.
+ *
+ * The RPC re-checks `admin_users` server-side and REVALIDATES the order's
+ * current state: an approval is refused (returning `ok: false`) when a shipment
+ * now exists or the order is terminal, so a stale request can never ship a
+ * cancellation past a parcel that already left. Only a successful approval
+ * cancels the order and releases stock — exactly once, through the existing
+ * `restock_retail_order_items`. A rejection leaves the order untouched.
+ */
+export interface CancellationDecisionResult {
+  ok: boolean;
+  reason: string;
+  refund_status?: string;
+  refund_amount?: number | null;
+}
+
+export async function adminDecideCancellation(
+  requestId: string,
+  approve: boolean,
+  note?: string,
+): Promise<CancellationDecisionResult> {
+  const trimmed = String(note ?? '').trim();
+  const { data, error } = await supabase.rpc('decide_order_cancellation', {
+    p_request_id: requestId,
+    p_approve: approve,
+    p_note: trimmed || null,
+  });
+  if (error) throw new Error(describeSupabaseError(error, 'Could not record the decision.'));
+  const res = (data ?? {}) as Record<string, unknown>;
+  return {
+    ok: res.ok === true,
+    reason: String(res.reason ?? ''),
+    refund_status: typeof res.refund_status === 'string' ? res.refund_status : undefined,
+    refund_amount: typeof res.refund_amount === 'number' ? res.refund_amount : (res.refund_amount ?? null) as number | null,
+  };
+}
+
+/**
+ * Record that a MANUAL refund for an approved cancellation was actually paid.
+ *
+ * DSLANG has no automated refund path, so this does not move money: it marks an
+ * already-performed refund as complete and, only for a genuine online capture on
+ * a cancelled order, sets `payment_status = 'refunded'`. Nothing here ever
+ * guesses that a refund happened.
+ */
+export async function adminCompleteCancellationRefund(
+  requestId: string,
+  note?: string,
+): Promise<{ ok: boolean; reason: string }> {
+  const trimmed = String(note ?? '').trim();
+  const { data, error } = await supabase.rpc('complete_order_cancellation_refund', {
+    p_request_id: requestId,
+    p_note: trimmed || null,
+  });
+  if (error) throw new Error(describeSupabaseError(error, 'Could not mark the refund complete.'));
+  const res = (data ?? {}) as Record<string, unknown>;
+  return { ok: res.ok === true, reason: String(res.reason ?? '') };
+}
+
+/**
  * Permanently deletes a single retail order via the admin-only
  * `delete_retail_order` RPC. The RPC authorizes against admin_users and
  * reverses any promo-code usage the order consumed. Throws if the order does

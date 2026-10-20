@@ -165,6 +165,8 @@ decline_retail_guest_order:
     'guest-order DECLINE: the counterpart to claim_retail_guest_order. When a shopper is shown an unlinked guest order matching their email and answers "not mine", this stores that decision. It writes claim_declined_at and nothing else, and is bounded three ways: one named ref only (never a bulk update), only an order that is still unclaimed and not already declined, and the same email + 10-digit phone proof a claim requires — so a guesser of the email cannot permanently hide a real customer\'s order from their own account. Without it, the "not mine" answer could only be stored in the browser, where a cache clear would resurrect the prompt forever.',
   list_retail_guest_candidates:
     'READ-ONLY discovery of the shopper\'s OWN unclaimed guest orders for My Orders, replacing the email-only row grant that migration 20 removed. It requires the caller\'s JWT email to match the order\'s guest email AND a caller-supplied 10-digit phone to match the phone on the order — the same two proofs claim_retail_guest_order demands, so nothing is discoverable that could not already have been claimed. It writes nothing, and its projection carries no id, no customer jsonb and no items, so it exposes no delivery or basket detail and returns nothing that could address a row through another endpoint. Declined orders are excluded.',
+  request_order_cancellation:
+    'customer cancellation REQUEST: the shopper asks for their OWN order to be cancelled. It writes exactly one row into public.order_cancellation_requests and NOTHING else — no order_status, no payment_status, no stock, no refund — so the order is completely unchanged until an administrator approves. It requires an authenticated OWNER (user_id = auth.uid()), refuses shipped/terminal orders, and refuses a second live request for the same order. Approval and the resulting refund tracking are separate admin-gated RPCs, so this one carries no admin gate by design.',
 };
 
 test('PRIVILEGES: every function granted to anon or authenticated was located', () => {
@@ -329,13 +331,19 @@ test('PRIVILEGES: no migration grants a table to anon or authenticated beyond th
   // Only the listed tables may be directly reachable. Everything else must go
   // through a gated RPC, otherwise a plain customer could read the whole
   // catalogue/inventory/order table straight from PostgREST.
-  const allowed = new Set(['retail_orders', 'customer_profiles', 'webhook_receive', 'admin_users']);
+  const allowed = new Set(['retail_orders', 'customer_profiles', 'webhook_receive', 'admin_users', 'order_cancellation_requests']);
   // admin_users is here for a read-only reason: read_own_admin lets a signed-in
   // user read their OWN single row and that is what checkIsAdmin() depends on
   // to decide what the Admin UI renders. Migration 18 strips every write
   // privilege from anon and authenticated and keeps only this SELECT, and it
   // is the write paths -- not this grant -- that scripts/admin-users-privileges
   // .test.mjs proves behaviourally against a real database.
+  //
+  // order_cancellation_requests is SELECT-only for authenticated, and RLS
+  // restricts that SELECT to the caller's OWN requests (`user_id = auth.uid()`)
+  // or an admin. Every write is revoked and goes through the admin-gated
+  // decide/complete RPCs, so this grant exposes nothing a customer did not
+  // themselves create.
   const offenders = [];
 
   for (const { name, sql } of migrations) {

@@ -38,6 +38,7 @@ Bell,
 Calendar,
 Mail,
 Info,
+Ban,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
@@ -74,6 +75,11 @@ import {
   type ProductInput,
   type RetailOrderQuery,
   adminSetOrderShipping,
+  adminListCancellationRequests,
+  adminFetchRetailOrdersByIds,
+  adminDecideCancellation,
+  adminCompleteCancellationRefund,
+  type CancellationRequestRow,
 } from '@/lib/admin';
 import { hasPublishColumns, isRetailVisible } from '@/lib/catalog';
 import type { CatalogProduct, HeroSlideRow, ProductColorRow, RetailOrder } from '@/lib/types';
@@ -2447,6 +2453,19 @@ function maskEmail(email: string): string {
   return `${head}${'•'.repeat(Math.max(1, name.length - 2))}@${domain}`;
 }
 
+/**
+ * Mask a customer phone for a shared admin screen.
+ *
+ * The queue is reviewed on a shared screen, so it shows enough to identify the
+ * order (the last four digits) and no more; full PII stays behind opening the
+ * order itself. Consistent with `maskEmail` above.
+ */
+function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 4) return '•'.repeat(digits.length || 1);
+  return `${'•'.repeat(digits.length - 4)}${digits.slice(-4)}`;
+}
+
 type OrderTabKey = 'new' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded';
 
 /** The manual courier + AWB form for one order. */
@@ -2528,6 +2547,358 @@ const TAB_EMPTY_TITLE: Record<OrderTabKey, string> = {
   cancelled: 'No cancelled orders',
   refunded: 'No refunds yet',
 };
+
+/**
+ * The cancellation-request queue.
+ *
+ * A customer's request is a REQUEST: it authorises nothing by itself. This panel
+ * is where an operator approves or rejects it, and it shows, per request, both
+ * sides of the decision:
+ *
+ *   - the request's own facts (ref, reason, when it was asked, current
+ *     request_status), and
+ *   - the ORDER's live facts joined in (customer, payment method and status,
+ *     amount collected, whether a parcel exists).
+ *
+ * The split matters. The queue must not present a pending request as though the
+ * order were already cancelled, so `request_status` is shown as its own badge
+ * and the order's own status sits beside it. Approval additionally revalidates
+ * server-side and refuses if a shipment now exists, so the "Approve" button is a
+ * request to decide, never a guarantee.
+ *
+ * Refunds are MANUAL here (DSLANG has no automated refund path): an approved
+ * request that owes money sits in "refund pending" until an operator confirms
+ * the money actually moved, via the separate "Mark refund completed" action. The
+ * order's `payment_status` only becomes 'refunded' at that point.
+ */
+const REFUND_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  none: { label: 'No refund tracked', cls: 'bg-grey/15 text-grey' },
+  not_applicable: { label: 'Nothing to refund', cls: 'bg-grey/15 text-grey' },
+  refund_pending: { label: 'Refund pending (manual)', cls: 'bg-amber-100 text-amber-700' },
+  refund_completed: { label: 'Refund completed', cls: 'bg-green-600/10 text-green-700' },
+};
+
+const REQUEST_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  pending: { label: 'Pending review', cls: 'bg-amber-100 text-amber-700' },
+  approved: { label: 'Approved', cls: 'bg-green-600/10 text-green-700' },
+  rejected: { label: 'Rejected', cls: 'bg-grey/15 text-grey' },
+  withdrawn: { label: 'Withdrawn', cls: 'bg-grey/15 text-grey' },
+};
+
+function CancellationRequestsPanel({ onChanged }: { onChanged?: () => void }) {
+  const { confirm: requestConfirm, dialog: confirmDialog } = useConfirm();
+  const [requests, setRequests] = useState<CancellationRequestRow[] | null>(null);
+  const [orders, setOrders] = useState<Record<string, RetailOrder>>({});
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [view, setView] = useState<'pending' | 'all'>('pending');
+  const [message, setMessage] = useState('');
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const rows = await adminListCancellationRequests(
+        view === 'pending' ? { statuses: ['pending'] } : undefined,
+      );
+      setRequests(rows);
+      // Join the orders the queue is about, so the operator sees the customer,
+      // payment and shipment facts without opening each order separately.
+      const joined = await adminFetchRetailOrdersByIds(rows.map((r) => r.order_id));
+      setOrders(joined);
+    } catch (err) {
+      setRequests([]);
+      setError(err instanceof Error ? err.message : describeSupabaseError(err, 'Could not load cancellation requests.'));
+    }
+  }, [view]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (!message) return;
+    const t = window.setTimeout(() => setMessage(''), 3500);
+    return () => window.clearTimeout(t);
+  }, [message]);
+
+  const decide = (req: CancellationRequestRow, approve: boolean) => {
+    const o = orders[req.order_id];
+    const refunded = req.refund_status === 'refund_pending';
+    requestConfirm({
+      title: approve ? 'Approve cancellation' : 'Reject cancellation',
+      message: approve
+        ? `Approve cancellation of ${req.order_ref}? This cancels the order and releases its reserved stock.` +
+          (refunded || (o && (o.is_cod !== true && (o.payment_status === 'success' || o.paid_at)) && Number(o.amount_paid_upfront ?? 0) > 0)
+            ? ' Any amount paid will be tracked as a MANUAL refund that you must process and confirm separately.'
+            : '')
+        : `Reject the cancellation request for ${req.order_ref}? The order and its payment state stay exactly as they are.`,
+      confirmLabel: approve ? 'Approve' : 'Reject',
+      onConfirm: () => void runDecision(req, approve),
+    });
+  };
+
+  const runDecision = async (req: CancellationRequestRow, approve: boolean) => {
+    setBusyId(req.id);
+    setError('');
+    try {
+      const res = await adminDecideCancellation(req.id, approve, (notes[req.id] ?? '').trim() || undefined);
+      if (!res.ok) {
+        // The server revalidated and refused (a parcel appeared, the order is
+        // terminal). Say exactly that; do not pretend a decision was made.
+        setError(
+          res.reason === 'shipment_created'
+            ? `${req.order_ref} has already shipped — it can no longer be cancelled. Reject the request instead.`
+            : res.reason === 'already_cancelled'
+              ? `${req.order_ref} was already cancelled elsewhere.`
+              : 'The decision could not be applied. Refresh and try again.',
+        );
+        return;
+      }
+      setMessage(
+        approve
+          ? `${req.order_ref} cancelled.` +
+            (res.refund_status === 'refund_pending'
+              ? ` Refund of ${inrOrderTotal(Number(res.refund_amount))} is PENDING manual processing.`
+              : '')
+          : `Request for ${req.order_ref} rejected.`,
+      );
+      setNotes((n) => {
+        const next = { ...n };
+        delete next[req.id];
+        return next;
+      });
+      await load();
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not record the decision.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const completeRefund = (req: CancellationRequestRow) => {
+    requestConfirm({
+      title: 'Mark refund completed',
+      message:
+        `Confirm the refund for ${req.order_ref} (${inrOrderTotal(Number(req.refund_amount))}) has actually been ` +
+        'paid to the customer. This records it as done — it does not move money.',
+      confirmLabel: 'Mark completed',
+      onConfirm: () => void runCompleteRefund(req),
+    });
+  };
+
+  const runCompleteRefund = async (req: CancellationRequestRow) => {
+    setBusyId(req.id);
+    setError('');
+    try {
+      const res = await adminCompleteCancellationRefund(req.id);
+      if (!res.ok) {
+        setError('That refund could not be marked complete. Refresh and try again.');
+        return;
+      }
+      setMessage(`Refund for ${req.order_ref} marked completed.`);
+      await load();
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not mark the refund complete.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (requests === null) {
+    return (
+      <div className="bg-white border border-line rounded p-4">
+        <div className="flex justify-center py-6"><LoadingDots /></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-line rounded overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3 sm:p-4 border-b border-line">
+        <div className="flex items-center gap-2">
+          <Ban size={16} strokeWidth={2} className="text-crimson" />
+          <h3 className="font-display text-base uppercase tracking-wide-2 text-bone">Cancellation requests</h3>
+          {requests.length > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-grey/15 text-grey">{requests.length}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setView('pending')}
+            className={`text-[11px] uppercase tracking-wide-2 font-semibold px-3 py-1.5 rounded border transition-colors ${
+              view === 'pending' ? 'bg-teal-700 text-white border-teal-700' : 'bg-white text-bone-dim border-line hover:border-bone'
+            }`}
+          >
+            Pending
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('all')}
+            className={`text-[11px] uppercase tracking-wide-2 font-semibold px-3 py-1.5 rounded border transition-colors ${
+              view === 'all' ? 'bg-teal-700 text-white border-teal-700' : 'bg-white text-bone-dim border-line hover:border-bone'
+            }`}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="text-[11px] uppercase tracking-wide-2 font-semibold text-bone-dim hover:text-bone border border-line rounded px-3 py-1.5 transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="m-3 sm:m-4 bg-crimson/5 border border-crimson/20 text-crimson text-sm px-4 py-3 rounded">{error}</div>}
+      {message && (
+        <div className="m-3 sm:m-4 flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 text-sm px-4 py-3 rounded">
+          <Check size={14} strokeWidth={2.5} /> {message}
+        </div>
+      )}
+
+      {requests.length === 0 ? (
+        <p className="p-4 text-sm text-grey">
+          {view === 'pending' ? 'No cancellation requests awaiting review.' : 'No cancellation requests yet.'}
+        </p>
+      ) : (
+        <div className="divide-y divide-line">
+          {requests.map((req) => {
+            const o = orders[req.order_id];
+            const rs = REQUEST_STATUS_LABEL[req.request_status] ?? { label: req.request_status, cls: 'bg-grey/15 text-grey' };
+            const refund = REFUND_STATUS_LABEL[req.refund_status] ?? { label: req.refund_status, cls: 'bg-grey/15 text-grey' };
+            const payLabel = o ? PAYMENT_STATUS_LABEL[o.payment_status]?.label ?? o.payment_status : '—';
+            const osLabel = o ? ORDER_STATUS_LABEL[o.order_status]?.label ?? o.order_status : '—';
+            const collected = o
+              ? o.is_cod === true || o.payment_status === 'cod_pending'
+                ? 0
+                : o.payment_status === 'success' || o.payment_status === 'paid'
+                  ? Number(o.amount_paid_upfront ?? o.total_amount ?? 0)
+                  : 0
+              : 0;
+            const shipped = o ? hasAwb(o) || isPostHandoff(shippingStatusOf(o)) : false;
+            const pending = req.request_status === 'pending';
+            return (
+              <div key={req.id} className="p-3 sm:p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-label text-sm font-extrabold tracking-wide-2 text-ink">{req.order_ref}</span>
+                    <span className={`text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-0.5 rounded ${rs.cls}`}>{rs.label}</span>
+                    <span className={`text-[10px] uppercase tracking-wide-2 font-semibold px-2 py-0.5 rounded ${refund.cls}`}>{refund.label}</span>
+                  </div>
+                  <span className="text-[11px] text-grey">
+                    Requested {formatOrderDate(req.requested_at)}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-[11px]">
+                  <div>
+                    <p className="uppercase tracking-ultra text-grey">Customer</p>
+                    <p className="text-bone mt-0.5 truncate">
+                      {o?.customer?.name ?? '—'}
+                      {o?.customer?.phone ? ` · ${maskPhone(o.customer.phone)}` : ''}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-ultra text-grey">Payment method</p>
+                    <p className="text-bone mt-0.5">{o ? (o.is_cod === true || o.payment_status === 'cod_pending' ? 'Cash on delivery' : 'Online') : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-ultra text-grey">Payment status</p>
+                    <p className="text-bone mt-0.5">{payLabel}</p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-ultra text-grey">Amount paid</p>
+                    <p className="text-bone mt-0.5 tabular-nums">{inrOrderTotal(collected)}</p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-ultra text-grey">Shipment</p>
+                    <p className="text-bone mt-0.5">{shipped ? 'Shipped / parcel exists' : 'Not shipped'}</p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-ultra text-grey">Order status</p>
+                    <p className="text-bone mt-0.5">{osLabel}</p>
+                  </div>
+                  {req.decided_at && (
+                    <div>
+                      <p className="uppercase tracking-ultra text-grey">Decided</p>
+                      <p className="text-bone mt-0.5">{formatOrderDate(req.decided_at)}</p>
+                    </div>
+                  )}
+                  {req.refund_amount != null && (
+                    <div>
+                      <p className="uppercase tracking-ultra text-grey">Refund amount</p>
+                      <p className="text-bone mt-0.5 tabular-nums">{inrOrderTotal(Number(req.refund_amount))}</p>
+                    </div>
+                  )}
+                </div>
+
+                {req.reason && (
+                  <p className="text-[11px] text-bone-dim border-l-2 border-line pl-2 leading-relaxed">
+                    <span className="uppercase tracking-ultra text-grey">Reason: </span>
+                    {req.reason}
+                  </p>
+                )}
+                {req.decision_note && (
+                  <p className="text-[11px] text-bone-dim border-l-2 border-line pl-2 leading-relaxed">
+                    <span className="uppercase tracking-ultra text-grey">Decision note: </span>
+                    {req.decision_note}
+                  </p>
+                )}
+
+                {pending ? (
+                  <div className="space-y-2">
+                    <input
+                      value={notes[req.id] ?? ''}
+                      onChange={(e) => setNotes((n) => ({ ...n, [req.id]: e.target.value }))}
+                      placeholder="Decision note (optional) — shown to the customer on rejection"
+                      className="w-full border border-line bg-white px-3 py-2 text-sm text-bone rounded focus:border-bone focus:outline-none"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={busyId === req.id}
+                        onClick={() => decide(req, true)}
+                        className="inline-flex items-center gap-1.5 bg-teal-700 text-white text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-teal-900 transition-colors disabled:opacity-50"
+                      >
+                        <Check size={13} strokeWidth={2.5} /> Approve cancellation
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busyId === req.id}
+                        onClick={() => decide(req, false)}
+                        className="inline-flex items-center gap-1.5 border border-line text-bone-dim text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:border-bone hover:text-bone transition-colors disabled:opacity-50"
+                      >
+                        <X size={13} strokeWidth={2.5} /> Reject
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  req.refund_status === 'refund_pending' && (
+                    <button
+                      type="button"
+                      disabled={busyId === req.id}
+                      onClick={() => completeRefund(req)}
+                      className="inline-flex items-center gap-1.5 border border-green-300 text-green-700 text-[11px] uppercase tracking-wide-2 font-semibold px-4 py-2 rounded hover:bg-green-50 transition-colors disabled:opacity-50"
+                    >
+                      <Check size={13} strokeWidth={2.5} /> Mark refund completed
+                    </button>
+                  )
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {confirmDialog}
+    </div>
+  );
+}
 
 function RetailOrdersPanel() {
   const [orders, setOrders] = useState<RetailOrder[] | null>(null);
@@ -2955,6 +3326,10 @@ function RetailOrdersPanel() {
 
   return (
     <div className="space-y-3">
+      {/* Cancellation requests sit above the ordinary order workflow: a request
+          is a decision waiting on an operator, not another list to browse. */}
+      <CancellationRequestsPanel onChanged={refreshCounts} />
+
       {/* Workflow tabs with live per-tab counts */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
         {ORDER_TABS.map((def) => {

@@ -164,12 +164,20 @@ export async function processEligibleShipment(
 
   // Idempotent claim (provider-neutral sentinel) with CAS — only one sweep may
   // win; retries see alreadyShipped and don't double-create.
+  //
+  // `order_status` is part of the CAS on purpose. A cancellation approved by an
+  // admin between the read above and this write flips the row to 'cancelled';
+  // without this predicate the claim would still match and a parcel would be
+  // created for a cancelled order. Requiring a still-shippable status means the
+  // cancelled order can never win the claim, so the loser sees "in progress"
+  // and re-checks (falling through to the conflict report below).
   const claim = await supabase
     .from('retail_orders')
     .update({ shiprocket_order_id: CREATING_SENTINEL, last_ship_attempt_at: new Date().toISOString() })
     .eq('id', order.id)
     .is('shiprocket_order_id', null)
     .is('awb_number', null)
+    .in('order_status', [...SHIPPABLE_STATUSES])
     .select('id');
   if (claim.error || !claim.data || claim.data.length !== 1) {
     const recheck = await supabase
@@ -306,7 +314,16 @@ export async function processEligibleShipment(
   let { error: updateError } = await supabase
     .from('retail_orders')
     .update(patch)
-    .eq('id', order.id);
+    .eq('id', order.id)
+    // Final CAS on the same predicate as the claim. The claim already required a
+    // shippable status, but an admin can approve a cancellation in the window
+    // between the provider call and this write. Without this predicate the patch
+    // would overwrite `order_status = 'cancelled'` with 'shipped' — a cancelled,
+    // restocked order silently flipped back to shipped. Matching zero rows here
+    // means the cancellation won the race; it is reported explicitly below and
+    // never hidden.
+    .in('order_status', [...SHIPPABLE_STATUSES])
+    .select('id');
 
   // `shipping_status` arrives with its migration. Deployed ahead of that
   // migration, PostgREST rejects the entire write — including the waybill, which
@@ -321,11 +338,44 @@ export async function processEligibleShipment(
       const retry = await supabase
         .from('retail_orders')
         .update(basePatch)
-        .eq('id', order.id);
+        .eq('id', order.id)
+        .in('order_status', [...SHIPPABLE_STATUSES])
+        .select('id');
       updateError = retry.error ?? null;
     }
   }
-  if (updateError) {
+
+  // A CLEAN write that matched ZERO rows is not an error from PostgREST — it is
+  // the lost race. Detect it explicitly so a cancelled order is never left
+  // looking shipped, and so the operator is told to reconcile in Delhivery.
+  if (!updateError) {
+    const live = await supabase
+      .from('retail_orders')
+      .select('order_status, awb_number')
+      .eq('id', order.id)
+      .maybeSingle();
+    const status = String(live.data?.order_status ?? '');
+    if (status !== 'shipped' && status !== 'delivered') {
+      // The waybill exists at Delhivery but the order did NOT become shipped.
+      // Record the conflict on the row itself (best-effort) and surface it.
+      await supabase
+        .from('retail_orders')
+        .update({
+          ship_attempt_error:
+            'Cancellation won the race: waybill ' + result.awb +
+            ' was created at Delhivery but the order is ' + (status || 'unknown') +
+            '. Reconcile the parcel in the Delhivery dashboard — do not re-ship.',
+          last_ship_attempt_at: new Date().toISOString(),
+        })
+        .eq('id', order.id);
+      return failOn({
+        ok: false,
+        error:
+          'Shipment was created at Delhivery (waybill ' + result.awb +
+          ') but the order was cancelled first, so it was not marked shipped. Reconcile the parcel in Delhivery.',
+      });
+    }
+  } else {
     // Shipment IS live at Delhivery — never lose the waybill. Flag for review.
     const rescue = await supabase
       .from('retail_orders')

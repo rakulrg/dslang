@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Package, UserRound, Truck, MapPin, Info } from 'lucide-react';
+import { Package, UserRound, Truck, MapPin, Info, Clock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useRouter } from '@/lib/router';
-import { fetchMyOrders, claimGuestOrder, declineGuestOrder, type MyOrder } from '@/lib/account';
+import {
+  fetchMyOrders,
+  claimGuestOrder,
+  declineGuestOrder,
+  requestOrderCancellation,
+  type MyOrder,
+  type CancellationRequestOutcome,
+} from '@/lib/account';
 import { formatPrice } from '@/lib/catalog';
 import { useOrderImages, imageForItem } from '@/lib/orderImages';
 import { setTrackHint } from '@/lib/trackHint';
@@ -10,13 +17,105 @@ import {
   NO_AWB_NOTICE,
   awbOf,
   hasAwb,
+  isPostHandoff,
   shippingStatusLabel,
   shippingStatusOf,
   trackingLinkFor,
 } from '@/lib/shipping';
 import { LoadingDots } from '@/components/LoadingDots';
 import { GuestOrderConfirmCard } from './orderConfirm/GuestOrderConfirmCard';
+import { CancellationRequestDialog } from './orderConfirm/CancellationRequestDialog';
 import { formatOrderDate } from './orderConfirm/formatOrderDate';
+
+/**
+ * Can this order be offered a cancellation request?
+ *
+ * This mirrors — and is WEAKER than — the server check inside
+ * `request_order_cancellation`, which is the real authority. It exists only so
+ * the button does not appear where the answer is already known to be no:
+ *
+ *   - an owned order only (a guest candidate is not this account's to cancel,
+ *     and there is no guest cancellation flow in this release);
+ *   - nothing at or past courier handoff, and no stored AWB or shipped_at — a
+ *     parcel that exists cannot be recalled through this flow;
+ *   - not already terminal (`cancelled` / `refunded`);
+ *   - and no request already live: a pending one is shown instead of the button,
+ *     because asking twice would only produce a duplicate error.
+ */
+function canRequestCancellation(o: MyOrder): boolean {
+  if (o.guest || o.candidate) return false;
+  if (o.cancellation?.request_status === 'pending') return false;
+  if (hasAwb(o) || o.shipped_at || isPostHandoff(shippingStatusOf(o))) return false;
+  if (['shipped', 'delivered', 'rto', 'cancelled', 'refunded'].includes(o.order_status)) {
+    return false;
+  }
+  return true;
+}
+
+/** How the order was paid, in customer words. Kept in one place for the dialog. */
+function paymentMethodLabel(o: MyOrder): string {
+  if (o.is_cod || o.payment_status === 'cod_pending') return 'Cash on delivery';
+  if (o.payment_status === 'success' || o.payment_status === 'paid') return 'Paid online';
+  if (o.payment_status === 'failed') return 'Online payment (failed)';
+  return 'Online payment (pending)';
+}
+
+/**
+ * What has actually been collected so far, in rupees.
+ *
+ * A COD order has collected nothing online, however it is later settled. A paid
+ * online order reports the amount actually charged — `amount_paid_upfront`, which
+ * is `total_amount` minus any online-payment discount — falling back to the
+ * order total only for a row that predates the column.
+ */
+function amountCollected(o: MyOrder): number {
+  if (o.is_cod || o.payment_status === 'cod_pending') return 0;
+  if (o.payment_status === 'success' || o.payment_status === 'paid') {
+    const charged = Number(o.amount_paid_upfront ?? 0);
+    return charged > 0 ? charged : Number(o.total_amount ?? 0);
+  }
+  return 0;
+}
+
+/** The one-line customer-facing status of a request that already exists. */
+function cancellationStatusLine(c: NonNullable<MyOrder['cancellation']>): {
+  tone: string;
+  title: string;
+  body: string;
+} {
+  switch (c.request_status) {
+    case 'pending':
+      return {
+        tone: 'border-amber-300 bg-amber-50 text-amber-900',
+        title: 'Cancellation requested — awaiting admin review',
+        body: 'Your order is unchanged for now. We\'ll update this once an administrator reviews the request.',
+      };
+    case 'approved':
+      return {
+        tone: 'border-green-300 bg-green-50 text-green-800',
+        title: 'Cancellation approved',
+        body: c.refund_status === 'refund_pending'
+          ? 'Your order has been cancelled. Any amount paid is being refunded separately and may take a few working days.'
+          : c.refund_status === 'refund_completed'
+            ? 'Your order has been cancelled and the refund has been processed.'
+            : 'Your order has been cancelled.',
+      };
+    case 'rejected':
+      return {
+        tone: 'border-line-2 bg-white text-bone',
+        title: 'Cancellation request declined',
+        body: c.decision_note
+          ? `Your order stays as it is. Note from our team: ${c.decision_note}`
+          : 'Your order stays as it is and will continue to be processed as normal.',
+      };
+    default:
+      return {
+        tone: 'border-line-2 bg-white text-bone-dim',
+        title: 'No active cancellation request',
+        body: '',
+      };
+  }
+}
 
 function statusBadge(o: MyOrder): { label: string; tone: string } {
   const paid = o.payment_status === 'success';
@@ -51,6 +150,21 @@ export function MyOrdersPage() {
   // claim_declined_at). Persisting the postponement would hide the question
   // forever on the strength of one dismissed card.
   const [deferred, setDeferred] = useState<string[]>([]);
+  /**
+   * The order whose cancellation-request dialog is open, if any.
+   *
+   * One at a time by design: the dialog is a decision about a single order, and
+   * holding a ref — not a boolean — means a reload that reorders the list cannot
+   * silently point the open dialog at a different order.
+   */
+  const [cancelFor, setCancelFor] = useState<MyOrder | null>(null);
+  /**
+   * Per-ref outcome line for a submit that the server refused (already
+   * requested, shipped in the meantime, not eligible). The request itself is a
+   * durable row and is shown from `o.cancellation`; this only carries the
+   * transient "why did nothing happen" message.
+   */
+  const [cancelNote, setCancelNote] = useState<Record<string, string>>({});
   // Product pictures for every order line, resolved from the public catalogue by
   // product code + colour. The order rows carry no image URL, so this is the one
   // source for every order surface (see lib/orderImages.ts).
@@ -185,6 +299,44 @@ export function MyOrdersPage() {
         return { ok: true };
       }
       return { ok: false, error: res.error };
+    },
+    [load],
+  );
+
+  /**
+   * Send a cancellation REQUEST for one order.
+   *
+   * Nothing more than a request row is written — the order, its payment state
+   * and its reserved stock are untouched until an administrator approves. The
+   * server re-checks ownership and eligibility, so an `ok:false` here is a real
+   * refusal (a parcel appeared, the order is terminal, it is not this account's)
+   * and is surfaced verbatim rather than swallowed.
+   */
+  const handleRequestCancellation = useCallback(
+    async (o: MyOrder, reason: string): Promise<{ ok: boolean; error?: string }> => {
+      const res: CancellationRequestOutcome = await requestOrderCancellation(o.ref, reason);
+      if (res.ok) {
+        // "already_requested" is a success from the server's point of view: the
+        // request exists (possibly just made on another device). Reflect it.
+        await load();
+        setCancelNote((n) => {
+          const next = { ...n };
+          delete next[o.ref];
+          return next;
+        });
+        setCancelFor(null);
+        return { ok: true };
+      }
+      const message =
+        res.reason === 'not_owner' || res.reason === 'not_found'
+          ? 'We could not find that order on your account.'
+          : res.reason === 'shipped'
+            ? 'This order has already shipped, so it can no longer be cancelled here. Please contact support.'
+            : res.reason === 'not_eligible'
+              ? 'This order can no longer be cancelled here. Please contact support.'
+              : res.reason || 'Could not submit the request. Please try again.';
+      setCancelNote((n) => ({ ...n, [o.ref]: message }));
+      return { ok: false, error: message };
     },
     [load],
   );
@@ -454,12 +606,68 @@ export function MyOrdersPage() {
                       <Truck size={13} strokeWidth={1.8} /> Track Shipment
                     </a>
                   )}
+                  {/* Asking to cancel is only offered where it can still be
+                      answered yes. The status panel below shows a request that
+                      already exists; the button appears when none does. */}
+                  {canRequestCancellation(o) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCancelNote((n) => {
+                          const next = { ...n };
+                          delete next[o.ref];
+                          return next;
+                        });
+                        setCancelFor(o);
+                      }}
+                      className="inline-flex items-center gap-2 border border-crimson/40 text-crimson text-[14px] uppercase tracking-wide-2 font-semibold px-4 py-2.5 rounded hover:bg-blush transition-colors"
+                    >
+                      Request Cancellation
+                    </button>
+                  )}
                 </div>
+                {/* Cancellation REQUEST state. This is deliberately the request's
+                    OWN status, not the order's: a pending request leaves the
+                    order exactly as it was. */}
+                {o.cancellation && (
+                  <div className={`mt-3 border rounded-card px-3.5 py-3 ${cancellationStatusLine(o.cancellation).tone}`}>
+                    <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide-2">
+                      <Clock size={11} strokeWidth={2.2} className="shrink-0" />
+                      {cancellationStatusLine(o.cancellation).title}
+                    </p>
+                    {cancellationStatusLine(o.cancellation).body && (
+                      <p className="mt-1 text-[11px] leading-relaxed opacity-90">
+                        {cancellationStatusLine(o.cancellation).body}
+                      </p>
+                    )}
+                    {o.cancellation.reason && (
+                      <p className="mt-1 text-[11px] leading-relaxed opacity-80">
+                        Your reason: {o.cancellation.reason}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {cancelNote[o.ref] && (
+                  <p className="mt-3 border border-crimson/30 bg-blush px-3 py-2 text-[11px] leading-relaxed text-crimson" role="alert">
+                    {cancelNote[o.ref]}
+                  </p>
+                )}
               </div>
             );
           })
         )}
       </div>
+
+      {cancelFor && (
+        <CancellationRequestDialog
+          orderRef={cancelFor.ref}
+          paymentLabel={paymentMethodLabel(cancelFor)}
+          amountPaid={amountCollected(cancelFor)}
+          refundDue={amountCollected(cancelFor) > 0}
+          onConfirm={(reason) => handleRequestCancellation(cancelFor, reason)}
+          onClose={() => setCancelFor(null)}
+        />
+      )}
     </div>
   );
 }
