@@ -532,8 +532,24 @@ export function CheckoutPage() {
   // or their opted-in local copy win); the profile only fills a BLANK checkout.
   // Loads through supabase-js (owned row via RLS) and silently no-ops on any
   // error — a missing migration never affects the guest path.
+  //
+  // Email has a second, always-available source: the account email on the
+  // session. It is applied first and in the same tick as mount, so the required
+  // field is never briefly blank, and the saved profile can only ever fill the
+  // address fields plus an email slot the session could not supply.
   useEffect(() => {
     if (!user) return;
+    // The account email is available from the session IMMEDIATELY, while the
+    // saved PROFILE is a second, slower source — and is absent entirely for a
+    // shopper who has not completed an order yet. A signed-in customer must
+    // never face an empty, required Email field just because no profile row
+    // exists, so fall back to the verified `user.email`. It is applied in this
+    // same tick (before the storage-write effect below serialises the form, so
+    // the persisted copy carries it too), which avoids a flash of the
+    // required-field error. ONLY a blank field is filled: anything the shopper
+    // typed is left exactly as it is.
+    const accountEmail = (user.email ?? '').trim();
+    setForm((f) => (f.email.trim() || !accountEmail ? f : { ...f, email: accountEmail }));
     let cancelled = false;
     (async () => {
       try {
@@ -542,18 +558,25 @@ export function CheckoutPage() {
           Boolean(window.localStorage.getItem(SAVED_CHECKOUT_KEY));
         if (hasStored || cancelled) return;
         const p = await loadSavedProfile(user.id);
-        if (cancelled || !p) return;
-        const [firstName = '', ...rest] = (p.name || '').trim().split(/\s+/);
-        setForm({
-          firstName,
-          lastName: rest.join(' '),
-          phone: p.phone.replace(/\D/g, '').slice(0, 10),
-          email: p.email ?? '',
-          address: p.address,
-          apartment: p.apartment ?? '',
-          city: p.city,
-          state: p.state,
-          pincode: p.pincode,
+        if (cancelled) return;
+        setForm((f) => {
+          // The session email already filled a blank field above; fall back to
+          // the saved profile's email only if neither source had one, and only
+          // ever into a still-blank field, so nothing typed is overwritten.
+          const email = f.email.trim() || p?.email?.trim() || accountEmail;
+          if (!p) return { ...f, email };
+          const [firstName = '', ...rest] = (p.name || '').trim().split(/\s+/);
+          return {
+            firstName,
+            lastName: rest.join(' '),
+            phone: p.phone.replace(/\D/g, '').slice(0, 10),
+            email,
+            address: p.address,
+            apartment: p.apartment ?? '',
+            city: p.city,
+            state: p.state,
+            pincode: p.pincode,
+          };
         });
       } catch {
         // ignore — prefill is best-effort
