@@ -933,18 +933,122 @@ test('NO DUPLICATE INITIATION: the single call site is the checkout page', () =>
  * 6. Authorization on the payment endpoint
  * ================================================================== */
 
+/**
+ * Lift the endpoint's REAL authorization block out of `api/cashfree-order.ts`
+ * and run it. The rule is not restated here — only the driver is. Locating the
+ * block by content (not by line number) means the test keeps testing the shipped
+ * decision if the file is edited above it, and the `normalizePhone` helper it
+ * calls is lifted verbatim too, so the 10-digit rule is the production one.
+ */
+function buildAuthorization() {
+  const start = apiCode.indexOf('let authorized = false;');
+  assert.notEqual(start, -1, 'expected `let authorized = false;` in the endpoint');
+  const endMarker = 'if (!authorized) {';
+  const end = apiCode.indexOf(endMarker);
+  assert.notEqual(end, -1, 'expected the `!authorized` refusal right after the block');
+
+  const normalizeSrc = (apiCode.match(/function normalizePhone\(raw: unknown\): string \{[\s\S]*?\n\}/) ?? [])[0];
+  assert.ok(normalizeSrc, 'expected the shipped normalizePhone helper');
+
+  // Keep the shipped text verbatim; only strip the one TypeScript cast the
+  // driver cannot evaluate.
+  const block = apiCode
+    .slice(start, end)
+    .replace(/ as Record<string, unknown>/g, '');
+  assert.ok(
+    block.includes("caller.via === 'session' && caller.userId && uniqueOrder.user_id"),
+    'the real ownership branch must survive extraction',
+  );
+  assert.ok(
+    block.includes('presented === orderPhone'),
+    'the real possession gate must survive extraction',
+  );
+
+  const driver = new Function(
+    'uniqueOrder',
+    'caller',
+    'callerPhone',
+    `${normalizeSrc.replace('(raw: unknown): string', '(raw)')}\n${block}\nreturn authorized;`,
+  );
+  return (order, caller, callerPhone) => driver(order, caller, callerPhone);
+}
+
 test('AUTHORIZATION: a bearer token is verified with Supabase Auth', () => {
   assert.match(apiSrc, /supabase\.auth\.getUser\(bearer\)/);
   assert.match(apiSrc, /\^bearer\\s\+\(\.\+\)\$\/i/);
 });
 
-test('AUTHORIZATION: a signed-in shopper must own the order', () => {
+test('AUTHORIZATION: a signed-in shopper must own a CLAIMED order', () => {
   assert.match(apiSrc, /uniqueOrder\.user_id === caller\.userId/);
+  // The ownership branch is only entered for an order that already HAS an
+  // owner. `create_retail_order` never writes user_id (no parameter, no column
+  // in its insert), so without this guard the branch was reached by every
+  // signed-in caller, Boolean(NULL) was false, the possession gate below was
+  // never evaluated, and every signed-in online checkout died with
+  // 403 PAYMENT_NOT_PERMITTED before any gateway call.
   assert.match(
     apiSrc,
-    /Boolean\(uniqueOrder\.user_id\) && uniqueOrder\.user_id === caller\.userId/,
-    'ownership must require the order to already belong to the caller',
+    /caller\.via === 'session' && caller\.userId && uniqueOrder\.user_id/,
+    'the ownership branch must require the order to already have an owner',
   );
+});
+
+test('AUTHORIZATION: an unclaimed order falls through to the possession gate', () => {
+  // The fall-through is executed here, not asserted against text: the real
+  // authorization block is lifted out of the endpoint verbatim (located by
+  // content, not by line number) and evaluated against the caller shapes the
+  // storefront can produce.
+  const decide = buildAuthorization();
+
+  const unclaimed = (phone) => ({ user_id: null, claim_declined_at: null, customer: { phone } });
+
+  // THE BUG (regression guard): signed-in shopper, order created by checkout
+  // (user_id IS NULL), correct ref + phone on the order -> MUST be authorized.
+  // This is the exact production failure of 2026-10-20: the 403 arrived before
+  // eligibility, so no Cashfree order was ever created.
+  assert.equal(
+    decide(unclaimed('9876543210'), { via: 'session', userId: 'user-1' }, '9876543210'),
+    true,
+    'a signed-in shopper with the order phone must be able to pay for an unclaimed order',
+  );
+
+  // Guests are unchanged by the fix.
+  assert.equal(decide(unclaimed('9876543210'), { via: 'guest' }, '9876543210'), true);
+  assert.equal(decide(unclaimed('9876543210'), { via: 'guest' }, '1111111111'), false);
+  assert.equal(decide(unclaimed('9876543210'), { via: 'guest' }, ''), false);
+  assert.equal(decide(unclaimed(''), { via: 'guest' }, '9876543210'), false);
+
+  // A signed-in caller who does NOT present the phone is still refused.
+  assert.equal(
+    decide(unclaimed('9876543210'), { via: 'session', userId: 'user-1' }, '1111111111'),
+    false,
+    'possession still requires the stored phone, session or not',
+  );
+
+  // A CLAIMED order stays owner-only FOR A SIGNED-IN CALLER: `user_id` is set,
+  // so the ownership branch is entered and the possession gate is never reached,
+  // even by a caller who also knows the phone.
+  const claimedByOther = { user_id: 'user-2', claim_declined_at: null, customer: { phone: '9876543210' } };
+  assert.equal(decide(claimedByOther, { via: 'session', userId: 'user-1' }, '9876543210'), false);
+  assert.equal(
+    decide(claimedByOther, { via: 'guest' }, '9876543210'),
+    true,
+    'pre-existing and unchanged: the possession gate never inspected user_id, so a ' +
+      'GUEST holding ref+phone may pay for any non-declined order. Paying is not ' +
+      'claiming — no user_id write happens on this path — and the same ref+phone ' +
+      'standard is what cashfree-status and track_lookup_order already enforce. ' +
+      'The fix above must not narrow this, or guests would need an account to pay.',
+  );
+  assert.equal(
+    decide({ user_id: 'user-1', claim_declined_at: null, customer: { phone: '9876543210' } }, { via: 'session', userId: 'user-1' }, '1111111111'),
+    true,
+    'the owner may still pay without re-proving possession',
+  );
+
+  // A declined order is off limits to everyone, phone or not.
+  const declined = { user_id: null, claim_declined_at: '2026-10-20', customer: { phone: '9876543210' } };
+  assert.equal(decide(declined, { via: 'session', userId: 'user-1' }, '9876543210'), false);
+  assert.equal(decide(declined, { via: 'guest' }, '9876543210'), false);
 });
 
 test('AUTHORIZATION: the payment endpoint never claims a guest order', () => {

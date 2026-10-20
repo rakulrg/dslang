@@ -272,8 +272,9 @@ export default async function handler(req: any, res: any) {
      * attaching a `user_id`. Paying for an order is not linking one, and an
      * order is never automatically re-claimed here. */
     if (!uniqueOrder.claim_declined_at) {
-      if (caller.via === 'session' && caller.userId) {
-        /* A signed-in shopper may only pay for an order that is ALREADY theirs.
+      if (caller.via === 'session' && caller.userId && uniqueOrder.user_id) {
+        /* A signed-in shopper may only pay for an order that is ALREADY theirs —
+         * but this branch exists ONLY for an order that already has an owner.
          *
          * Ownership is `user_id = auth.uid()` and nothing else. There is
          * deliberately no email-match branch here: guest checkout accepts any
@@ -283,14 +284,27 @@ export default async function handler(req: any, res: any) {
          * proof at all - it also ignored `claim_declined_at`, so an order the
          * shopper had explicitly answered "not mine" could still be taken.
          *
+         * A CLAIMED order stays owner-only: `user_id` is set, so the condition
+         * above holds and the possession gate below is never reached for it, even
+         * by a caller who also knows the phone.
+         *
          * Linking a guest order is `claim_retail_guest_order(ref, phone)`, which
          * requires email AND a 10-digit phone and refuses a declined order
-         * outright. Paying does not link, so an unclaimed order falls through to
-         * the guest possession gate below (ref + phone) exactly as it did before
-         * an account existed. */
-        authorized = Boolean(uniqueOrder.user_id) && uniqueOrder.user_id === caller.userId;
+         * outright. Paying does not link, so an UNCLAIMED order (user_id IS
+         * NULL — which is every order `create_retail_order` has ever written; it
+         * has no user_id parameter and no column in its insert, so the stamp is
+         * NULL even for a signed-in shopper) falls through to the possession
+         * gate below (ref + phone) exactly as it did before an account existed.
+         * Guarding this branch on `uniqueOrder.user_id` is what makes the
+         * fall-through real: without it a signed-in caller was refused here
+         * (Boolean(NULL) is false) and never reached the gate, so every
+         * signed-in online checkout died with 403 PAYMENT_NOT_PERMITTED. */
+        authorized = uniqueOrder.user_id === caller.userId;
       } else {
         // Guest possession gate — ref + the 10-digit phone stored on the order.
+        // Also the gate for a signed-in shopper whose order has no owner yet
+        // (see above): possession, not identity, is what proves the order is
+        // theirs to pay for.
         const orderPhone = normalizePhone(customer.phone);
         const presented = normalizePhone(callerPhone);
         authorized = presented.length === 10 && orderPhone.length === 10 && presented === orderPhone;
