@@ -108,6 +108,20 @@ export function TermsPage() {
           </a>
           , which form part of these Terms.
         </PolicyP>
+        <PolicyP>
+          Where you have an account, you may request cancellation of an eligible order from My
+          Orders. A request does not cancel the order by itself: an administrator reviews it and
+          approves or rejects it. On approval, an eligible order is cancelled and any reserved
+          inventory is restored where applicable; on rejection, the order and its payment state are
+          left unchanged. Orders that have already shipped, or that are in an incompatible shipping
+          state, cannot be cancelled through this feature and should be raised with DSLANG support.
+        </PolicyP>
+        <PolicyP>
+          Any refund that is due is handled separately and manually, and is shown as pending until
+          it has actually been refunded and confirmed. Approval of a cancellation does not mean a
+          refund has been completed. These Terms do not promise an automatic refund or a fixed
+          refund timeline.
+        </PolicyP>
       </PolicySection>
 
       <PolicySection num={9} title="Shipping & Delivery">

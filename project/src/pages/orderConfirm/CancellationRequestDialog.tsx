@@ -101,7 +101,7 @@ export function CancellationRequestDialog({
           This sends a request for an administrator to review. It does not cancel the order
           immediately, and nothing about your order changes until they decide.
           {refundDue
-            ? ' If a cancellation is approved, any amount already paid is refunded separately and may take a few working days.'
+            ? ' If a cancellation is approved, any amount already paid is refunded separately and is shown as pending until the refund is made and confirmed.'
             : ' A cancellation is only possible before the order ships.'}
         </p>
 

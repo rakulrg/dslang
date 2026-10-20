@@ -95,7 +95,7 @@ function cancellationStatusLine(c: NonNullable<MyOrder['cancellation']>): {
         tone: 'border-green-300 bg-green-50 text-green-800',
         title: 'Cancellation approved',
         body: c.refund_status === 'refund_pending'
-          ? 'Your order has been cancelled. Any amount paid is being refunded separately and may take a few working days.'
+          ? 'Your order has been cancelled. Any amount paid is refunded separately and is shown as pending until the refund is made and confirmed.'
           : c.refund_status === 'refund_completed'
             ? 'Your order has been cancelled and the refund has been processed.'
             : 'Your order has been cancelled.',

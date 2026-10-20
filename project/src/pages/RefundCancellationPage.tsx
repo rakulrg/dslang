@@ -21,17 +21,31 @@ export function RefundCancellationPage() {
       }
     >
       <PolicySection num={1} title="Order Cancellation">
-        <PolicyP>You may cancel an order in the following circumstances:</PolicyP>
+        <PolicyP>
+          If you have an account with us, you can request cancellation of an order from the{' '}
+          <span className="text-bone">My Orders</span> section of your account. A cancellation can
+          only be requested while the order is eligible — that is, before it has been dispatched or
+          handed to the courier, and while it is not already in a final state such as cancelled or
+          refunded.
+        </PolicyP>
+        <PolicyP>
+          <span className="text-bone">Submitting a request does not cancel your order.</span> Your
+          request is reviewed by our team, and an administrator will approve or reject it. Until a
+          request is approved, your order stays exactly as it is, and any stock held for it remains
+          reserved.
+        </PolicyP>
         <PolicyOl
           items={[
-            'Cancellation requests are accepted within 7 days of placing the order.',
-            'Cancellation is subject to the order not already having been shipped or being out for delivery.',
-            'Once an order has been dispatched, it can no longer be cancelled, but may instead be returned under our Return Policy once received.',
+            'If the request is approved, and the order is still eligible at that time, the order is cancelled and any reserved inventory is restored where applicable.',
+            'If the request is rejected, your order and its payment state are left unchanged and it continues to be processed as normal.',
+            'You can follow the status of your request and its decision, along with any refund tracking, in My Orders.',
+            'Orders that have already been shipped, or that are in an incompatible shipping state, cannot be cancelled through this feature. In that case, please contact DSLANG support and we will help you with the available options — for example a return under our Return Policy once the order is received.',
+            'Cancellation requests are not available for guest orders in this release. If you checked out without an account and need help, please contact DSLANG support.',
           ]}
         />
         <PolicyP>
-          To request a cancellation, contact us on WhatsApp, by email at hello.dslang@gmail.com, or
-          through our Contact page, quoting your order number.
+          If you prefer, or if you cannot use My Orders, you can reach us on WhatsApp, by email at
+          hello.dslang@gmail.com, or through our Contact page, quoting your order number.
         </PolicyP>
       </PolicySection>
 
@@ -56,13 +70,28 @@ export function RefundCancellationPage() {
       </PolicySection>
 
       <PolicySection num={4} title="Refund Processing">
+        <PolicyP>
+          <span className="text-bone">
+            Approving a cancellation does not mean a refund has been completed.
+          </span>{' '}
+          It confirms that the order has been cancelled. Any refund that is due is then processed
+          separately, and it is shown as pending until the money has actually been refunded and the
+          refund has been confirmed.
+        </PolicyP>
         <PolicyOl
           items={[
-            'Approved refunds are processed within 5 days of the refund being approved.',
-            'The refund is issued to the original payment method used for the order. Actual credit timing may depend on the payment provider or bank.',
+            'Refunds are issued to the original payment method used for the order. The time taken for the amount to reflect may depend on the payment provider or your bank, and we cannot guarantee a fixed timeline for when it will appear in your account.',
+            'For an order paid online, any approved cancellation where money was collected is recorded as a refund pending. It stays pending until the refund has been made and confirmed; only then is it shown as completed.',
+            'For a cash-on-delivery order where no amount was collected in advance, no refund is due, because no money was taken.',
+            'For a cash-on-delivery order where an advance amount was collected, that refund is recorded as pending and is processed and confirmed in the same way.',
             'Shipping charges are non-refundable where applicable.',
           ]}
         />
+        <PolicyP>
+          Refunds are handled manually by our team; they are not automatic. We will keep the refund
+          status on the order up to date so you can see whether a refund is pending or has been
+          completed.
+        </PolicyP>
       </PolicySection>
 
       <PolicySection num={5} title="WhatsApp Confirmation">
