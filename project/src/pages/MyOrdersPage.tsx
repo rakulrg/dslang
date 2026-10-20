@@ -14,10 +14,10 @@ import { formatPrice } from '@/lib/catalog';
 import { useOrderImages, imageForItem } from '@/lib/orderImages';
 import { setTrackHint } from '@/lib/trackHint';
 import {
-  NO_AWB_NOTICE,
   awbOf,
   hasAwb,
   isPostHandoff,
+  noAwbNotice,
   shippingStatusLabel,
   shippingStatusOf,
   trackingLinkFor,
@@ -544,7 +544,14 @@ export function MyOrdersPage() {
                   <div>
                     <p className="font-label text-[10px] uppercase tracking-ultra text-bone-dim">Shipping</p>
                     <p className="text-[11px] text-bone mt-0.5">
-                      {hasAwb(o) ? shippingStatusLabel(shippingStatusOf(o)) : 'Preparing order'}
+                      {/* The effective status, including order-level terminal
+                          states (cancelled / refunded / rto / delivered). It must
+                          NOT be hardcoded to "Preparing order" for a no-AWB row:
+                          a cancelled order has no AWB by definition, and the old
+                          fallback told customers a cancelled order was still being
+                          prepared. `shippingStatusOf` is the single shared mapping
+                          both this page and Track Order read. */}
+                      {shippingStatusLabel(shippingStatusOf(o))}
                     </p>
                   </div>
                   {hasAwb(o) ? (
@@ -561,7 +568,9 @@ export function MyOrdersPage() {
                   ) : (
                     <div className="col-span-2 sm:col-span-1">
                       <p className="font-label text-[10px] uppercase tracking-ultra text-bone-dim">Tracking</p>
-                      <p className="text-[11px] text-bone-soft mt-0.5">{NO_AWB_NOTICE}</p>
+                      <p className="text-[11px] text-bone-soft mt-0.5">
+                        {noAwbNotice(shippingStatusOf(o))}
+                      </p>
                     </div>
                   )}
                 </div>

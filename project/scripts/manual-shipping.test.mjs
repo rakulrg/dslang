@@ -34,8 +34,10 @@ import {
   courierSlug,
   delhiveryTrackingUrl,
   hasAwb,
+  isOrderTerminalStatus,
   isPostHandoff,
   isShippingStatus,
+  noAwbNotice,
   shippingStatusLabel,
   shippingStatusMessage,
   shippingStatusOf,
@@ -166,7 +168,9 @@ test('SHIPPING: historical rows with no shipping_status still render the truth',
   assert.equal(shippingStatusOf({ order_status: 'shipped' }), 'shipped');
   assert.equal(shippingStatusOf({ order_status: 'processing' }), 'packed');
   assert.equal(shippingStatusOf({ order_status: 'cancelled' }), 'cancelled');
-  assert.equal(shippingStatusOf({ order_status: 'refunded' }), 'cancelled');
+  // A refunded order is its own outcome, NOT collapsed to 'cancelled' — the
+  // customer must see "Refunded". See the dedicated refunded-label regression.
+  assert.equal(shippingStatusOf({ order_status: 'refunded' }), 'refunded');
   assert.equal(shippingStatusOf({}), 'pending');
   assert.equal(shippingStatusOf(null), 'pending');
   // An unrecognised stored value must not surface as raw jargon to a customer.
@@ -596,15 +600,126 @@ test('SHIPPING: no email invents a courier the order does not have', () => {
 
 test('SHIPPING: the customer pages show the no-AWB state instead of a fake tracker', () => {
   for (const page of ['src/pages/TrackOrderPage.tsx', 'src/pages/MyOrdersPage.tsx']) {
-    const src = read(page);
-    assert.match(src, /NO_AWB_NOTICE/, `${page} must state that tracking follows shipment`);
-    assert.match(src, /hasAwb\(/, `${page} must gate its tracking UI on a real AWB`);
-    assert.match(src, /trackingLinkFor\(/, `${page} must derive the link through the shared helper`);
+    // The pre-AWB line is chosen through the shared helper, so a terminal state
+    // (cancelled / refunded / rto / delivered) gets its own honest sentence
+    // rather than the "tracking will follow shipment" promise it cannot keep.
+    assert.match(read(page), /noAwbNotice\(/, `${page} must derive the no-AWB line through the shared helper`);
+    assert.match(read(page), /hasAwb\(/, `${page} must gate its tracking UI on a real AWB`);
+    assert.match(read(page), /trackingLinkFor\(/, `${page} must derive the link through the shared helper`);
   }
   // The track button only exists behind a real link.
   const track = read('src/pages/TrackOrderPage.tsx');
   assert.match(track, /Track Shipment/);
   assert.match(track, /rel="noopener noreferrer"/, 'external links must not hand over the opener');
+});
+
+/**
+ * The regression this suite exists to prevent.
+ *
+ * A cancelled order never gets a shipping_status advance — cancellation is an
+ * order-level operation. Before the fix, `shippingStatusOf` trusted the stored
+ * `shipping_status = 'pending'` first, so a cancelled order with no AWB resolved
+ * to `pending` and BOTH customer pages said "Preparing your order" and promised
+ * "tracking will be updated after shipment". These assertions lock that out.
+ */
+test('SHIPPING: a cancelled order never resolves to a preparing shipment', () => {
+  const cancelledRows = [
+    { order_status: 'cancelled' },
+    { order_status: 'cancelled', shipping_status: 'pending' },
+    { order_status: 'cancelled', shipping_status: '' },
+    { order_status: 'cancelled', payment_status: 'success' },
+    // A cancelled order that had been packed before cancellation.
+    { order_status: 'cancelled', shipping_status: 'packed' },
+  ];
+  for (const o of cancelledRows) {
+    const status = shippingStatusOf(o);
+    assert.equal(status, 'cancelled', `${JSON.stringify(o)} must resolve to cancelled`);
+    assert.doesNotMatch(
+      shippingStatusMessage(status),
+      /preparing your order/i,
+      `${JSON.stringify(o)} must never read as "Preparing your order"`,
+    );
+    assert.doesNotMatch(
+      noAwbNotice(status),
+      /tracking will be updated after shipment/i,
+      `${JSON.stringify(o)} must not promise tracking that can never come`,
+    );
+  }
+});
+
+test('SHIPPING: refunded, returned/RTO and delivered are not shown as preparing either', () => {
+  const cases = [
+    [{ order_status: 'refunded' }, 'refunded'],
+    [{ order_status: 'refunded', shipping_status: 'pending' }, 'refunded'],
+    [{ order_status: 'refunded', shipping_status: 'packed' }, 'refunded'],
+    [{ order_status: 'rto' }, 'rto'],
+    [{ order_status: 'rto', shipping_status: 'pending' }, 'rto'],
+    [{ order_status: 'delivered' }, 'delivered'],
+    [{ order_status: 'delivered', shipping_status: 'pending' }, 'delivered'],
+  ];
+  for (const [o, expected] of cases) {
+    const status = shippingStatusOf(o);
+    assert.equal(status, expected, `${JSON.stringify(o)} must resolve to ${expected}`);
+    assert.doesNotMatch(
+      shippingStatusMessage(status),
+      /preparing your order/i,
+      `${JSON.stringify(o)} must not read as an active preparation`,
+    );
+    // None of these terminal states may keep the promise that tracking follows.
+    assert.doesNotMatch(
+      noAwbNotice(status),
+      /tracking will be updated after shipment/i,
+      `${JSON.stringify(o)} must not promise tracking that can never come`,
+    );
+  }
+});
+
+test('SHIPPING: a refunded order is labelled "Refunded", never "Cancelled"', () => {
+  // The regression: `terminalShippingStatus` used to fold refunded into the
+  // cancelled leg, so a refunded order read "Cancelled". The label is asserted
+  // through the SAME helper every customer surface uses.
+  for (const o of [
+    { order_status: 'refunded' },
+    { order_status: 'refunded', shipping_status: 'pending' },
+    { order_status: 'refunded', shipping_status: '' },
+    { order_status: 'refunded', payment_status: 'success' },
+  ]) {
+    const status = shippingStatusOf(o);
+    assert.equal(status, 'refunded', `${JSON.stringify(o)} must resolve to the refunded status`);
+    assert.equal(shippingStatusLabel(status), 'Refunded', `${JSON.stringify(o)} must be labelled "Refunded"`);
+    assert.notEqual(shippingStatusLabel(status), 'Cancelled', 'a refunded order must never read "Cancelled"');
+    // The sentence and the no-AWB line must agree.
+    assert.match(shippingStatusMessage(status), /refunded/i, `${JSON.stringify(o)} message must say refunded`);
+    assert.match(noAwbNotice(status), /refunded/i, `${JSON.stringify(o)} notice must say refunded`);
+    assert.doesNotMatch(
+      shippingStatusMessage(status),
+      /preparing your order/i,
+      `${JSON.stringify(o)} must not read as an active preparation`,
+    );
+  }
+  // `refunded` is an order-level outcome, NOT a shipment leg: it is absent from
+  // the flow, so `isShippingStatus` stays false and the admin shipping form can
+  // never persist it.
+  assert.equal(SHIPPING_STATUS_FLOW.includes('refunded'), false, 'refunded must not be a shipment leg');
+  assert.equal(isShippingStatus('refunded'), false, 'refunded must never be treated as a shipment status');
+  // The refunded label did not displace or soften the cancelled one.
+  assert.equal(shippingStatusLabel('cancelled'), 'Cancelled');
+  assert.equal(shippingStatusLabel('refunded'), 'Refunded');
+});
+
+test('SHIPPING: an order-level terminal state outranks a stale pre-handoff shipping_status', () => {
+  // The general precedence still prefers a stored shipping_status...
+  assert.equal(shippingStatusOf({ shipping_status: 'in_transit' }), 'in_transit');
+  // ...but an order-level terminal wins over a pre-handoff one.
+  assert.equal(shippingStatusOf({ order_status: 'cancelled', shipping_status: 'pending' }), 'cancelled');
+  assert.equal(shippingStatusOf({ order_status: 'cancelled', shipping_status: 'packed' }), 'cancelled');
+  // And it is exposed so other surfaces agree without re-implementing the rule.
+  assert.equal(isOrderTerminalStatus('cancelled'), true);
+  assert.equal(isOrderTerminalStatus('refunded'), true);
+  assert.equal(isOrderTerminalStatus('rto'), true);
+  assert.equal(isOrderTerminalStatus('delivered'), true);
+  assert.equal(isOrderTerminalStatus('shipped'), false);
+  assert.equal(isOrderTerminalStatus('processing'), false);
 });
 
 test('SHIPPING: My Orders keeps reading when the schema is not migrated yet', () => {

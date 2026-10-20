@@ -7,10 +7,9 @@ import { useOrderImages, imageForItem, type OrderImageIndex } from '@/lib/orderI
 import { peekTrackHint, clearTrackHint } from '@/lib/trackHint';
 import { peekCheckoutHistory } from '@/lib/trackHistory';
 import {
-  DELIVERED_NOTICE,
-  NO_AWB_NOTICE,
   awbOf,
   hasAwb,
+  noAwbNotice,
   shippingStatusLabel,
   shippingStatusMessage,
   shippingStatusOf,
@@ -356,20 +355,20 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
   const lastStage = order ? visualStage(order) : -1;
 
   /* What the Shipping card must report.
-     `shippingStatusOf` prefers a stored `shipping_status` over `order_status`.
-     That is the right general precedence, but it is wrong in one reachable case:
-     `shipping_status` is written by admin_set_order_shipping, which REFUSES any
-     post-handoff state without an AWB, while `order_status` is advanced by a
-     different workflow. An order marked delivered with no AWB on file therefore
-     keeps `shipping_status = 'pending'` and the card told the customer their
-     delivered parcel was still "Preparing your order".
+     `shippingStatusOf` is the single shared mapping, and it now lets an
+     ORDER-LEVEL terminal state (cancelled / refunded / rto / delivered) win over
+     a stored `shipping_status`. That closes the reachable case where
+     `shipping_status` is written by admin_set_order_shipping (which REFUSES any
+     post-handoff state without an AWB) while the terminal state is advanced by a
+     different workflow — so an order cancelled before handoff kept
+     `shipping_status = 'pending'` and the card told the customer their cancelled
+     order was still "Preparing your order".
 
-     A delivered order is terminal, so it wins here. This re-orders two states at
-     the display site ONLY — `shippingStatusOf` and the status logic are
-     untouched, and remain the single shared source for admin and email. Nothing
-     is hardcoded to Delivered: every other state still comes from the mapping. */
-  const cardShippingStatus: string =
-    order?.order_status === 'delivered' ? 'delivered' : shippingStatusOf(order);
+     The precedence used to be patched here for `delivered` alone. It now lives in
+     the mapping, next to the states it is about, so every surface (tracking, My
+     Orders, email) reads the same answer instead of each re-implementing one
+     case. Nothing is hardcoded to a single status at this call site. */
+  const cardShippingStatus: string = shippingStatusOf(order);
 
   // Live auto-poll: keep the last lookup credentials (stable ref), skip polling
   // once the shipment is terminal (delivered / rto / cancelled / failed) so we
@@ -637,12 +636,12 @@ export function TrackOrderPage({ refFromRoute }: { refFromRoute?: string }) {
                 <Truck size={13} strokeWidth={1.8} /> Shipping
               </p>
               <p className="text-sm text-bone">Status: {shippingStatusMessage(cardShippingStatus)}</p>
-              {/* Pre-AWB notice for every state still ahead of the courier. Once the
-                  parcel has arrived it would be a promise that can never be kept,
-                  so that state gets its own line instead. */}
-              <p className="mt-1 text-xs text-grey">
-                {cardShippingStatus === 'delivered' ? DELIVERED_NOTICE : NO_AWB_NOTICE}
-              </p>
+              {/* Pre-AWB notice for every state still ahead of the courier. A
+                  terminal state gets its own honest line instead: delivered
+                  promises no further updates, and cancelled/rto order will not
+                  ship, so the "tracking will follow shipment" promise cannot be
+                  kept. */}
+              <p className="mt-1 text-xs text-grey">{noAwbNotice(cardShippingStatus)}</p>
             </div>
           ))}
 

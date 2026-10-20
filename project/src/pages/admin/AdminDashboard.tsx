@@ -91,6 +91,7 @@ import {
   delhiveryTrackingUrl,
   hasAwb,
   isPostHandoff,
+  isShippingStatus,
   shippingStatusLabel,
   shippingStatusOf,
 } from '@/lib/shipping';
@@ -3070,7 +3071,15 @@ function RetailOrdersPanel() {
       courier_other: COURIER_OPTIONS.includes(o.courier_name as (typeof COURIER_OPTIONS)[number]) ? '' : o.courier_name ?? '',
       awb: awbOf(o),
       tracking_url: o.tracking_url ?? '',
-      shipping_status: shippingStatusOf(o),
+      // Seed the editable control with a real SHIPMENT leg only. `shippingStatusOf`
+      // may return an order-level `refunded`, which is not a shipment leg and has
+      // no select option; seeding it would leave the control visually on the
+      // first option while carrying a value it cannot render. Such an order is
+      // terminal and is not edited here anyway.
+      shipping_status: (() => {
+        const derived = shippingStatusOf(o);
+        return isShippingStatus(derived) ? derived : 'pending';
+      })(),
     };
 
   const setShipForm = (id: string, current: ShipForm, patch: Partial<ShipForm>) => {
