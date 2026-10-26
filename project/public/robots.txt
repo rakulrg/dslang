@@ -1,4 +1,13 @@
 User-agent: *
 Allow: /
+Disallow: /admin
+Disallow: /account
+Disallow: /cart
+Disallow: /checkout
+Disallow: /payment/
+Disallow: /order-status
+Disallow: /my-orders
+Disallow: /track-order
+Disallow: /api/
 
 Sitemap: https://dslang.in/sitemap.xml

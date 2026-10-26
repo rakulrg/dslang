@@ -1,20 +1,30 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-IN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="description" content="DSLANG — premium streetwear brand. Shop the collection — hoodies, tees & joggers with pan-India delivery." />
+    <title>DSLANG | Premium Streetwear Clothing India</title>
+    <meta name="description" content="Shop DSLANG premium streetwear clothing in India — graphic tees, oversized hoodies and joggers made for everyday wear, with pan-India delivery and easy returns." />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <meta name="theme-color" content="#f7f6f3" />
+    <link rel="canonical" href="https://dslang.in/" />
 
-    <meta property="og:title" content="DSLANG | Premium Streetwear India" />
-    <meta property="og:description" content="DSLANG — premium streetwear brand. Shop the collection — hoodies, tees & joggers with pan-India delivery." />
+    <meta property="og:site_name" content="DSLANG" />
+    <meta property="og:locale" content="en_IN" />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://dslang.in" />
-    <meta property="og:image" content="https://images.pexels.com/photos/30636000/pexels-photo-30636000.jpeg?auto=compress&cs=tinysrgb&h=650&w=940" />
+    <meta property="og:url" content="https://dslang.in/" />
+    <meta property="og:title" content="DSLANG | Premium Streetwear Clothing India" />
+    <meta property="og:description" content="Shop DSLANG premium streetwear clothing in India — graphic tees, oversized hoodies and joggers made for everyday wear, with pan-India delivery and easy returns." />
+    <meta property="og:image" content="https://dslang.in/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="DSLANG premium streetwear clothing" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="DSLANG | Premium Streetwear India" />
-    <meta name="twitter:description" content="DSLANG — premium streetwear brand. Shop the collection — hoodies, tees & joggers with pan-India delivery." />
-    <meta name="twitter:image" content="https://images.pexels.com/photos/30636000/pexels-photo-30636000.jpeg?auto=compress&cs=tinysrgb&h=650&w=940" />
+    <meta name="twitter:title" content="DSLANG | Premium Streetwear Clothing India" />
+    <meta name="twitter:description" content="Shop DSLANG premium streetwear clothing in India — graphic tees, oversized hoodies and joggers made for everyday wear, with pan-India delivery and easy returns." />
+    <meta name="twitter:image" content="https://dslang.in/og-image.png" />
+    <meta name="twitter:image:alt" content="DSLANG premium streetwear clothing" />
 
     <!-- Hero loading state. The hero's loading state is its own dark DSLANG
          treatment (see .hero-shell / .hero-curtain in src/index.css), which
@@ -32,6 +42,56 @@
     </style>
 
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://dslang.in/#organization",
+            "name": "DSLANG",
+            "url": "https://dslang.in/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "https://dslang.in/brand-logo.png",
+              "width": 512,
+              "height": 512
+            },
+            "image": "https://dslang.in/og-image.png",
+            "description": "DSLANG is an independent premium streetwear clothing label from India, designing graphic tees, oversized hoodies and joggers."
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://dslang.in/#website",
+            "url": "https://dslang.in/",
+            "name": "DSLANG",
+            "description": "Shop premium streetwear clothing from DSLANG: graphic tees, oversized hoodies and joggers with pan-India delivery.",
+            "publisher": { "@id": "https://dslang.in/#organization" },
+            "inLanguage": "en-IN"
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://dslang.in/#webpage",
+            "url": "https://dslang.in/",
+            "name": "DSLANG | Premium Streetwear Clothing India",
+            "description": "Shop DSLANG premium streetwear clothing in India — graphic tees, oversized hoodies and joggers made for everyday wear, with pan-India delivery and easy returns.",
+            "isPartOf": { "@id": "https://dslang.in/#website" },
+            "about": { "@id": "https://dslang.in/#organization" },
+            "primaryImageOfPage": {
+              "@type": "ImageObject",
+              "url": "https://dslang.in/og-image.png",
+              "width": 1200,
+              "height": 630
+            },
+            "inLanguage": "en-IN"
+          }
+        ]
+      }
+    </script>
+
     <link rel="preconnect" href="https://fryxswzrpqujivtbguim.supabase.co" crossorigin />
     <link rel="preconnect" href="https://sdk.cashfree.com" crossorigin />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -41,11 +101,27 @@
     <noscript>
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Open+Sans:wght@400;500;600;700&display=swap" />
     </noscript>
-
-    <title>DSLANG — Premium Streetwear India</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Crawler- and no-JS-readable fallback. React replaces this on mount;
+           it keeps the homepage's brand and collection copy in the initial
+           HTML instead of leaving search engines with an empty container. -->
+      <div style="min-height:100vh;background:#0a0a0a;color:#f7f6f3;font-family:'Open Sans',Arial,sans-serif;display:flex;flex-direction:column;justify-content:center;padding:2rem;box-sizing:border-box">
+        <header>
+          <p style="margin:0 0 1.5rem;font-size:1.25rem;font-weight:700;letter-spacing:0.18em;text-transform:uppercase">DSLANG</p>
+        </header>
+        <main>
+          <h1 style="margin:0 0 1rem;font-size:clamp(2rem,6vw,4rem);line-height:1;text-transform:uppercase;letter-spacing:0.04em">DSLANG — Premium Streetwear Clothing in India</h1>
+          <p style="margin:0 0 1rem;max-width:38rem;font-size:1rem;line-height:1.6;color:#c9c7c1">DSLANG is an independent streetwear label from India. Shop graphic tees, oversized hoodies and joggers built for everyday wear, with pan-India delivery and easy returns.</p>
+          <nav aria-label="DSLANG" style="display:flex;flex-wrap:wrap;gap:1.25rem;font-size:0.8rem;letter-spacing:0.12em;text-transform:uppercase">
+            <a href="#/collections" style="color:#f7f6f3">Shop the collection</a>
+            <a href="#/about" style="color:#f7f6f3">About DSLANG</a>
+            <a href="#/contact" style="color:#f7f6f3">Contact</a>
+          </nav>
+        </main>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

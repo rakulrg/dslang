@@ -373,6 +373,16 @@ export function HomePage() {
 
   return (
     <div>
+      {/* The visually hidden page heading and intro keep the homepage's subject
+          in the rendered DOM for assistive tech and search engines, without
+          changing the hero-led design. */}
+      <h1 className="sr-only">DSLANG — Premium Streetwear Clothing in India</h1>
+      <p className="sr-only">
+        DSLANG is an independent streetwear label from India. Shop graphic tees,
+        oversized hoodies and joggers built for everyday wear, with pan-India
+        delivery and easy returns.
+      </p>
+
       {/* ============ HERO — mobile 1:1 full-bleed, desktop landscape ============ */}
       <section className="w-full overflow-hidden">
         {/* `hero-shell` paints the hero's own dark DSLANG treatment, which is

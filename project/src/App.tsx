@@ -70,7 +70,7 @@ const ShippingPolicyPage = lazy(() =>
   import('@/pages/ShippingPolicyPage').then((m) => ({ default: m.ShippingPolicyPage }))
 );
 
-const DEFAULT_TITLE = 'DSLANG — Premium Streetwear | Slang of Design';
+const DEFAULT_TITLE = 'DSLANG | Premium Streetwear Clothing India';
 
 function getPageTitle(path: string): string {
   if (path === '/' || path === '') return DEFAULT_TITLE;

@@ -13,7 +13,7 @@ import type { ReactNode } from 'react';
  * CIN / GST / registration number / registered office is invented.
  */
 
-export const POLICY_SITE = 'www.dslang.in';
+export const POLICY_SITE = 'dslang.in';
 export const POLICY_BUSINESS = 'DSLANG';
 /** Neutral operating-address wording (not a "registered office"). */
 export const POLICY_ADDRESS =
