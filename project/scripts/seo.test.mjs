@@ -129,7 +129,11 @@ test('SEO: JSON-LD parses and describes the Organization, WebSite and WebPage', 
   assert.ok(Array.isArray(data['@graph']), 'structured data must be a @graph');
 
   const nodes = data['@graph'];
-  const byType = (type) => nodes.find((node) => node['@type'] === type);
+  const byType = (type) => nodes.find((node) => {
+    const t = node['@type'];
+    if (Array.isArray(t)) return t.includes(type);
+    return t === type;
+  });
   const organization = byType('Organization');
   const website = byType('WebSite');
   const webpage = byType('WebPage');
